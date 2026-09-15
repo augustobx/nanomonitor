@@ -1,0 +1,102 @@
+# ==============================================================================
+# NanoLabs Control Center - Production Docker Compose
+# Domain: monitor.nanolabs.com.ar
+# ==============================================================================
+
+services:
+  nanomonitor-server:
+    container_name: nanomonitor-server
+    build:
+      context: ./server
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    environment:
+      - NODE_ENV=production
+      - PORT=4000
+      - HOST=0.0.0.0
+      - LOG_LEVEL=info
+      - CORS_ORIGIN=https://monitor.nanolabs.com.ar
+      - DATABASE_URL=postgresql://${DB_USER}:${DB_PASSWORD}@nanomonitor-postgres:5432/${DB_NAME}?schema=public
+      - REDIS_HOST=nanomonitor-redis
+      - REDIS_PORT=6379
+      - REDIS_PASSWORD=${REDIS_PASSWORD}
+      - JWT_SECRET=${JWT_SECRET}
+      - JWT_EXPIRES_IN=15m
+      - REFRESH_TOKEN_EXPIRES_DAYS=7
+      - AGENT_TIMESTAMP_DRIFT_SECS=300
+      - ADMIN_INITIAL_PASSWORD=${ADMIN_INITIAL_PASSWORD:-NanoLabs2026!Admin}
+    networks:
+      - nanomonitor-internal
+      - proxy
+    depends_on:
+      nanomonitor-postgres:
+        condition: service_healthy
+      nanomonitor-redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:4000/health || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  nanomonitor-postgres:
+    container_name: nanomonitor-postgres
+    image: postgres:17-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${DB_USER}
+      POSTGRES_PASSWORD: ${DB_PASSWORD}
+      POSTGRES_DB: ${DB_NAME}
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+      - ./server/prisma/migrations/01_partitioning.sql:/docker-entrypoint-initdb.d/01_partitioning.sql:ro
+    networks:
+      - nanomonitor-internal
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${DB_USER} -d ${DB_NAME}"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  nanomonitor-redis:
+    container_name: nanomonitor-redis
+    image: redis:7-alpine
+    restart: unless-stopped
+    command: redis-server --appendonly yes --requirepass ${REDIS_PASSWORD}
+    volumes:
+      - redis-data:/data
+    networks:
+      - nanomonitor-internal
+    healthcheck:
+      test: ["CMD", "redis-cli", "-a", "${REDIS_PASSWORD}", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+networks:
+  nanomonitor-internal:
+    driver: bridge
+  proxy:
+    external: true
+
+volumes:
+  postgres-data:
+    driver: local
+  redis-data:
+    driver: local
