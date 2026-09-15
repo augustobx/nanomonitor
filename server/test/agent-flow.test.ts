@@ -282,4 +282,125 @@ describe('Agent Ingestion & End-to-End HMAC Flow', () => {
     expect(body.status).toBe('ok');
     expect(body.processed).toBe(1);
   });
+
+  it('Agent Extended Inventory (F4) accepts security, storage and windowsUpdate', async () => {
+    vi.spyOn(db.agent, 'findUnique').mockResolvedValue(mockAgent as any);
+    const invCreateSpy = vi.spyOn(db.deviceInventory, 'create').mockResolvedValue({} as any);
+    vi.spyOn(db.device, 'update').mockResolvedValue(mockDevice as any);
+
+    const payload = {
+      identity: {
+        hostname: 'DESKTOP-TEST-PC',
+        system: { manufacturer: 'Gigabyte', model: 'H510M H' },
+        os: { caption: 'Windows 11 Pro', version: '10.0.22631', buildNumber: '22631' },
+      },
+      hardware: {
+        cpu: { name: '11th Gen Intel i5-11400', cores: 6 },
+        ram: { totalMb: 16384 },
+      },
+      security: {
+        defenderActive: true,
+        defenderUpdated: true,
+        firewallActive: true,
+        antivirusList: [{ displayName: 'Windows Defender', enabled: true, upToDate: true }],
+      },
+      storage: {
+        disks: [{ deviceId: '0', friendlyName: 'KINGSTON SNV2S1000G', mediaType: 'NVMe', busType: 'NVMe', sizeGb: 931, healthStatus: 'Healthy' }],
+      },
+      windowsUpdate: {
+        rebootPending: false,
+        hotfixCount: 4,
+        recentHotfixes: [{ hotfixId: 'KB5034441', installedOn: '2024-01-10' }],
+      },
+    };
+
+    const rawBody = JSON.stringify(payload);
+    const headers = createHmacHeaders(mockAgent.id, mockAgentSecret, rawBody);
+
+    const response = await app.inject({
+      method: 'POST',
+      url: '/agent/inventory',
+      headers,
+      payload,
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(invCreateSpy).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          security: expect.objectContaining({ defenderActive: true }),
+          storage: expect.objectContaining({ disks: expect.any(Array) }),
+          windowsUpdate: expect.objectContaining({ hotfixCount: 4 }),
+        }),
+      })
+    );
+  });
+
+  it('Agent Software (POST /agent/software) records inventory and delta changes', async () => {
+    vi.spyOn(db.agent, 'findUnique').mockResolvedValue(mockAgent as any);
+    const swInvSpy = vi.spyOn(db.softwareInventory, 'create').mockResolvedValue({} as any);
+    const swChangeSpy = vi.spyOn(db.softwareChange, 'createMany').mockResolvedValue({ count: 2 } as any);
+    vi.spyOn(db.device, 'update').mockResolvedValue(mockDevice as any);
+
+    const payload = {
+      checksum: 'e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855',
+      count: 2,
+      items: [
+        { name: 'Google Chrome', version: '121.0.0', publisher: 'Google LLC', architecture: 'x64' },
+        { name: '7-Zip', version: '23.01', publisher: 'Igor Pavlov', architecture: 'x64' },
+      ],
+      changes: [
+        {
+          action: 'INSTALLED',
+          software: { name: '7-Zip', version: '23.01', publisher: 'Igor Pavlov', architecture: 'x64' },
+        },
+        {
+          action: 'UPDATED',
+          software: { name: 'Google Chrome', version: '121.0.0', publisher: 'Google LLC', architecture: 'x64' },
+          oldVersion: '120.0.0',
+        },
+      ],
+    };
+
+    const rawBody = JSON.stringify(payload);
+    const headers = createHmacHeaders(mockAgent.id, mockAgentSecret, rawBody);
+
+    const response = await app.inject({
+      method: 'POST',
+      url: '/agent/software',
+      headers,
+      payload,
+    });
+
+    expect(response.statusCode).toBe(200);
+    const body = JSON.parse(response.body);
+    expect(body.status).toBe('ok');
+    expect(body.recordedItems).toBe(2);
+    expect(body.recordedChanges).toBe(2);
+    expect(swInvSpy).toHaveBeenCalled();
+    expect(swChangeSpy).toHaveBeenCalledWith({
+      data: [
+        {
+          tenantId: mockTenant.id,
+          deviceId: mockDevice.id,
+          detectedAt: expect.any(Date),
+          changeType: 'INSTALLED',
+          name: '7-Zip',
+          versionBefore: null,
+          versionAfter: '23.01',
+          publisher: 'Igor Pavlov',
+        },
+        {
+          tenantId: mockTenant.id,
+          deviceId: mockDevice.id,
+          detectedAt: expect.any(Date),
+          changeType: 'UPDATED',
+          name: 'Google Chrome',
+          versionBefore: '120.0.0',
+          versionAfter: '121.0.0',
+          publisher: 'Google LLC',
+        },
+      ],
+    });
+  });
 });

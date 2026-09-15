@@ -36,6 +36,32 @@ export const agentInventorySchema = z.object({
   identity: z.any().optional(),
   hardware: z.any().optional(),
   network: z.any().optional(),
+  security: z.any().optional(),
+  storage: z.any().optional(),
+  windowsUpdate: z.any().optional(),
+});
+
+export const agentSoftwareItemSchema = z.object({
+  name: z.string(),
+  version: z.string().optional().default(''),
+  publisher: z.string().optional().default(''),
+  installDate: z.string().optional().default(''),
+  installLocation: z.string().optional().default(''),
+  uninstallString: z.string().optional().default(''),
+  architecture: z.string().optional().default('x64'),
+});
+
+export const agentSoftwareChangeSchema = z.object({
+  action: z.enum(['INSTALLED', 'REMOVED', 'UPDATED']),
+  software: agentSoftwareItemSchema,
+  oldVersion: z.string().optional(),
+});
+
+export const agentSoftwareSchema = z.object({
+  checksum: z.string(),
+  count: z.number().int().nonnegative(),
+  items: z.array(agentSoftwareItemSchema),
+  changes: z.array(agentSoftwareChangeSchema).optional(),
 });
 
 export const agentSingleEventSchema = z.object({

@@ -89,6 +89,11 @@ func (c *Client) SendInventory(ctx context.Context, payload interface{}) (*Respo
 	return c.sendAuthenticatedJSON(ctx, "POST", "/agent/inventory", payload)
 }
 
+// SendSoftware sends software inventory snapshot and delta changes to the API
+func (c *Client) SendSoftware(ctx context.Context, payload interface{}) (*Response, error) {
+	return c.sendAuthenticatedJSON(ctx, "POST", "/agent/software", payload)
+}
+
 // SendEvents sends device events to the API
 func (c *Client) SendEvents(ctx context.Context, payload interface{}) (*Response, error) {
 	return c.sendAuthenticatedJSON(ctx, "POST", "/agent/events", payload)

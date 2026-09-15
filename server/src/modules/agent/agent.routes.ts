@@ -7,6 +7,7 @@ import {
   agentHeartbeatSchema,
   agentInventorySchema,
   agentMetricsSchema,
+  agentSoftwareSchema,
 } from '../../schemas/agent.schema.js';
 
 export const agentRoutes: FastifyPluginAsync = async (fastify: FastifyInstance) => {
@@ -123,6 +124,9 @@ export const agentRoutes: FastifyPluginAsync = async (fastify: FastifyInstance) 
     const identity = parsed.data.identity || {};
     const hardware = parsed.data.hardware || {};
     const network = parsed.data.network || {};
+    const security = parsed.data.security || undefined;
+    const storage = parsed.data.storage || undefined;
+    const windowsUpdate = parsed.data.windowsUpdate || undefined;
 
     // Store inventory snapshot
     await db.deviceInventory.create({
@@ -133,6 +137,9 @@ export const agentRoutes: FastifyPluginAsync = async (fastify: FastifyInstance) 
         hardware,
         os: identity.os || undefined,
         network,
+        security,
+        storage,
+        windowsUpdate,
         checksum,
       },
     });
@@ -158,6 +165,63 @@ export const agentRoutes: FastifyPluginAsync = async (fastify: FastifyInstance) 
     });
 
     return reply.status(200).send({ status: 'ok', checksum });
+  });
+
+  // POST /agent/software
+  fastify.post('/software', async (request, reply) => {
+    const parsed = agentSoftwareSchema.safeParse(request.body);
+    if (!parsed.success) {
+      return reply.status(400).send({
+        statusCode: 400,
+        error: 'Bad Request',
+        message: 'Invalid software payload',
+        details: parsed.error.format(),
+      });
+    }
+
+    const { deviceId, tenantId } = request.agent!;
+    const { checksum, items, changes } = parsed.data;
+
+    // Store software snapshot
+    await db.softwareInventory.create({
+      data: {
+        tenantId,
+        deviceId,
+        collectedAt: new Date(),
+        software: items as any,
+        checksum,
+      },
+    });
+
+    // Store software delta changes if present
+    if (changes && changes.length > 0) {
+      const now = new Date();
+      await db.softwareChange.createMany({
+        data: changes.map((c) => ({
+          tenantId,
+          deviceId,
+          detectedAt: now,
+          changeType: c.action as any, // INSTALLED | REMOVED | UPDATED
+          name: c.software.name,
+          versionBefore: c.action === 'INSTALLED' ? null : (c.oldVersion || null),
+          versionAfter: c.action === 'REMOVED' ? null : (c.software.version || null),
+          publisher: c.software.publisher || null,
+        })),
+      });
+    }
+
+    // Update device lastSeenAt
+    await db.device.update({
+      where: { id: deviceId },
+      data: { lastSeenAt: new Date() },
+    });
+
+    return reply.status(200).send({
+      status: 'ok',
+      checksum,
+      recordedItems: items.length,
+      recordedChanges: changes ? changes.length : 0,
+    });
   });
 
   // POST /agent/events

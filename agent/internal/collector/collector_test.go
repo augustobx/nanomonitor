@@ -164,3 +164,115 @@ func TestClassifyMediaType(t *testing.T) {
 		}
 	}
 }
+
+func TestCollectWindowsUpdate(t *testing.T) {
+	wu, err := CollectWindowsUpdate()
+	if err != nil {
+		t.Fatalf("CollectWindowsUpdate failed: %v", err)
+	}
+
+	t.Logf("Windows Update: RebootPending=%v, Reason=%s, Hotfixes=%d",
+		wu.RebootPending, wu.RebootReason, wu.HotfixCount)
+
+	if wu.HotfixCount > 0 && len(wu.RecentHotfixes) == 0 {
+		t.Error("expected recent hotfixes to be populated when hotfixCount > 0")
+	}
+}
+
+func TestCollectSecurity(t *testing.T) {
+	sec, err := CollectSecurity()
+	if err != nil {
+		t.Fatalf("CollectSecurity failed: %v", err)
+	}
+
+	t.Logf("Security: DefenderActive=%v, DefenderUpdated=%v, FirewallActive=%v, AV Count=%d, Firewall Count=%d",
+		sec.DefenderActive, sec.DefenderUpdated, sec.FirewallActive, len(sec.AntivirusList), len(sec.FirewallList))
+
+	for _, av := range sec.AntivirusList {
+		t.Logf("  AV: %s (enabled=%v, upToDate=%v)", av.DisplayName, av.Enabled, av.UpToDate)
+	}
+}
+
+func TestCollectStorage(t *testing.T) {
+	storage, err := CollectStorage()
+	if err != nil {
+		t.Fatalf("CollectStorage failed: %v", err)
+	}
+
+	if len(storage.Disks) == 0 {
+		t.Error("expected at least one physical disk")
+	}
+
+	for _, disk := range storage.Disks {
+		t.Logf("  Disk: %s (%s, %s, %d GB) - Health=%s",
+			disk.FriendlyName, disk.MediaType, disk.BusType, disk.SizeGB, disk.HealthStatus)
+		if disk.MediaType == "" {
+			t.Errorf("disk %s: mediaType should not be empty", disk.FriendlyName)
+		}
+	}
+}
+
+func TestCollectSoftware(t *testing.T) {
+	sw, err := CollectSoftware()
+	if err != nil {
+		t.Fatalf("CollectSoftware failed: %v", err)
+	}
+
+	if sw.Count == 0 || len(sw.Items) == 0 {
+		t.Error("expected at least one installed application")
+	}
+
+	if sw.Checksum == "" {
+		t.Error("expected valid software checksum")
+	}
+
+	t.Logf("Software: %d installed applications, checksum=%s", sw.Count, sw.Checksum)
+	// Sample first 3
+	for i := 0; i < len(sw.Items) && i < 3; i++ {
+		t.Logf("  App: %s (ver: %s, arch: %s)", sw.Items[i].Name, sw.Items[i].Version, sw.Items[i].Architecture)
+	}
+}
+
+func TestComputeSoftwareDelta(t *testing.T) {
+	prev := []SoftwareItem{
+		{Name: "Google Chrome", Version: "120.0.0", Architecture: "x64"},
+		{Name: "Notepad++", Version: "8.5.0", Architecture: "x64"},
+		{Name: "7-Zip", Version: "23.01", Architecture: "x64"},
+	}
+
+	curr := []SoftwareItem{
+		{Name: "Google Chrome", Version: "121.0.0", Architecture: "x64"}, // Updated
+		{Name: "Notepad++", Version: "8.5.0", Architecture: "x64"},       // Unchanged
+		{Name: "VLC media player", Version: "3.0.18", Architecture: "x64"}, // Installed
+		// 7-Zip removed
+	}
+
+	changes := ComputeSoftwareDelta(prev, curr)
+	if len(changes) != 3 {
+		t.Fatalf("expected 3 changes, got %d", len(changes))
+	}
+
+	changeMap := make(map[string]SoftwareChange)
+	for _, c := range changes {
+		changeMap[c.Software.Name] = c
+	}
+
+	// Verify Google Chrome updated
+	chrome, ok := changeMap["Google Chrome"]
+	if !ok || chrome.Action != "UPDATED" || chrome.OldVersion != "120.0.0" || chrome.Software.Version != "121.0.0" {
+		t.Errorf("unexpected Chrome change: %+v", chrome)
+	}
+
+	// Verify VLC installed
+	vlc, ok := changeMap["VLC media player"]
+	if !ok || vlc.Action != "INSTALLED" {
+		t.Errorf("unexpected VLC change: %+v", vlc)
+	}
+
+	// Verify 7-Zip removed
+	sz, ok := changeMap["7-Zip"]
+	if !ok || sz.Action != "REMOVED" {
+		t.Errorf("unexpected 7-Zip change: %+v", sz)
+	}
+}
+
