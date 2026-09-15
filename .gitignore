@@ -1,0 +1,69 @@
+# === Environment & Secrets ===
+.env
+.env.local
+.env.production
+.env.*.local
+*.pem
+*.key
+
+# === Node.js ===
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+.pnpm-debug.log*
+
+# === Next.js ===
+web/.next/
+web/out/
+
+# === TypeScript ===
+server/dist/
+*.tsbuildinfo
+
+# === Go ===
+agent/bin/
+agent/*.exe
+agent/*.exe~
+agent/*.dll
+agent/*.so
+agent/*.dylib
+
+# === Build artifacts ===
+*.o
+*.a
+*.test
+*.out
+*.prof
+
+# === IDE ===
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# === OS ===
+.DS_Store
+Thumbs.db
+Desktop.ini
+
+# === Docker ===
+docker/.env
+
+# === Installer ===
+installer/build/
+installer/output/
+installer/*.exe
+
+# === Logs ===
+*.log
+logs/
+
+# === Coverage ===
+coverage/
+.nyc_output/
+
+# === Prisma ===
+server/prisma/*.db
+server/prisma/*.db-journal
