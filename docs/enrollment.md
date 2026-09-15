@@ -1,30 +1,48 @@
-# Enrollment — NanoLabs Control Center
+# Flujo de Enrolamiento — NanoLabs Control Center
 
-> Se actualizará durante F2. Documento inicial.
+El flujo de enrolamiento vincula de forma segura e irrepudiable un agente Windows con un cliente y sucursal específicos dentro de la plataforma multi-tenant.
 
-## Flujo
+## Diagrama de Secuencia
 
-1. Técnico crea token desde el panel web
-2. Token tiene expiración (24h) y uso limitado (1 uso por defecto)
-3. Token se vincula a un customer y opcionalmente a un site
-4. Se instala el agente con el token como parámetro
-5. El agente envía: token + hostname + hardware ID + OS info
-6. El servidor valida token, crea Device + Agent, genera credenciales
-7. El agente recibe agentId + agentSecret + deviceId
-8. El agente almacena credenciales con DPAPI
-9. El token queda invalidado
-10. El equipo comienza a reportar normalmente
+```mermaid
+sequenceDiagram
+    participant Tech as Técnico / Administrador
+    participant Web as Panel Control Center
+    participant API as API Server Fastify
+    participant DB as PostgreSQL + Redis
+    participant Agent as NanoAgent Windows Service
 
-## Formato del token
+    Tech->>Web: Solicitar token para Cliente X (Sucursal Y)
+    Web->>API: POST /api/v1/enrollment/tokens
+    API->>DB: Almacenar token (NL-ENRL-..., expiresAt: +24h, maxUses: 1)
+    API-->>Web: Token generado
+    Web-->>Tech: Comando de instalación listo
 
+    Note over Tech,Agent: Instalación en PC Windows
+    Tech->>Agent: nanoagent.exe /enroll /token=NL-ENRL-... /server=https://control-api.nanoapps.site
+
+    Agent->>API: POST /enrollment/register { token, hostname, hardwareId, osInfo }
+    API->>DB: Validar token (vigente, usos restantes < maxUses)
+    API->>DB: Validar límite de dispositivos del plan del tenant
+    API->>DB: Crear o vincular registro Device
+    API->>DB: Generar agentId (UUID) y agentSecret (256-bit cryptorandom)
+    API->>DB: Crear registro Agent (status: ACTIVE)
+    API->>DB: Incrementar usedCount del token
+    API->>DB: Registrar AuditLog ("device.enrolled")
+    API-->>Agent: { agentId, agentSecret, deviceId, tenantId, config }
+
+    Note over Agent: Almacena credenciales de forma segura (DPAPI)
+    
+    loop Cada 3 minutos (Heartbeat)
+        Agent->>API: POST /agent/heartbeat con HMAC-SHA256
+        API->>DB: Validar firma, nonce y timestamp; registrar telemetría
+    end
 ```
-NL-ENRL-<random_32_chars>
-```
 
-## Seguridad
+## Garantías de Seguridad
 
-- Token de uso único (configurable a N usos para batch)
-- Expiración configurable (default 24h)
-- Vinculado a tenant+customer (obligatorio)
-- AuditLog de cada enrollment
-- Imposible re-enrollar un dispositivo ya registrado sin revocación previa
+1. **Tokens de un solo uso**: Por defecto `maxUses: 1`, evitando que un instalador sea reutilizado indebidamente en otra máquina no autorizada.
+2. **Vencimiento estricto**: Cada token tiene un `expiresAt` configurable (por defecto 24 horas).
+3. **No exposición de claves compartidas**: Los agentes nunca comparten claves de API. Cada PC recibe un par único (`agentId` + `agentSecret`).
+4. **Almacenamiento protegido en el cliente**: El `agentSecret` se cifra mediante la API de Protección de Datos de Windows (DPAPI).
+5. **Autenticación HMAC por petición**: Cada telemetría enviada por el agente lleva firma HMAC-SHA256 con hash del cuerpo (`rawBody`), timestamp y nonce aleatorio.

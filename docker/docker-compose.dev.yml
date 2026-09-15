@@ -1,0 +1,38 @@
+# Docker Compose for NanoLabs Control Center - Local Development
+services:
+  postgres:
+    image: postgres:17-alpine
+    container_name: nanomonitor-postgres-dev
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${DB_USER:-nanouser}
+      POSTGRES_PASSWORD: ${DB_PASSWORD:-nanopass2026}
+      POSTGRES_DB: ${DB_NAME:-nanomonitor}
+    ports:
+      - "5432:5432"
+    volumes:
+      - dev-postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${DB_USER:-nanouser} -d ${DB_NAME:-nanomonitor}"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  redis:
+    image: redis:7-alpine
+    container_name: nanomonitor-redis-dev
+    restart: unless-stopped
+    command: redis-server --appendonly yes --requirepass ${REDIS_PASSWORD:-nanoredis2026}
+    ports:
+      - "6379:6379"
+    volumes:
+      - dev-redis-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "-a", "${REDIS_PASSWORD:-nanoredis2026}", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+volumes:
+  dev-postgres-data:
+  dev-redis-data:

@@ -1,0 +1,621 @@
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+enum TenantStatus {
+  ACTIVE
+  SUSPENDED
+  CANCELLED
+}
+
+enum CustomerStatus {
+  ACTIVE
+  INACTIVE
+  ARCHIVED
+}
+
+enum SiteStatus {
+  ACTIVE
+  INACTIVE
+}
+
+enum DeviceStatus {
+  ONLINE
+  OFFLINE
+  WARNING
+  CRITICAL
+  MAINTENANCE
+}
+
+enum AgentStatus {
+  ACTIVE
+  REVOKED
+  PENDING
+}
+
+enum UserRole {
+  SUPER_ADMIN
+  ADMIN
+  TECHNICIAN
+  VIEWER
+  CLIENT
+}
+
+enum UserStatus {
+  ACTIVE
+  INACTIVE
+  LOCKED
+}
+
+enum SoftwareChangeType {
+  INSTALLED
+  REMOVED
+  UPDATED
+}
+
+enum Severity {
+  INFO
+  WARNING
+  HIGH
+  CRITICAL
+}
+
+enum AlertStatus {
+  OPEN
+  ACKNOWLEDGED
+  RESOLVED
+  IGNORED
+}
+
+enum IncidentStatus {
+  OPEN
+  INVESTIGATING
+  RESOLVED
+  CLOSED
+}
+
+enum NotificationChannel {
+  DASHBOARD
+  EMAIL
+  TELEGRAM
+  WEBHOOK
+}
+
+enum NotificationStatus {
+  PENDING
+  SENT
+  FAILED
+}
+
+model Tenant {
+  id           String       @id @default(uuid()) @db.Uuid
+  name         String
+  slug         String       @unique
+  status       TenantStatus @default(ACTIVE)
+  plan         String       @default("PROFESSIONAL")
+  maxDevices   Int          @default(100)
+  contactEmail String
+  createdAt    DateTime     @default(now())
+  updatedAt    DateTime     @updatedAt
+
+  customers        Customer[]
+  sites            Site[]
+  devices          Device[]
+  agents           Agent[]
+  enrollmentTokens EnrollmentToken[]
+  users            User[]
+  auditLogs        AuditLog[]
+  alertRules       AlertRule[]
+  alerts           Alert[]
+  incidents        Incident[]
+  notifications    Notification[]
+
+  @@map("tenants")
+}
+
+model Customer {
+  id           String         @id @default(uuid()) @db.Uuid
+  tenantId     String         @db.Uuid
+  name         String
+  code         String
+  contactName  String?
+  contactEmail String?
+  contactPhone String?
+  status       CustomerStatus @default(ACTIVE)
+  notes        String?
+  createdAt    DateTime       @default(now())
+  updatedAt    DateTime       @updatedAt
+
+  tenant           Tenant            @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  sites            Site[]
+  devices          Device[]
+  enrollmentTokens EnrollmentToken[]
+  alerts           Alert[]
+  incidents        Incident[]
+
+  @@unique([tenantId, code])
+  @@index([tenantId])
+  @@map("customers")
+}
+
+model Site {
+  id         String     @id @default(uuid()) @db.Uuid
+  tenantId   String     @db.Uuid
+  customerId String     @db.Uuid
+  name       String
+  address    String?
+  city       String?
+  timezone   String     @default("America/Argentina/Buenos_Aires")
+  status     SiteStatus @default(ACTIVE)
+  createdAt  DateTime   @default(now())
+  updatedAt  DateTime   @updatedAt
+
+  tenant           Tenant            @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  customer         Customer          @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  devices          Device[]
+  enrollmentTokens EnrollmentToken[]
+
+  @@index([tenantId, customerId])
+  @@map("sites")
+}
+
+model Device {
+  id           String       @id @default(uuid()) @db.Uuid
+  tenantId     String       @db.Uuid
+  customerId   String       @db.Uuid
+  siteId       String?      @db.Uuid
+  hostname     String
+  displayName  String?
+  manufacturer String?
+  model        String?
+  serialNumber String?
+  osEdition    String?
+  osVersion    String?
+  osBuild      String?
+  architecture String?
+  cpuName      String?
+  cpuCores     Int?
+  ramTotalMB   Int?
+  timezone     String?
+  status       DeviceStatus @default(OFFLINE)
+  lastSeenAt   DateTime?
+  enrolledAt   DateTime     @default(now())
+  createdAt    DateTime     @default(now())
+  updatedAt    DateTime     @updatedAt
+
+  tenant             Tenant              @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  customer           Customer            @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  site               Site?               @relation(fields: [siteId], references: [id], onDelete: SetNull)
+  agent              Agent?
+  metrics            DeviceMetric[]
+  heartbeats         AgentHeartbeat[]
+  inventories        DeviceInventory[]
+  softwareInventories SoftwareInventory[]
+  softwareChanges    SoftwareChange[]
+  events             DeviceEvent[]
+  alerts             Alert[]
+  incidents          Incident[]
+  healthScores       HealthScore[]
+  enrolledViaTokens  EnrollmentToken[]   @relation("UsedByDevice")
+
+  @@index([tenantId, customerId])
+  @@index([tenantId, status])
+  @@index([lastSeenAt])
+  @@map("devices")
+}
+
+model Agent {
+  id           String      @id @default(uuid()) @db.Uuid
+  tenantId     String      @db.Uuid
+  deviceId     String      @unique @db.Uuid
+  agentVersion String
+  secretHash   String
+  status       AgentStatus @default(ACTIVE)
+  lastAuthAt   DateTime?
+  configHash   String?
+  enrolledAt   DateTime    @default(now())
+  revokedAt    DateTime?
+  createdAt    DateTime    @default(now())
+  updatedAt    DateTime    @updatedAt
+
+  tenant    Tenant     @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  device    Device     @relation(fields: [deviceId], references: [id], onDelete: Cascade)
+  auditLogs AuditLog[]
+
+  @@index([tenantId])
+  @@map("agents")
+}
+
+model EnrollmentToken {
+  id             String    @id @default(uuid()) @db.Uuid
+  tenantId       String    @db.Uuid
+  customerId     String    @db.Uuid
+  siteId         String?   @db.Uuid
+  token          String    @unique
+  usedByDeviceId String?   @db.Uuid
+  maxUses        Int       @default(1)
+  usedCount      Int       @default(0)
+  expiresAt      DateTime
+  createdAt      DateTime  @default(now())
+  usedAt         DateTime?
+
+  tenant       Tenant    @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  customer     Customer  @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  site         Site?     @relation(fields: [siteId], references: [id], onDelete: SetNull)
+  usedByDevice Device?   @relation("UsedByDevice", fields: [usedByDeviceId], references: [id], onDelete: SetNull)
+
+  @@index([tenantId, customerId])
+  @@index([token])
+  @@map("enrollment_tokens")
+}
+
+model DeviceMetric {
+  id               BigInt   @id @default(autoincrement())
+  tenantId         String   @db.Uuid
+  deviceId         String   @db.Uuid
+  timestamp        DateTime
+  cpuPercent       Float?
+  ramUsedMB        Int?
+  ramAvailMB       Int?
+  volumes          Json?
+  uptimeSeconds    BigInt?
+  networkLatencyMs Int?
+
+  device Device @relation(fields: [deviceId], references: [id], onDelete: Cascade)
+
+  @@index([tenantId, deviceId, timestamp])
+  @@map("device_metrics")
+}
+
+model DeviceMetricHourly {
+  id              BigInt   @id @default(autoincrement())
+  tenantId        String   @db.Uuid
+  deviceId        String   @db.Uuid
+  bucketHour      DateTime
+  cpuAvg          Float?
+  cpuMax          Float?
+  ramAvgMB        Int?
+  ramMaxMB        Int?
+  volumeSnapshots Json?
+  sampleCount     Int
+
+  @@unique([tenantId, deviceId, bucketHour])
+  @@map("device_metrics_hourly")
+}
+
+model DeviceMetricDaily {
+  id              BigInt   @id @default(autoincrement())
+  tenantId        String   @db.Uuid
+  deviceId        String   @db.Uuid
+  bucketDay       DateTime
+  cpuAvg          Float?
+  cpuMax          Float?
+  ramAvgMB        Int?
+  ramMaxMB        Int?
+  volumeSnapshots Json?
+  sampleCount     Int
+
+  @@unique([tenantId, deviceId, bucketDay])
+  @@map("device_metrics_daily")
+}
+
+model AgentHeartbeat {
+  id            BigInt   @id @default(autoincrement())
+  tenantId      String   @db.Uuid
+  deviceId      String   @db.Uuid
+  agentVersion  String
+  timestamp     DateTime
+  uptimeSeconds BigInt
+  status        String
+  cpuPercent    Float
+  ramUsedMB     Int
+  ramAvailMB    Int
+  diskSummary   Json?
+
+  device Device @relation(fields: [deviceId], references: [id], onDelete: Cascade)
+
+  @@index([tenantId, deviceId, timestamp])
+  @@map("agent_heartbeats")
+}
+
+model DeviceInventory {
+  id            String   @id @default(uuid()) @db.Uuid
+  tenantId      String   @db.Uuid
+  deviceId      String   @db.Uuid
+  collectedAt   DateTime
+  hardware      Json?
+  os            Json?
+  network       Json?
+  security      Json?
+  storage       Json?
+  windowsUpdate Json?
+  checksum      String
+
+  device Device @relation(fields: [deviceId], references: [id], onDelete: Cascade)
+
+  @@index([tenantId, deviceId, collectedAt(sort: Desc)])
+  @@map("device_inventories")
+}
+
+model SoftwareInventory {
+  id          String   @id @default(uuid()) @db.Uuid
+  tenantId    String   @db.Uuid
+  deviceId    String   @db.Uuid
+  collectedAt DateTime
+  software    Json
+  checksum    String
+
+  device Device @relation(fields: [deviceId], references: [id], onDelete: Cascade)
+
+  @@index([tenantId, deviceId, collectedAt(sort: Desc)])
+  @@map("software_inventories")
+}
+
+model SoftwareChange {
+  id            String             @id @default(uuid()) @db.Uuid
+  tenantId      String             @db.Uuid
+  deviceId      String             @db.Uuid
+  detectedAt    DateTime
+  changeType    SoftwareChangeType
+  name          String
+  versionBefore String?
+  versionAfter  String?
+  publisher     String?
+
+  device Device @relation(fields: [deviceId], references: [id], onDelete: Cascade)
+
+  @@index([tenantId, deviceId, detectedAt(sort: Desc)])
+  @@map("software_changes")
+}
+
+model DeviceEvent {
+  id          String   @id @default(uuid()) @db.Uuid
+  tenantId    String   @db.Uuid
+  deviceId    String   @db.Uuid
+  timestamp   DateTime
+  source      String
+  category    String
+  severity    Severity
+  eventId     Int?
+  title       String
+  description String?
+  rawData     Json?
+  dedupKey    String
+  occurrences Int      @default(1)
+
+  device Device @relation(fields: [deviceId], references: [id], onDelete: Cascade)
+
+  @@index([tenantId, deviceId, timestamp])
+  @@index([tenantId, severity])
+  @@index([tenantId, deviceId, dedupKey])
+  @@map("device_events")
+}
+
+model AlertRule {
+  id          String   @id @default(uuid()) @db.Uuid
+  tenantId    String   @db.Uuid
+  name        String
+  description String?
+  category    String
+  condition   Json
+  severity    Severity
+  enabled     Boolean  @default(true)
+  cooldownMin Int      @default(60)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  tenant Tenant  @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  alerts Alert[]
+
+  @@index([tenantId])
+  @@map("alert_rules")
+}
+
+model Alert {
+  id             String      @id @default(uuid()) @db.Uuid
+  tenantId       String      @db.Uuid
+  deviceId       String      @db.Uuid
+  customerId     String      @db.Uuid
+  ruleId         String?     @db.Uuid
+  severity       Severity
+  status         AlertStatus @default(OPEN)
+  title          String
+  description    String
+  source         String
+  firstSeenAt    DateTime
+  lastSeenAt     DateTime
+  resolvedAt     DateTime?
+  acknowledgedBy String?     @db.Uuid
+  occurrences    Int         @default(1)
+
+  tenant          Tenant          @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  customer        Customer        @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  device          Device          @relation(fields: [deviceId], references: [id], onDelete: Cascade)
+  rule            AlertRule?      @relation(fields: [ruleId], references: [id], onDelete: SetNull)
+  acknowledger    User?           @relation("AcknowledgedAlerts", fields: [acknowledgedBy], references: [id], onDelete: SetNull)
+  incidentAlerts  IncidentAlert[]
+  notifications   Notification[]
+
+  @@index([tenantId, status])
+  @@index([tenantId, deviceId, status])
+  @@index([tenantId, severity, status])
+  @@map("alerts")
+}
+
+model Incident {
+  id             String         @id @default(uuid()) @db.Uuid
+  tenantId       String         @db.Uuid
+  deviceId       String         @db.Uuid
+  customerId     String         @db.Uuid
+  severity       Severity
+  status         IncidentStatus @default(OPEN)
+  title          String
+  description    String
+  recommendation String?
+  assignedToId   String?        @db.Uuid
+  createdAt      DateTime       @default(now())
+  updatedAt      DateTime       @updatedAt
+  resolvedAt     DateTime?
+
+  tenant         Tenant          @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  customer       Customer        @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  device         Device          @relation(fields: [deviceId], references: [id], onDelete: Cascade)
+  assignedTo     User?           @relation("AssignedIncidents", fields: [assignedToId], references: [id], onDelete: SetNull)
+  incidentAlerts IncidentAlert[]
+  notes          IncidentNote[]
+  notifications  Notification[]
+
+  @@index([tenantId, status])
+  @@index([tenantId, customerId])
+  @@map("incidents")
+}
+
+model IncidentAlert {
+  incidentId String @db.Uuid
+  alertId    String @db.Uuid
+
+  incident Incident @relation(fields: [incidentId], references: [id], onDelete: Cascade)
+  alert    Alert    @relation(fields: [alertId], references: [id], onDelete: Cascade)
+
+  @@id([incidentId, alertId])
+  @@map("incident_alerts")
+}
+
+model IncidentNote {
+  id         String   @id @default(uuid()) @db.Uuid
+  incidentId String   @db.Uuid
+  authorId   String   @db.Uuid
+  content    String
+  createdAt  DateTime @default(now())
+
+  incident Incident @relation(fields: [incidentId], references: [id], onDelete: Cascade)
+  author   User     @relation(fields: [authorId], references: [id], onDelete: Cascade)
+
+  @@index([incidentId])
+  @@map("incident_notes")
+}
+
+model HealthScore {
+  id           String   @id @default(uuid()) @db.Uuid
+  tenantId     String   @db.Uuid
+  deviceId     String   @db.Uuid
+  calculatedAt DateTime
+  overall      Int
+  performance  Int
+  storage      Int
+  security     Int
+  updates      Int
+  stability    Int
+  hardware     Int
+  penalties    Json
+
+  device Device @relation(fields: [deviceId], references: [id], onDelete: Cascade)
+
+  @@index([tenantId, deviceId, calculatedAt(sort: Desc)])
+  @@map("health_scores")
+}
+
+model User {
+  id           String     @id @default(uuid()) @db.Uuid
+  tenantId     String     @db.Uuid
+  email        String
+  passwordHash String
+  name         String
+  role         UserRole   @default(TECHNICIAN)
+  status       UserStatus @default(ACTIVE)
+  lastLoginAt  DateTime?
+  createdAt    DateTime   @default(now())
+  updatedAt    DateTime   @updatedAt
+
+  tenant              Tenant         @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  refreshTokens       RefreshToken[]
+  auditLogs           AuditLog[]
+  acknowledgedAlerts  Alert[]        @relation("AcknowledgedAlerts")
+  assignedIncidents   Incident[]     @relation("AssignedIncidents")
+  incidentNotes       IncidentNote[]
+  notifications       Notification[]
+
+  @@unique([tenantId, email])
+  @@index([tenantId])
+  @@map("users")
+}
+
+model RefreshToken {
+  id        String    @id @default(uuid()) @db.Uuid
+  userId    String    @db.Uuid
+  tokenHash String    @unique
+  expiresAt DateTime
+  revokedAt DateTime?
+  createdAt DateTime  @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@map("refresh_tokens")
+}
+
+model AuditLog {
+  id         String   @id @default(uuid()) @db.Uuid
+  tenantId   String   @db.Uuid
+  userId     String?  @db.Uuid
+  agentId    String?  @db.Uuid
+  action     String
+  entityType String
+  entityId   String?  @db.Uuid
+  details    Json?
+  ipAddress  String?
+  userAgent  String?
+  createdAt  DateTime @default(now())
+
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  user   User?  @relation(fields: [userId], references: [id], onDelete: SetNull)
+  agent  Agent? @relation(fields: [agentId], references: [id], onDelete: SetNull)
+
+  @@index([tenantId, createdAt])
+  @@index([tenantId, entityType, entityId])
+  @@map("audit_logs")
+}
+
+model Notification {
+  id            String              @id @default(uuid()) @db.Uuid
+  tenantId      String              @db.Uuid
+  alertId       String?             @db.Uuid
+  incidentId    String?             @db.Uuid
+  channel       NotificationChannel
+  recipientId   String?             @db.Uuid
+  recipientAddr String?
+  title         String
+  body          String
+  status        NotificationStatus  @default(PENDING)
+  sentAt        DateTime?
+  error         String?
+  createdAt     DateTime            @default(now())
+
+  tenant   Tenant    @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  alert    Alert?    @relation(fields: [alertId], references: [id], onDelete: SetNull)
+  incident Incident? @relation(fields: [incidentId], references: [id], onDelete: SetNull)
+  recipient User?    @relation(fields: [recipientId], references: [id], onDelete: SetNull)
+
+  @@index([tenantId, status])
+  @@map("notifications")
+}
+
+model AgentUpdate {
+  id           String   @id @default(uuid()) @db.Uuid
+  version      String
+  releaseNotes String?
+  downloadUrl  String
+  checksum     String
+  signature    String?
+  isMandatory  Boolean  @default(false)
+  rolloutPct   Int      @default(100)
+  releasedAt   DateTime
+  createdAt    DateTime @default(now())
+
+  @@map("agent_updates")
+}
