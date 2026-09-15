@@ -101,6 +101,10 @@ export const devicesRoutes: FastifyPluginAsync = async (fastify: FastifyInstance
           take: 1,
           orderBy: { collectedAt: 'desc' },
         },
+        softwareInventories: {
+          take: 1,
+          orderBy: { collectedAt: 'desc' },
+        },
         metrics: {
           take: 1,
           orderBy: { timestamp: 'desc' },
