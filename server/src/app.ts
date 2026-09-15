@@ -11,6 +11,7 @@ import { tenantsRoutes } from './modules/tenants/tenants.routes.js';
 import { customersRoutes } from './modules/customers/customers.routes.js';
 import { sitesRoutes } from './modules/sites/sites.routes.js';
 import { devicesRoutes } from './modules/devices/devices.routes.js';
+import { getLandingHtml } from './views/landing.html.js';
 
 export async function buildApp(): Promise<FastifyInstance> {
   const app = fastify({
@@ -58,6 +59,29 @@ export async function buildApp(): Promise<FastifyInstance> {
     } catch (err) {
       done(err as Error, undefined);
     }
+  });
+
+  // Root Landing & Status Page
+  app.get('/', async (request, reply) => {
+    const accept = request.headers.accept || '';
+    if (accept.includes('text/html')) {
+      const html = getLandingHtml({
+        uptimeSeconds: Math.floor(process.uptime()),
+        serverTime: new Date().toISOString(),
+        version: '0.1.0',
+        env: config.NODE_ENV,
+      });
+      return reply.type('text/html; charset=utf-8').send(html);
+    }
+
+    return reply.send({
+      name: 'NanoLabs Control Center',
+      version: '0.1.0',
+      status: 'operational',
+      health: '/health',
+      docs: 'https://monitor.nanolabs.com.ar',
+      timestamp: new Date().toISOString(),
+    });
   });
 
   // Global Healthcheck

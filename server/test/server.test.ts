@@ -17,6 +17,38 @@ describe('Server & Endpoints Lifecycle', () => {
     await cacheService.disconnect();
   });
 
+  it('GET / should return HTML landing page when Accept header contains text/html', async () => {
+    const response = await app.inject({
+      method: 'GET',
+      url: '/',
+      headers: {
+        accept: 'text/html,application/xhtml+xml',
+      },
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.headers['content-type']).toContain('text/html');
+    expect(response.body).toContain('NanoLabs');
+    expect(response.body).toContain('Control Center');
+    expect(response.body).toContain('Servicios Operativos');
+  });
+
+  it('GET / should return JSON status when requested by API clients', async () => {
+    const response = await app.inject({
+      method: 'GET',
+      url: '/',
+      headers: {
+        accept: 'application/json',
+      },
+    });
+
+    expect(response.statusCode).toBe(200);
+    const body = JSON.parse(response.body);
+    expect(body.name).toBe('NanoLabs Control Center');
+    expect(body.status).toBe('operational');
+    expect(body.health).toBe('/health');
+  });
+
   it('GET /health should return 200 with service info', async () => {
     const response = await app.inject({
       method: 'GET',
