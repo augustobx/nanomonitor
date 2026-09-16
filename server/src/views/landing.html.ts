@@ -1387,13 +1387,19 @@ export function getLandingHtml(data: {
       }
     }
 
-    // Explicit Global Window Bindings
+    // Explicit Global Window Bindings (required for inline onclick handlers)
     window.openDeviceDetail = openDeviceDetail;
     window.switchTab = switchTab;
     window.switchDrawerTab = switchDrawerTab;
     window.closeDrawer = closeDrawer;
     window.copyEnrollCmd = copyEnrollCmd;
     window.filterSoftware = filterSoftware;
+    window.openLoginModal = openLoginModal;
+    window.closeLoginModal = closeLoginModal;
+    window.handleLogin = handleLogin;
+    window.quickLoginDemo = quickLoginDemo;
+    window.logout = logout;
+    window.loadDevices = loadDevices;
   </script>
 </body>
 </html>`;

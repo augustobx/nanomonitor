@@ -33,9 +33,21 @@ export async function buildApp(): Promise<FastifyInstance> {
           : true,
   });
 
-  // Security plugins
+  // Security plugins — CSP must allow inline scripts/styles for the SSR landing console
   await app.register(helmet, {
-    contentSecurityPolicy: config.NODE_ENV === 'production',
+    contentSecurityPolicy: {
+      directives: {
+        defaultSrc: ["'self'"],
+        scriptSrc: ["'self'", "'unsafe-inline'"],
+        scriptSrcAttr: ["'unsafe-inline'"],
+        styleSrc: ["'self'", "'unsafe-inline'", "https://fonts.googleapis.com"],
+        fontSrc: ["'self'", "https://fonts.gstatic.com", "data:"],
+        imgSrc: ["'self'", "data:"],
+        connectSrc: ["'self'"],
+        frameSrc: ["'none'"],
+        objectSrc: ["'none'"],
+      },
+    },
   });
 
   await app.register(cors, {
