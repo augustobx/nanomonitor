@@ -2478,7 +2478,7 @@ export function getLandingHtml(data: {
         '========================================',
         'Generado el: ' + new Date().toLocaleString('es-AR') + ' via NanoLabs Control Center'
       ];
-      const text = lines.join('\n');
+      const text = lines.join(String.fromCharCode(10));
 
       if (navigator.clipboard) {
         navigator.clipboard.writeText(text).then(function() {
