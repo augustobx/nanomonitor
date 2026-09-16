@@ -12,22 +12,22 @@
 | F5 | Event Viewer | ✅ Completada |
 | F6 | Panel Web: Dashboard | ✅ Completada |
 | F7 | Ficha del Dispositivo | ✅ Completada |
-| F8 | Health Score | ⏳ Pendiente |
-| F9 | Motor de Alertas | ⏳ Pendiente |
+| F8 | Health Score | ✅ Completada |
+| F9 | Motor de Alertas | ✅ Completada |
 | F14 | Offline Buffer | ⏳ Pendiente |
 | F17 | Docker y Producción | ✅ Completada |
 
 ## Post-MVP
 
-| Fase | Descripción |
-|---|---|
-| F10 | Detección de Tendencias |
-| F11 | Incidentes |
-| F12 | Notificaciones |
-| F13 | Actualización del Agente |
-| F15 | Seguridad Avanzada |
-| F16 | Backups y Recuperación |
-| F18 | Instalador Windows |
+| Fase | Descripción | Estado |
+|---|---|---|
+| F10 | Detección de Tendencias | ⏳ Pendiente |
+| F11 | Incidentes | ⏳ Pendiente |
+| F12 | Notificaciones | ⏳ Pendiente |
+| F13 | Actualización del Agente | ⏳ Pendiente |
+| F15 | Seguridad Avanzada | ⏳ Pendiente |
+| F16 | Backups y Recuperación | ⏳ Pendiente |
+| F18 | Instalador Windows | ✅ Completada |
 
 ## Futuro
 
