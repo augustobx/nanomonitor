@@ -25,6 +25,8 @@ services:
       - REFRESH_TOKEN_EXPIRES_DAYS=7
       - AGENT_TIMESTAMP_DRIFT_SECS=300
       - ADMIN_INITIAL_PASSWORD=${ADMIN_INITIAL_PASSWORD:-NanoLabs2026!Admin}
+    volumes:
+      - ./downloads:/app/downloads
     networks:
       - nanomonitor-internal
       - proxy

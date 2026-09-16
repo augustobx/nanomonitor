@@ -28,6 +28,10 @@ agent/*.exe~
 agent/*.dll
 agent/*.so
 agent/*.dylib
+installer/bin/
+installer/cmd/installer/embedded/*.exe
+downloads/*.exe
+server/downloads/*.exe
 
 # === Build artifacts ===
 *.o

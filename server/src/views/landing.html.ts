@@ -979,19 +979,41 @@ export function getLandingHtml(data: {
           </button>
         </div>
 
-        <!-- Token & Agent Command Box for this Customer -->
-        <div class="token-box">
-          <div>
-            <div style="font-size: 11px; font-weight: 600; color: #94a3b8; text-transform: uppercase;">
-              Token de Enrolamiento Asignado a esta Empresa
+        <!-- Deployment & Enrollment Box for this Customer -->
+        <div class="token-box" style="display: flex; flex-direction: column; gap: 12px; padding: 16px;">
+          <div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 10px;">
+            <div>
+              <div style="font-size: 11px; font-weight: 700; color: #38bdf8; text-transform: uppercase; letter-spacing: 0.5px;">
+                🚀 Despliegue de Agentes para este Cliente (Instalador Reutilizable)
+              </div>
+              <div style="font-size: 12px; color: var(--text-muted); margin-top: 2px;">
+                Token de organización: <code id="wsCustomerTokenBadge" style="color: #f8fafc; background: #1e293b; padding: 2px 6px; border-radius: 4px; font-family: monospace;">NL-TEST-***</code>
+              </div>
             </div>
-            <div class="token-text" id="wsEnrollCmdText">
-              nanoagent.exe -api-url https://monitor.nanolabs.com.ar -token NL-TEST-***
+            <div style="display: flex; gap: 8px; flex-wrap: wrap;">
+              <a href="/downloads/NanoMonitor-Setup.exe" class="btn btn-primary btn-sm" download style="text-decoration: none;">
+                ⬇️ Descargar Instalador (.exe)
+              </a>
+              <button class="btn btn-secondary btn-sm" onclick="copyCustomerPs1Cmd()">
+                ⚡ Copiar Script PowerShell (1 Clic)
+              </button>
+              <button class="btn btn-secondary btn-sm" onclick="copyCurrentCustomerEnrollCmd()">
+                📋 Copiar Comando CLI
+              </button>
             </div>
           </div>
-          <button class="btn btn-primary btn-sm" onclick="copyCurrentCustomerEnrollCmd()">
-            📋 Copiar Comando de Agente
-          </button>
+
+          <div style="background: rgba(0,0,0,0.3); border: 1px solid var(--border-color); border-radius: 6px; padding: 10px 14px;">
+            <div style="font-size: 11px; color: var(--text-muted); margin-bottom: 4px;">
+              Instalación remota de 1 línea en PowerShell (Descarga + Servicio + Bandeja de sistema):
+            </div>
+            <div class="token-text" id="wsPs1CmdText" style="font-size: 12px; word-break: break-all;">
+              & ([scriptblock]::Create((irm https://monitor.nanolabs.com.ar/downloads/install.ps1))) -Token "NL-TEST-***"
+            </div>
+            <div style="display: none;" id="wsCliBox">
+              <span class="token-text" id="wsEnrollCmdText">nanoagent.exe -api-url https://monitor.nanolabs.com.ar -token NL-TEST-***</span>
+            </div>
+          </div>
         </div>
       </div>
 
@@ -1700,7 +1722,9 @@ export function getLandingHtml(data: {
       if (customer.enrollmentTokens && customer.enrollmentTokens[0] && customer.enrollmentTokens[0].token) {
         tokenStr = customer.enrollmentTokens[0].token;
       }
+      setVal('wsCustomerTokenBadge', tokenStr);
       setVal('wsEnrollCmdText', 'nanoagent.exe -api-url https://monitor.nanolabs.com.ar -token ' + tokenStr);
+      setVal('wsPs1CmdText', '& ([scriptblock]::Create((irm https://monitor.nanolabs.com.ar/downloads/install.ps1))) -Token "' + tokenStr + '"');
 
       // Customer Devices & KPIs
       const custDevices = currentDevices.filter(function(d) {
@@ -1744,7 +1768,20 @@ export function getLandingHtml(data: {
           alert('✅ Comando de agente copiado al portapapeles para esta empresa.');
         });
       } else {
-        prompt('Comando de instalación:', text);
+        prompt('Comando de enrolamiento:', text);
+      }
+    }
+
+    function copyCustomerPs1Cmd() {
+      const el = document.getElementById('wsPs1CmdText');
+      const text = el ? el.textContent.trim() : '';
+      if (!text) return;
+      if (navigator.clipboard) {
+        navigator.clipboard.writeText(text).then(function() {
+          alert('✅ Script PowerShell copiado al portapapeles. Ejecútelo como Administrador en el equipo cliente.');
+        });
+      } else {
+        prompt('Script PowerShell de instalación:', text);
       }
     }
 
@@ -2727,6 +2764,7 @@ export function getLandingHtml(data: {
     window.filterDirectory = filterDirectory;
     window.filterWorkspaceDevices = filterWorkspaceDevices;
     window.copyCurrentCustomerEnrollCmd = copyCurrentCustomerEnrollCmd;
+    window.copyCustomerPs1Cmd = copyCustomerPs1Cmd;
     window.copyGenericEnrollCmd = copyGenericEnrollCmd;
     window.copyDeviceDiagnostic = copyDeviceDiagnostic;
     window.filterSoftware = filterSoftware;

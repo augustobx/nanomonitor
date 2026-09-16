@@ -1,4 +1,6 @@
 import fastify, { FastifyInstance } from 'fastify';
+import fs from 'node:fs';
+import path from 'node:path';
 import cors from '@fastify/cors';
 import helmet from '@fastify/helmet';
 import cookie from '@fastify/cookie';
@@ -156,6 +158,89 @@ export async function buildApp(): Promise<FastifyInstance> {
       uptime: process.uptime(),
     };
   });
+
+  // Downloads & Deployment Scripts
+  const serveInstaller = async (request: any, reply: any) => {
+    const candidatePaths = [
+      path.join(process.cwd(), 'downloads', 'NanoMonitor-Setup.exe'),
+      path.join(process.cwd(), '..', 'downloads', 'NanoMonitor-Setup.exe'),
+      path.join(process.cwd(), '..', 'installer', 'bin', 'NanoMonitor-Setup.exe'),
+      '/app/downloads/NanoMonitor-Setup.exe',
+    ];
+
+    let foundPath = '';
+    for (const p of candidatePaths) {
+      try {
+        await fs.promises.access(p);
+        foundPath = p;
+        break;
+      } catch {
+        // continue
+      }
+    }
+
+    if (!foundPath) {
+      return reply.status(404).send({
+        statusCode: 404,
+        error: 'Not Found',
+        message: 'NanoMonitor-Setup.exe not found on server',
+      });
+    }
+
+    const stat = await fs.promises.stat(foundPath);
+    reply
+      .header('Content-Type', 'application/octet-stream')
+      .header('Content-Disposition', 'attachment; filename="NanoMonitor-Setup.exe"')
+      .header('Content-Length', stat.size);
+    return reply.send(fs.createReadStream(foundPath));
+  };
+
+  const servePs1 = async (request: any, reply: any) => {
+    const query = (request.query || {}) as { token?: string; api_url?: string };
+    const candidatePaths = [
+      path.join(process.cwd(), 'downloads', 'install.ps1'),
+      path.join(process.cwd(), '..', 'scripts', 'install.ps1'),
+      path.join(process.cwd(), '..', 'downloads', 'install.ps1'),
+      '/app/downloads/install.ps1',
+    ];
+
+    let content = '';
+    for (const p of candidatePaths) {
+      try {
+        content = await fs.promises.readFile(p, 'utf-8');
+        break;
+      } catch {
+        // continue
+      }
+    }
+
+    if (!content) {
+      return reply.status(404).send({
+        statusCode: 404,
+        error: 'Not Found',
+        message: 'install.ps1 script not found on server',
+      });
+    }
+
+    if (query.token) {
+      const sanitizedToken = query.token.replace(/["'`$\\]/g, '');
+      content = content.replace(
+        '[string]$Token = ""',
+        `[string]$Token = "${sanitizedToken}"`
+      );
+    }
+
+    return reply
+      .header('Content-Type', 'text/plain; charset=utf-8')
+      .send(content);
+  };
+
+  app.get('/downloads/NanoMonitor-Setup.exe', serveInstaller);
+  app.get('/api/v1/downloads/NanoMonitor-Setup.exe', serveInstaller);
+
+  app.get('/downloads/install.ps1', servePs1);
+  app.get('/api/v1/downloads/install.ps1', servePs1);
+  app.get('/install.ps1', servePs1);
 
   // Register API Routes
   // 1. Agent Direct Endpoints (compatibility with Go agent default paths)
