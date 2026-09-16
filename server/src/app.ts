@@ -97,6 +97,7 @@ export async function buildApp(): Promise<FastifyInstance> {
         customers = await db.customer.findMany({
           include: {
             sites: { select: { id: true, name: true } },
+            enrollmentTokens: { select: { id: true, token: true, expiresAt: true }, take: 1 },
             _count: {
               select: {
                 devices: true,
