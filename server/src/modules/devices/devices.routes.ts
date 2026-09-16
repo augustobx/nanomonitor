@@ -106,7 +106,7 @@ export const devicesRoutes: FastifyPluginAsync = async (fastify: FastifyInstance
           orderBy: { collectedAt: 'desc' },
         },
         metrics: {
-          take: 1,
+          take: 50,
           orderBy: { timestamp: 'desc' },
         },
         events: {
@@ -125,6 +125,25 @@ export const devicesRoutes: FastifyPluginAsync = async (fastify: FastifyInstance
     }
 
     return reply.send({ statusCode: 200, data: device });
+  });
+
+  // GET /api/v1/devices/:id/metrics
+  fastify.get('/:id/metrics', async (request, reply) => {
+    const tenantId = getTenantId(request);
+    const { id } = request.params as { id: string };
+    const query = request.query as { limit?: string };
+    const limitNum = Math.min(200, Math.max(1, parseInt(query.limit || '50', 10)));
+
+    const metrics = await db.deviceMetric.findMany({
+      where: { deviceId: id, tenantId },
+      orderBy: { timestamp: 'desc' },
+      take: limitNum,
+    });
+
+    return reply.send({
+      statusCode: 200,
+      data: metrics.reverse(),
+    });
   });
 
   // GET /api/v1/devices/:id/events

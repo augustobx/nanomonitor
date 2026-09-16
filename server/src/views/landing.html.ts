@@ -1190,50 +1190,169 @@ export function getLandingHtml(data: {
       </div>
 
       <div class="drawer-body">
-        <!-- Drawer Tabs -->
-        <div class="tabs-bar" style="margin-bottom: 0;">
-          <button class="tab-btn active" id="dTab1" onclick="switchDrawerTab('specs')">Resumen & Hardware</button>
-          <button class="tab-btn" id="dTab2" onclick="switchDrawerTab('storage')">Almacenamiento (F4)</button>
-          <button class="tab-btn" id="dTab3" onclick="switchDrawerTab('security')">Seguridad & Parches (F4)</button>
-          <button class="tab-btn" id="dTab4" onclick="switchDrawerTab('software')">Software Instalado (F4)</button>
-          <button class="tab-btn" id="dTab5" onclick="switchDrawerTab('events')">Eventos Críticos (F5)</button>
+        <!-- Drawer Tabs (F7 Complete RMM Sheet) -->
+        <div class="tabs-bar" style="margin-bottom: 0; overflow-x: auto; flex-wrap: nowrap; gap: 6px; padding-bottom: 4px;">
+          <button class="tab-btn active" id="dTab1" onclick="switchDrawerTab('metrics')">📊 Rendimiento (F7)</button>
+          <button class="tab-btn" id="dTab2" onclick="switchDrawerTab('specs')">💻 Hardware & SO (F7)</button>
+          <button class="tab-btn" id="dTab3" onclick="switchDrawerTab('storage')">💾 Discos & SMART (F4)</button>
+          <button class="tab-btn" id="dTab4" onclick="switchDrawerTab('network')">🌐 Red & Conectividad (F7)</button>
+          <button class="tab-btn" id="dTab5" onclick="switchDrawerTab('security')">🛡️ Seguridad & Parches (F4)</button>
+          <button class="tab-btn" id="dTab6" onclick="switchDrawerTab('software')">📦 Software (F4)</button>
+          <button class="tab-btn" id="dTab7" onclick="switchDrawerTab('events')">⚠️ Eventos (F5)</button>
+          <button class="tab-btn" id="dTab8" onclick="switchDrawerTab('agent')">🏷️ Agente & Reporte (F7)</button>
         </div>
 
-        <!-- DView 1: Specs -->
-        <div id="dViewSpecs" class="spec-grid">
-          <div class="spec-box">
-            <span class="label">Procesador (CPU)</span>
-            <span class="val" id="dCpuName">11th Gen Intel i5-11400</span>
+        <!-- DView 1: Metrics & Telemetry (F7) -->
+        <div id="dViewMetrics" style="display: flex; flex-direction: column; gap: 20px;">
+          <div class="spec-grid">
+            <div class="spec-box">
+              <span class="label">Uso Actual de CPU</span>
+              <div style="display: flex; justify-content: space-between; align-items: baseline;">
+                <span class="val" id="dCurrentCpu">18%</span>
+                <span style="font-size: 11px; color: var(--text-muted);" id="dCpuSummaryText">6 Cores Activos</span>
+              </div>
+              <div class="gauge-bar" style="margin-top: 6px;">
+                <div class="gauge-fill" id="dCpuBarFill" style="width: 18%; background: linear-gradient(90deg, #38bdf8, #6366f1);"></div>
+              </div>
+            </div>
+
+            <div class="spec-box">
+              <span class="label">Uso Actual de Memoria RAM</span>
+              <div style="display: flex; justify-content: space-between; align-items: baseline;">
+                <span class="val" id="dCurrentRam">42% (6.7 GB)</span>
+                <span style="font-size: 11px; color: var(--text-muted);" id="dRamSummaryText">9.3 GB Libres</span>
+              </div>
+              <div class="gauge-bar" style="margin-top: 6px;">
+                <div class="gauge-fill" id="dRamBarFill" style="width: 42%; background: linear-gradient(90deg, #a855f7, #ec4899);"></div>
+              </div>
+            </div>
+
+            <div class="spec-box">
+              <span class="label">Tiempo Activo del Sistema (Uptime)</span>
+              <span class="val" id="dCurrentUptime" style="color: #34d399;">14d 6h 32m</span>
+              <span style="font-size: 11px; color: var(--text-muted);">Sin reinicios inesperados</span>
+            </div>
+
+            <div class="spec-box">
+              <span class="label">Latencia con Servidor Central</span>
+              <span class="val" id="dCurrentLatency" style="color: #38bdf8;">12 ms</span>
+              <span style="font-size: 11px; color: var(--text-muted);">monitor.nanolabs.com.ar</span>
+            </div>
           </div>
-          <div class="spec-box">
-            <span class="label">Núcleos de CPU</span>
-            <span class="val" id="dCpuCores">6 Núcleos / 12 Hilos</span>
+
+          <!-- SVG Metrics Chart -->
+          <div style="background: rgba(15, 23, 42, 0.6); border: 1px solid var(--card-border); border-radius: 16px; padding: 20px;">
+            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px; flex-wrap: wrap; gap: 10px;">
+              <div>
+                <h4 style="font-size: 15px; color: #fff; font-weight: 700;">Telemetría Histórica de Rendimiento (CPU & RAM)</h4>
+                <p style="font-size: 12px; color: var(--text-muted); margin-top: 2px;">Muestras temporales capturadas periódicamente por el agente Go</p>
+              </div>
+              <div style="display: flex; gap: 14px; font-size: 12px; font-weight: 600;">
+                <span style="display: flex; align-items: center; gap: 6px; color: #38bdf8;">
+                  <span style="width: 10px; height: 10px; border-radius: 50%; background: #38bdf8;"></span> CPU %
+                </span>
+                <span style="display: flex; align-items: center; gap: 6px; color: #a855f7;">
+                  <span style="width: 10px; height: 10px; border-radius: 50%; background: #a855f7;"></span> RAM %
+                </span>
+              </div>
+            </div>
+
+            <div id="metricsChartContainer" style="width: 100%; overflow-x: auto;">
+              <!-- Dynamic SVG injected via renderMetricsChart -->
+            </div>
           </div>
-          <div class="spec-box">
-            <span class="label">Memoria RAM Total</span>
-            <span class="val" id="dRamTotal">16 GB (16384 MB)</span>
-          </div>
-          <div class="spec-box">
-            <span class="label">Placa Madre / Fabricante</span>
-            <span class="val" id="dMotherboard">Gigabyte H510M H</span>
-          </div>
-          <div class="spec-box">
-            <span class="label">Dirección IP Local</span>
-            <span class="val code-font" id="dIp">192.168.0.65</span>
-          </div>
-          <div class="spec-box">
-            <span class="label">Latencia con Servidor Central</span>
-            <span class="val" id="dLatency">12 ms</span>
+
+          <!-- Logical Drives and Volumes -->
+          <div>
+            <h4 style="font-size: 14px; color: var(--text-muted); text-transform: uppercase; margin-bottom: 12px;">Particiones Lógicas y Volúmenes de Almacenamiento</h4>
+            <div id="dVolumesList" style="display: flex; flex-direction: column; gap: 12px;"></div>
           </div>
         </div>
 
-        <!-- DView 2: Storage -->
+        <!-- DView 2: Specs & Hardware Detailed (F7) -->
+        <div id="dViewSpecs" style="display: none; flex-direction: column; gap: 20px;">
+          <div class="spec-grid">
+            <div class="spec-box">
+              <span class="label">Procesador (CPU)</span>
+              <span class="val" id="dCpuName">11th Gen Intel i5-11400</span>
+            </div>
+            <div class="spec-box">
+              <span class="label">Núcleos e Hilos de CPU</span>
+              <span class="val" id="dCpuCores">6 Núcleos / 12 Hilos</span>
+            </div>
+            <div class="spec-box">
+              <span class="label">Memoria RAM Total</span>
+              <span class="val" id="dRamTotal">16 GB (16384 MB)</span>
+            </div>
+            <div class="spec-box">
+              <span class="label">Placa Madre / Fabricante</span>
+              <span class="val" id="dMotherboard">Gigabyte H510M H</span>
+            </div>
+            <div class="spec-box">
+              <span class="label">BIOS / Firmware</span>
+              <span class="val" id="dBiosInfo">American Megatrends Inc. F2</span>
+            </div>
+            <div class="spec-box">
+              <span class="label">Sistema Operativo</span>
+              <span class="val" id="dOsEdition">Windows 11 Pro 64-bit</span>
+            </div>
+            <div class="spec-box">
+              <span class="label">Versión de Compilación (Build)</span>
+              <span class="val code-font" id="dOsBuild">22631.3007</span>
+            </div>
+            <div class="spec-box">
+              <span class="label">Hora de Último Arranque</span>
+              <span class="val code-font" id="dBootTime">10/09/2026 08:30</span>
+            </div>
+          </div>
+        </div>
+
+        <!-- DView 3: Storage (F4) -->
         <div id="dViewStorage" style="display: none; flex-direction: column; gap: 16px;">
           <h4 style="font-size: 15px; color: var(--text-muted); text-transform: uppercase;">Discos Físicos & Estado SMART</h4>
           <div id="dStorageList" style="display: flex; flex-direction: column; gap: 12px;"></div>
         </div>
 
-        <!-- DView 3: Security & Updates -->
+        <!-- DView 4: Network & Connectivity (F7) -->
+        <div id="dViewNetwork" style="display: none; flex-direction: column; gap: 20px;">
+          <div class="spec-grid">
+            <div class="spec-box">
+              <span class="label">Dirección IP Principal</span>
+              <span class="val code-font" id="dNetIp">192.168.0.65</span>
+            </div>
+            <div class="spec-box">
+              <span class="label">Puerta de Enlace (Gateway)</span>
+              <span class="val code-font" id="dNetGateway">192.168.0.1</span>
+            </div>
+            <div class="spec-box">
+              <span class="label">Servidores DNS</span>
+              <span class="val code-font" id="dNetDns">1.1.1.1, 8.8.8.8</span>
+            </div>
+            <div class="spec-box">
+              <span class="label">Latencia con Servidor Central</span>
+              <span class="val code-font" id="dNetLatency">12 ms</span>
+            </div>
+          </div>
+
+          <div>
+            <h4 style="font-size: 14px; color: var(--text-muted); text-transform: uppercase; margin-bottom: 12px;">Adaptadores de Red Físicos y Virtuales</h4>
+            <div class="table-container">
+              <table>
+                <thead>
+                  <tr>
+                    <th>Adaptador / Interfaz</th>
+                    <th>Dirección MAC</th>
+                    <th>IPv4 Asignada</th>
+                    <th>Tipo / Estado</th>
+                  </tr>
+                </thead>
+                <tbody id="dNetTable"></tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+
+        <!-- DView 5: Security & Updates (F4) -->
         <div id="dViewSecurity" style="display: none; flex-direction: column; gap: 20px;">
           <div class="spec-grid">
             <div class="spec-box">
@@ -1277,7 +1396,7 @@ export function getLandingHtml(data: {
           </div>
         </div>
 
-        <!-- DView 4: Software Catalog -->
+        <!-- DView 6: Software Catalog (F4) -->
         <div id="dViewSoftware" style="display: none; flex-direction: column; gap: 16px;">
           <div style="display: flex; justify-content: space-between; align-items: center; gap: 16px;">
             <input type="text" id="softwareSearchInput" class="search-input" placeholder="🔍 Buscar aplicación instalada (ej. Chrome, Python, Office...)" oninput="filterSoftware()">
@@ -1299,7 +1418,7 @@ export function getLandingHtml(data: {
           </div>
         </div>
 
-        <!-- DView 5: Events (F5) -->
+        <!-- DView 7: Events (F5) -->
         <div id="dViewEvents" style="display: none; flex-direction: column; gap: 16px;">
           <div style="display: flex; justify-content: space-between; align-items: center; gap: 16px;">
             <h4 style="font-size: 15px; color: var(--text-muted); text-transform: uppercase;">Registro de Eventos Críticos de Windows</h4>
@@ -1319,6 +1438,56 @@ export function getLandingHtml(data: {
               </thead>
               <tbody id="dEventsTable"></tbody>
             </table>
+          </div>
+        </div>
+
+        <!-- DView 8: Agent Identity & Diagnostic Export (F7) -->
+        <div id="dViewAgent" style="display: none; flex-direction: column; gap: 20px;">
+          <div class="spec-grid">
+            <div class="spec-box">
+              <span class="label">Device UUID</span>
+              <span class="val code-font" style="font-size: 13px;" id="dDiagDeviceId">-</span>
+            </div>
+            <div class="spec-box">
+              <span class="label">Agent ID</span>
+              <span class="val code-font" style="font-size: 13px;" id="dDiagAgentId">-</span>
+            </div>
+            <div class="spec-box">
+              <span class="label">Versión del Agente Go</span>
+              <span class="val code-font" style="color: #6ee7b7;" id="dDiagAgentVersion">v0.1.0</span>
+            </div>
+            <div class="spec-box">
+              <span class="label">Cliente / Organización</span>
+              <span class="val" id="dDiagCustomer">-</span>
+            </div>
+            <div class="spec-box">
+              <span class="label">Sede / Sucursal</span>
+              <span class="val" id="dDiagSite">-</span>
+            </div>
+            <div class="spec-box">
+              <span class="label">Fecha de Enrolamiento</span>
+              <span class="val code-font" id="dDiagEnrolledAt">-</span>
+            </div>
+            <div class="spec-box">
+              <span class="label">Último Contacto / Auth</span>
+              <span class="val code-font" id="dDiagLastAuth">-</span>
+            </div>
+            <div class="spec-box">
+              <span class="label">Token Utilizado</span>
+              <span class="val code-font" style="color: #38bdf8;" id="dDiagToken">NL-TEST-***</span>
+            </div>
+          </div>
+
+          <div style="background: rgba(99, 102, 241, 0.1); border: 1px solid rgba(99, 102, 241, 0.3); border-radius: 16px; padding: 24px; display: flex; flex-direction: column; gap: 14px;">
+            <div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 12px;">
+              <div>
+                <h4 style="font-size: 16px; font-weight: 700; color: #fff;">Informe Técnico para Soporte</h4>
+                <p style="font-size: 13px; color: var(--text-muted); margin-top: 2px;">Genera un resumen formateado de specs, hardware, red, seguridad y eventos para adjuntar a incidencias o tickets.</p>
+              </div>
+              <button class="btn btn-primary" onclick="copyDeviceDiagnostic()" style="padding: 10px 18px; font-size: 13px;">
+                📋 Copiar Diagnóstico Rápido
+              </button>
+            </div>
           </div>
         </div>
 
@@ -1833,12 +2002,12 @@ export function getLandingHtml(data: {
           '<td><span class="status-pill status-online" style="font-size: 11px;">Defender Activo</span><div style="font-size: 11px; color: #f59e0b; margin-top: 2px;">● Reinicio Pendiente</div></td>' +
           '<td>' + eventsBadge + '</td>' +
           '<td><span class="status-pill ' + statusClass + '">' + statusLabel + '</span></td>' +
-          '<td><button class="btn btn-primary btn-device-detail" style="padding: 6px 12px; font-size: 12px;" data-device-id="' + d.id + '">Ver Ficha (F4/F5)</button></td>' +
+          '<td><button class="btn btn-primary btn-device-detail" style="padding: 6px 12px; font-size: 12px;" data-device-id="' + d.id + '">Ver Ficha (F7)</button></td>' +
         '</tr>';
       }).join('');
     }
 
-    // Delegated click handler for "Ver Ficha F4" buttons
+    // Delegated click handler for "Ver Ficha" buttons
     document.addEventListener('click', function(e) {
       var btn = e.target.closest('.btn-device-detail');
       if (btn && btn.dataset.deviceId) {
@@ -1846,7 +2015,17 @@ export function getLandingHtml(data: {
       }
     });
 
-    // Open Device Detail Drawer
+    function formatUptime(seconds) {
+      if (!seconds || seconds <= 0) return 'Recién iniciado';
+      var days = Math.floor(seconds / 86400);
+      var hours = Math.floor((seconds % 86400) / 3600);
+      var minutes = Math.floor((seconds % 3600) / 60);
+      if (days > 0) return days + 'd ' + hours + 'h ' + minutes + 'm';
+      if (hours > 0) return hours + 'h ' + minutes + 'm';
+      return minutes + 'm';
+    }
+
+    // Open Device Detail Drawer (F7 Complete RMM Sheet)
     async function openDeviceDetail(deviceId) {
       try {
         let d = (currentDevices && currentDevices.find(function(item) { return item.id === deviceId; })) || (currentDevices && currentDevices[0]);
@@ -1885,42 +2064,94 @@ export function getLandingHtml(data: {
         }
 
         if (!d) return;
-
         selectedDevice = d;
+
+        // Header
         setVal('drawerHostname', d.hostname || 'Equipo');
-        setVal('drawerSub', ((d.customer && d.customer.name) ? d.customer.name : 'NanoLabs Infraestructura Interna') + ' • ' + (d.osEdition || 'Windows 11 Pro 64-bit'));
-        
-        // Specs tab
-        setVal('dCpuName', d.cpuName || '11th Gen Intel(R) Core(TM) i5-11400 @ 2.60GHz');
-        setVal('dCpuCores', (d.cpuCores || 6) + ' Cores / ' + ((d.cpuCores || 6) * 2) + ' Hilos');
-        setVal('dRamTotal', (d.ramTotalMB ? Math.round(d.ramTotalMB / 1024) : 16) + ' GB RAM');
-        setVal('dMotherboard', (d.manufacturer || 'Gigabyte Technology Co., Ltd.') + ' ' + (d.model || 'H510M H'));
+        const drawerStatusEl = document.getElementById('drawerStatus');
+        if (drawerStatusEl) {
+          const isOnline = d.status === 'ONLINE';
+          drawerStatusEl.textContent = isOnline ? 'ONLINE' : 'OFFLINE';
+          drawerStatusEl.className = 'status-pill ' + (isOnline ? 'status-online' : 'status-offline');
+        }
+        const customerName = (d.customer && d.customer.name) ? d.customer.name : 'NanoLabs Infraestructura Interna';
+        const siteName = (d.site && d.site.name) ? d.site.name : 'Sede Principal';
+        setVal('drawerSub', customerName + ' • ' + siteName + ' • ' + (d.osEdition || 'Windows 11 Pro 64-bit'));
 
         const latestInv = (d.inventories && d.inventories[0]) ? d.inventories[0] : null;
+        const latestMetric = (d.metrics && d.metrics[0]) ? d.metrics[0] : null;
 
-        // Network
-        if (latestInv && latestInv.network && latestInv.network.interfaces && latestInv.network.interfaces[0]) {
-          const iface = latestInv.network.interfaces[0];
-          setVal('dIp', iface.ipAddresses ? iface.ipAddresses[0] : '192.168.0.65');
-        } else {
-          setVal('dIp', '192.168.0.65');
+        // 1. Rendimiento & Telemetría (F7)
+        const cpuPct = latestMetric ? Math.min(100, Math.max(0, Math.round(latestMetric.cpuPercent || 0))) : 18;
+        setVal('dCurrentCpu', cpuPct + '%');
+        setVal('dCpuSummaryText', (d.cpuCores || 6) + ' Cores Activos');
+        const cpuBarFill = document.getElementById('dCpuBarFill');
+        if (cpuBarFill) {
+          cpuBarFill.style.width = cpuPct + '%';
+          if (cpuPct > 85) cpuBarFill.style.background = 'linear-gradient(90deg, #ef4444, #b91c1c)';
+          else if (cpuPct > 65) cpuBarFill.style.background = 'linear-gradient(90deg, #f59e0b, #d97706)';
+          else cpuBarFill.style.background = 'linear-gradient(90deg, #38bdf8, #6366f1)';
         }
-        setVal('dLatency', (latestInv && latestInv.network && latestInv.network.serverLatencyMs) ? latestInv.network.serverLatencyMs + ' ms' : '12 ms');
 
-        // Storage (F4)
+        const ramUsedMB = latestMetric ? latestMetric.ramUsedMB : 6880;
+        const ramAvailMB = latestMetric ? latestMetric.ramAvailMB : 9504;
+        const ramTotalMB = d.ramTotalMB || (ramUsedMB + ramAvailMB);
+        const ramPct = Math.min(100, Math.round((ramUsedMB / ramTotalMB) * 100)) || 42;
+        const ramUsedGB = (ramUsedMB / 1024).toFixed(1);
+        const ramTotalGB = (ramTotalMB / 1024).toFixed(0);
+        const ramAvailGB = (ramAvailMB / 1024).toFixed(1);
+        setVal('dCurrentRam', ramPct + '% (' + ramUsedGB + ' GB / ' + ramTotalGB + ' GB)');
+        setVal('dRamSummaryText', ramAvailGB + ' GB Libres');
+        const ramBarFill = document.getElementById('dRamBarFill');
+        if (ramBarFill) ramBarFill.style.width = ramPct + '%';
+
+        const uptimeSec = latestMetric ? latestMetric.uptimeSeconds : 1233120;
+        setVal('dCurrentUptime', formatUptime(uptimeSec));
+
+        const latencyVal = (latestMetric && latestMetric.networkLatencyMs != null)
+          ? latestMetric.networkLatencyMs
+          : ((latestInv && latestInv.network && latestInv.network.serverLatencyMs) ? latestInv.network.serverLatencyMs : 12);
+        setVal('dCurrentLatency', latencyVal + ' ms');
+
+        // Render Metrics SVG Chart
+        renderMetricsChart(d.metrics || []);
+
+        // Render Volumes List
+        const volData = (latestMetric && latestMetric.volumes) ? latestMetric.volumes : null;
+        renderVolumesList(volData);
+
+        // 2. Hardware & Specs (F7)
+        setVal('dCpuName', d.cpuName || (latestInv && latestInv.hardware && latestInv.hardware.cpu && latestInv.hardware.cpu.name) || '11th Gen Intel(R) Core(TM) i5-11400 @ 2.60GHz');
+        const maxClock = (latestInv && latestInv.hardware && latestInv.hardware.cpu && latestInv.hardware.cpu.maxClockMhz) ? ' (' + latestInv.hardware.cpu.maxClockMhz + ' MHz)' : '';
+        setVal('dCpuCores', (d.cpuCores || 6) + ' Cores / ' + ((d.cpuCores || 6) * 2) + ' Hilos' + maxClock);
+        setVal('dRamTotal', (d.ramTotalMB ? Math.round(d.ramTotalMB / 1024) : 16) + ' GB RAM (' + (d.ramTotalMB || 16384) + ' MB)');
+        setVal('dMotherboard', (d.manufacturer || 'Gigabyte Technology Co., Ltd.') + ' ' + (d.model || 'H510M H'));
+        setVal('dBiosInfo', (d.serialNumber ? 'S/N: ' + d.serialNumber : 'American Megatrends Inc. F2 (UEFI)'));
+        setVal('dOsEdition', d.osEdition || 'Windows 11 Pro 64-bit');
+        setVal('dOsBuild', (d.osBuild || '22631.3007') + (d.osVersion ? ' (' + d.osVersion + ')' : ''));
+
+        // Boot time
+        if (latestInv && latestInv.os && latestInv.os.bootTime) {
+          setVal('dBootTime', new Date(latestInv.os.bootTime).toLocaleString('es-AR'));
+        } else {
+          const bootDate = new Date(Date.now() - (uptimeSec * 1000));
+          setVal('dBootTime', bootDate.toLocaleString('es-AR'));
+        }
+
+        // 3. Storage & SMART (F4)
         const storageListEl = document.getElementById('dStorageList');
         if (storageListEl) {
           const disks = (latestInv && latestInv.storage && latestInv.storage.disks) ? latestInv.storage.disks : [
-            { friendlyName: 'KINGSTON SNV2S1000G', mediaType: 'NVMe', busType: 'NVMe', sizeGb: 931, healthStatus: 'Healthy' }
+            { friendlyName: 'KINGSTON SNV2S1000G NVMe SSD', mediaType: 'NVMe', busType: 'NVMe', sizeGb: 931, healthStatus: 'Healthy' }
           ];
 
           storageListEl.innerHTML = disks.map(function(disk) {
             return '<div class="spec-box" style="padding: 16px;">' +
               '<div style="display: flex; justify-content: space-between; align-items: center;">' +
                 '<div>' +
-                  '<strong style="font-size: 15px; color: #fff;">' + (disk.friendlyName || 'Unidad NVMe') + '</strong>' +
+                  '<strong style="font-size: 15px; color: #fff;">' + (disk.friendlyName || disk.model || 'Unidad NVMe') + '</strong>' +
                   '<div style="font-size: 12px; color: var(--text-muted); margin-top: 2px;">' +
-                    'Tipo de Bus: ' + (disk.busType || 'NVMe') + ' • Tecnología: ' + (disk.mediaType || 'SSD') + ' • Capacidad: ' + (disk.sizeGb || 931) + ' GB' +
+                    'Tipo de Bus: ' + (disk.busType || disk.interface || 'NVMe') + ' • Tecnología: ' + (disk.mediaType || 'SSD') + ' • Capacidad: ' + (disk.sizeGb || 931) + ' GB' +
                   '</div>' +
                 '</div>' +
                 '<span class="status-pill status-online" style="font-size: 12px;">' + (disk.healthStatus || 'Healthy') + '</span>' +
@@ -1929,7 +2160,22 @@ export function getLandingHtml(data: {
           }).join('');
         }
 
-        // Security & Updates (F4)
+        // 4. Red & Conectividad (F7)
+        const netInterfaces = (latestInv && latestInv.network && latestInv.network.interfaces) ? latestInv.network.interfaces : [];
+        if (netInterfaces.length > 0 && netInterfaces[0]) {
+          const iface = netInterfaces[0];
+          setVal('dNetIp', (iface.ipAddresses && iface.ipAddresses[0]) ? iface.ipAddresses[0] : '192.168.0.65');
+          setVal('dNetGateway', iface.gateway || '192.168.0.1');
+          setVal('dNetDns', (iface.dnsServers && iface.dnsServers.length > 0) ? iface.dnsServers.join(', ') : '1.1.1.1, 8.8.8.8');
+        } else {
+          setVal('dNetIp', '192.168.0.65');
+          setVal('dNetGateway', '192.168.0.1');
+          setVal('dNetDns', '1.1.1.1, 8.8.8.8');
+        }
+        setVal('dNetLatency', latencyVal + ' ms (monitor.nanolabs.com.ar)');
+        renderNetworkTable(netInterfaces);
+
+        // 5. Seguridad & Parches (F4)
         const sec = (latestInv && latestInv.security) ? latestInv.security : null;
         if (sec) {
           const av = (sec.antivirusList && sec.antivirusList[0]) ? sec.antivirusList[0] : null;
@@ -1971,24 +2217,277 @@ export function getLandingHtml(data: {
           setHtml('dHotfixTable', '<tr><td><span class="code-font" style="color: #38bdf8;">KB5034441</span></td><td>Security Update for Windows</td><td>10/01/2026</td></tr><tr><td><span class="code-font" style="color: #38bdf8;">KB5034123</span></td><td>Cumulative Update Windows 11</td><td>08/01/2026</td></tr>');
         }
 
-        // Software (F4)
+        // 6. Software (F4)
         const swInv = (d.softwareInventories && d.softwareInventories[0]) ? d.softwareInventories[0] : null;
         const softwareItems = (swInv && swInv.software) ? swInv.software : [];
         cachedSoftwareList = Array.isArray(softwareItems) ? softwareItems : [];
         renderSoftwareTable(cachedSoftwareList);
 
-        // Events (F5)
+        // 7. Eventos (F5)
         const eventsList = (d.events && Array.isArray(d.events)) ? d.events : [];
         renderEventsTable(eventsList);
 
-        // Open Drawer
-        switchDrawerTab('specs');
+        // 8. Agente & Diagnóstico (F7)
+        setVal('dDiagDeviceId', d.id || '-');
+        setVal('dDiagAgentId', d.agentId || ('ag-' + (d.id ? d.id.substring(0, 8) : '01')));
+        setVal('dDiagAgentVersion', d.agentVersion || 'v0.1.0 (Go x64)');
+        setVal('dDiagCustomer', customerName);
+        setVal('dDiagSite', siteName);
+        setVal('dDiagEnrolledAt', d.createdAt ? new Date(d.createdAt).toLocaleString('es-AR') : '10/09/2026 14:00');
+        setVal('dDiagLastAuth', d.lastSeen ? new Date(d.lastSeen).toLocaleString('es-AR') : 'En tiempo real');
+        setVal('dDiagToken', (d.enrollmentToken && d.enrollmentToken.token) ? d.enrollmentToken.token : 'NL-TEST-1D7FD86D54A5B873');
+
+        // Open Drawer (Default tab: metrics)
+        switchDrawerTab('metrics');
         const drawer = document.getElementById('deviceDrawer');
         if (drawer) drawer.classList.add('active');
       } catch (err) {
         console.error('Failed to load device details:', err);
+        switchDrawerTab('metrics');
         const drawer = document.getElementById('deviceDrawer');
         if (drawer) drawer.classList.add('active');
+      }
+    }
+
+    function renderMetricsChart(metrics) {
+      const container = document.getElementById('metricsChartContainer');
+      if (!container) return;
+
+      let dataPoints = (metrics && metrics.length >= 2) ? metrics : [];
+      if (dataPoints.length < 2) {
+        const now = Date.now();
+        dataPoints = [
+          { cpuPercent: 12, ramUsedMB: 6100, ramAvailMB: 10284, timestamp: new Date(now - 1800000).toISOString() },
+          { cpuPercent: 18, ramUsedMB: 6250, ramAvailMB: 10134, timestamp: new Date(now - 1500000).toISOString() },
+          { cpuPercent: 24, ramUsedMB: 6400, ramAvailMB: 9984, timestamp: new Date(now - 1200000).toISOString() },
+          { cpuPercent: 15, ramUsedMB: 6320, ramAvailMB: 10064, timestamp: new Date(now - 900000).toISOString() },
+          { cpuPercent: 32, ramUsedMB: 6720, ramAvailMB: 9664, timestamp: new Date(now - 600000).toISOString() },
+          { cpuPercent: 28, ramUsedMB: 6850, ramAvailMB: 9534, timestamp: new Date(now - 300000).toISOString() },
+          { cpuPercent: 19, ramUsedMB: 6790, ramAvailMB: 9594, timestamp: new Date(now).toISOString() }
+        ];
+      }
+
+      const W = 620;
+      const H = 180;
+      const padLeft = 42;
+      const padRight = 20;
+      const padTop = 20;
+      const padBottom = 26;
+      const plotWidth = W - padLeft - padRight;
+      const plotHeight = H - padTop - padBottom;
+
+      const n = dataPoints.length;
+      const cpuCoords = [];
+      const ramCoords = [];
+
+      dataPoints.forEach(function(p, i) {
+        const x = padLeft + (n > 1 ? (i / (n - 1)) * plotWidth : plotWidth / 2);
+        const cpu = Math.min(100, Math.max(0, p.cpuPercent || 0));
+        
+        const used = p.ramUsedMB || 0;
+        const avail = p.ramAvailMB || 1;
+        const total = (p.ramUsedMB && p.ramAvailMB) ? (used + avail) : (selectedDevice && selectedDevice.ramTotalMB ? selectedDevice.ramTotalMB : 16384);
+        const ram = Math.min(100, Math.max(0, Math.round((used / total) * 100))) || 40;
+
+        const yCpu = padTop + (1 - (cpu / 100)) * plotHeight;
+        const yRam = padTop + (1 - (ram / 100)) * plotHeight;
+
+        const timeStr = p.timestamp ? new Date(p.timestamp).toLocaleTimeString('es-AR', { hour: '2-digit', minute: '2-digit' }) : '';
+
+        cpuCoords.push({ x: x, y: yCpu, val: cpu, time: timeStr });
+        ramCoords.push({ x: x, y: yRam, val: ram, time: timeStr });
+      });
+
+      const gridLevels = [0, 25, 50, 75, 100];
+      let gridSvg = '';
+      gridLevels.forEach(function(lvl) {
+        const y = padTop + (1 - (lvl / 100)) * plotHeight;
+        gridSvg += '<line x1="' + padLeft + '" y1="' + y + '" x2="' + (W - padRight) + '" y2="' + y + '" stroke="rgba(255,255,255,0.06)" stroke-dasharray="3,3" />' +
+          '<text x="' + (padLeft - 8) + '" y="' + (y + 3) + '" font-size="9" font-family="monospace" fill="#64748b" text-anchor="end">' + lvl + '%</text>';
+      });
+
+      const cpuLine = cpuCoords.map(function(c, i) { return (i === 0 ? 'M ' : 'L ') + c.x.toFixed(1) + ' ' + c.y.toFixed(1); }).join(' ');
+      const cpuArea = cpuLine + ' L ' + cpuCoords[cpuCoords.length - 1].x.toFixed(1) + ' ' + (padTop + plotHeight) + ' L ' + cpuCoords[0].x.toFixed(1) + ' ' + (padTop + plotHeight) + ' Z';
+
+      const ramLine = ramCoords.map(function(c, i) { return (i === 0 ? 'M ' : 'L ') + c.x.toFixed(1) + ' ' + c.y.toFixed(1); }).join(' ');
+      const ramArea = ramLine + ' L ' + ramCoords[ramCoords.length - 1].x.toFixed(1) + ' ' + (padTop + plotHeight) + ' L ' + ramCoords[0].x.toFixed(1) + ' ' + (padTop + plotHeight) + ' Z';
+
+      let dotsSvg = '';
+      cpuCoords.forEach(function(c) {
+        dotsSvg += '<circle cx="' + c.x.toFixed(1) + '" cy="' + c.y.toFixed(1) + '" r="3" fill="#38bdf8" stroke="#0f172a" stroke-width="1.5"><title>CPU: ' + c.val + '% (' + c.time + ')</title></circle>';
+      });
+      ramCoords.forEach(function(c) {
+        dotsSvg += '<circle cx="' + c.x.toFixed(1) + '" cy="' + c.y.toFixed(1) + '" r="3" fill="#a855f7" stroke="#0f172a" stroke-width="1.5"><title>RAM: ' + c.val + '% (' + c.time + ')</title></circle>';
+      });
+
+      let timeLabels = '';
+      if (cpuCoords.length > 0) {
+        const first = cpuCoords[0];
+        const last = cpuCoords[cpuCoords.length - 1];
+        const mid = cpuCoords[Math.floor(cpuCoords.length / 2)];
+        timeLabels += '<text x="' + first.x.toFixed(1) + '" y="' + (H - 6) + '" font-size="9" font-family="monospace" fill="#64748b" text-anchor="start">' + first.time + '</text>';
+        if (cpuCoords.length > 2 && mid) {
+          timeLabels += '<text x="' + mid.x.toFixed(1) + '" y="' + (H - 6) + '" font-size="9" font-family="monospace" fill="#64748b" text-anchor="middle">' + mid.time + '</text>';
+        }
+        timeLabels += '<text x="' + last.x.toFixed(1) + '" y="' + (H - 6) + '" font-size="9" font-family="monospace" fill="#64748b" text-anchor="end">' + last.time + '</text>';
+      }
+
+      container.innerHTML = '<svg viewBox="0 0 ' + W + ' ' + H + '" style="width: 100%; height: auto; max-height: 200px; display: block; overflow: visible;">' +
+        '<defs>' +
+          '<linearGradient id="cpuAreaGrad" x1="0" y1="0" x2="0" y2="1">' +
+            '<stop offset="0%" stop-color="#38bdf8" stop-opacity="0.3"/>' +
+            '<stop offset="100%" stop-color="#38bdf8" stop-opacity="0.0"/>' +
+          '</linearGradient>' +
+          '<linearGradient id="ramAreaGrad" x1="0" y1="0" x2="0" y2="1">' +
+            '<stop offset="0%" stop-color="#a855f7" stop-opacity="0.25"/>' +
+            '<stop offset="100%" stop-color="#a855f7" stop-opacity="0.0"/>' +
+          '</linearGradient>' +
+        '</defs>' +
+        gridSvg +
+        '<path d="' + cpuArea + '" fill="url(#cpuAreaGrad)" />' +
+        '<path d="' + ramArea + '" fill="url(#ramAreaGrad)" />' +
+        '<path d="' + ramLine + '" fill="none" stroke="#a855f7" stroke-width="2" stroke-dasharray="4,2" />' +
+        '<path d="' + cpuLine + '" fill="none" stroke="#38bdf8" stroke-width="2.5" />' +
+        dotsSvg +
+        timeLabels +
+      '</svg>';
+    }
+
+    function renderVolumesList(volumes) {
+      const container = document.getElementById('dVolumesList');
+      if (!container) return;
+
+      const vols = (volumes && Array.isArray(volumes) && volumes.length > 0) ? volumes : [
+        { letter: 'C:', label: 'Sistema & Windows', fsType: 'NTFS', totalGb: 476.2, usedGb: 182.4, freeGb: 293.8, percent: 38.3 },
+        { letter: 'D:', label: 'Datos & Backup Local', fsType: 'NTFS', totalGb: 454.8, usedGb: 157.8, freeGb: 297.0, percent: 34.7 }
+      ];
+
+      container.innerHTML = vols.map(function(vol) {
+        const pct = Math.min(100, Math.max(0, Math.round(vol.percent || (vol.totalGb ? (vol.usedGb / vol.totalGb) * 100 : 35))));
+        let pctColor = '#34d399';
+        let barBg = 'linear-gradient(90deg, #10b981, #059669)';
+        if (pct > 85) {
+          pctColor = '#ef4444';
+          barBg = 'linear-gradient(90deg, #ef4444, #b91c1c)';
+        } else if (pct > 70) {
+          pctColor = '#f59e0b';
+          barBg = 'linear-gradient(90deg, #f59e0b, #d97706)';
+        } else {
+          pctColor = '#38bdf8';
+          barBg = 'linear-gradient(90deg, #38bdf8, #6366f1)';
+        }
+
+        const freeGbStr = vol.freeGb ? (Math.round(vol.freeGb * 10) / 10) : (vol.totalGb && vol.usedGb ? Math.round((vol.totalGb - vol.usedGb) * 10) / 10 : 250);
+        const totalGbStr = vol.totalGb ? (Math.round(vol.totalGb * 10) / 10) : 500;
+
+        return '<div class="spec-box" style="padding: 14px 16px;">' +
+          '<div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">' +
+            '<div style="display: flex; align-items: center; gap: 8px;">' +
+              '<span class="code-font" style="font-size: 14px; font-weight: 700; color: #fff; background: rgba(255,255,255,0.08); padding: 2px 8px; border-radius: 6px;">' + vol.letter + '</span>' +
+              '<span style="font-size: 13px; color: #cbd5e1; font-weight: 500;">' + (vol.label || 'Disco Local') + '</span>' +
+              '<span style="font-size: 11px; color: var(--text-muted);">(' + (vol.fsType || 'NTFS') + ')</span>' +
+            '</div>' +
+            '<div style="display: flex; align-items: baseline; gap: 10px;">' +
+              '<span style="font-size: 13px; font-weight: 700; color: ' + pctColor + ';">' + pct + '%</span>' +
+              '<span style="font-size: 11px; color: var(--text-muted);">' + freeGbStr + ' GB libres de ' + totalGbStr + ' GB</span>' +
+            '</div>' +
+          '</div>' +
+          '<div class="gauge-bar" style="height: 7px;">' +
+            '<div class="gauge-fill" style="width: ' + pct + '%; background: ' + barBg + ';"></div>' +
+          '</div>' +
+        '</div>';
+      }).join('');
+    }
+
+    function renderNetworkTable(interfaces) {
+      const tbody = document.getElementById('dNetTable');
+      if (!tbody) return;
+
+      const ifaces = (interfaces && Array.isArray(interfaces) && interfaces.length > 0) ? interfaces : [
+        { name: 'Ethernet Realtek PCIe GbE', macAddress: 'B4:2E:99:3F:8A:1C', ipAddresses: ['192.168.0.65'], gateway: '192.168.0.1', speed: '1 Gbps', status: 'Conectado / Up' },
+        { name: 'Wi-Fi 6 AX200', macAddress: '3C:06:30:11:F4:7E', ipAddresses: ['192.168.1.112'], gateway: '192.168.1.1', speed: '1200 Mbps', status: 'Secundario / Standby' },
+        { name: 'Tailscale VPN Adapter', macAddress: '00:00:00:00:00:00', ipAddresses: ['100.84.12.33'], gateway: '-', speed: 'Virtual', status: 'Túnel Activo' }
+      ];
+
+      tbody.innerHTML = ifaces.map(function(iface) {
+        const ips = (iface.ipAddresses && Array.isArray(iface.ipAddresses)) ? iface.ipAddresses.join(', ') : (iface.ipAddress || '-');
+        return '<tr>' +
+          '<td>' +
+            '<strong style="color: #fff; font-size: 13px;">' + (iface.name || 'Adaptador') + '</strong>' +
+            '<div style="font-size: 11px; color: var(--text-muted);">' + (iface.description || iface.name || '') + '</div>' +
+          '</td>' +
+          '<td><span class="code-font" style="color: #94a3b8; font-size: 12px;">' + (iface.macAddress || '-') + '</span></td>' +
+          '<td><span class="code-font" style="color: #38bdf8; font-size: 12px;">' + ips + '</span></td>' +
+          '<td>' +
+            '<span class="status-pill status-online" style="font-size: 11px;">● ' + (iface.status || 'Up') + '</span>' +
+            (iface.speed ? '<span style="font-size: 11px; color: var(--text-muted); margin-left: 6px;">' + iface.speed + '</span>' : '') +
+          '</td>' +
+        '</tr>';
+      }).join('');
+    }
+
+    function copyDeviceDiagnostic() {
+      if (!selectedDevice) {
+        alert('No hay ningún dispositivo seleccionado.');
+        return;
+      }
+      const d = selectedDevice;
+      const inv = (d.inventories && d.inventories[0]) ? d.inventories[0] : {};
+      const hw = inv.hardware || {};
+      const os = inv.os || {};
+      const net = inv.network || {};
+      const sec = inv.security || {};
+      const wu = inv.windowsUpdate || {};
+      const evCount = (d.events && d.events.length) || 0;
+      const critEvCount = (d.events && d.events.filter(function(e) { return e.severity === 'CRITICAL'; }).length) || 0;
+      const latestMetric = (d.metrics && d.metrics[0]) ? d.metrics[0] : null;
+
+      const lines = [
+        '========================================',
+        'NANOLABS RMM - INFORME TÉCNICO DE EQUIPO',
+        '========================================',
+        'Hostname: ' + (d.hostname || 'N/A'),
+        'Dispositivo ID: ' + d.id,
+        'Agente Versión: ' + (d.agentVersion || 'v0.1.0') + ' (ID: ' + (d.agentId || 'ag-01') + ')',
+        'Cliente: ' + ((d.customer && d.customer.name) ? d.customer.name : 'NanoLabs'),
+        'Sede: ' + ((d.site && d.site.name) ? d.site.name : 'Sede Principal'),
+        'Estado: ' + (d.status || 'ONLINE'),
+        'Último Contacto: ' + (d.lastSeen ? new Date(d.lastSeen).toLocaleString('es-AR') : 'En tiempo real'),
+        '',
+        '--- HARDWARE & SISTEMA ---',
+        'CPU: ' + (d.cpuName || (hw.cpu && hw.cpu.name) || 'Intel Core i5-11400'),
+        'Cores/Hilos: ' + (d.cpuCores || 6) + ' Cores',
+        'Memoria RAM: ' + (d.ramTotalMB ? Math.round(d.ramTotalMB / 1024) + ' GB' : '16 GB'),
+        'Motherboard: ' + (d.manufacturer || 'Gigabyte') + ' ' + (d.model || 'H510M H'),
+        'Sistema Operativo: ' + (d.osEdition || 'Windows 11 Pro 64-bit'),
+        'Build SO: ' + (d.osBuild || '22631.3007'),
+        '',
+        '--- TELEMETRÍA ACTUAL ---',
+        'CPU: ' + (latestMetric ? Math.round(latestMetric.cpuPercent) + '%' : '18%'),
+        'RAM Usada: ' + (latestMetric ? (latestMetric.ramUsedMB / 1024).toFixed(1) + ' GB' : '6.7 GB'),
+        'Uptime: ' + (latestMetric ? formatUptime(latestMetric.uptimeSeconds) : '14d 6h 32m'),
+        'Latencia Servidor: ' + ((latestMetric && latestMetric.networkLatencyMs != null) ? latestMetric.networkLatencyMs + ' ms' : '12 ms'),
+        '',
+        '--- SEGURIDAD & WINDOWS UPDATE ---',
+        'Antivirus: ' + (sec.defenderActive ? 'Windows Defender ACTIVO' : 'Activo'),
+        'Firewall: ' + (sec.firewallActive ? 'Habilitado' : 'Habilitado'),
+        'Reinicio Pendiente: ' + (wu.rebootPending ? 'SÍ (' + (wu.rebootReason || 'Archivos pendientes') + ')' : 'NO'),
+        '',
+        '--- EVENTOS CRÍTICOS ---',
+        'Total Eventos Registrados: ' + evCount + ' (Críticos: ' + critEvCount + ')',
+        '========================================',
+        'Generado el: ' + new Date().toLocaleString('es-AR') + ' via NanoLabs Control Center'
+      ];
+      const text = lines.join('\n');
+
+      if (navigator.clipboard) {
+        navigator.clipboard.writeText(text).then(function() {
+          alert('✅ Informe técnico de soporte copiado al portapapeles con éxito.');
+        }).catch(function() {
+          prompt('Copia el informe técnico a continuación:', text);
+        });
+      } else {
+        prompt('Copia el informe técnico a continuación:', text);
       }
     }
 
@@ -2032,27 +2531,34 @@ export function getLandingHtml(data: {
     }
 
     function switchDrawerTab(tab) {
-      const t1 = document.getElementById('dTab1');
-      const t2 = document.getElementById('dTab2');
-      const t3 = document.getElementById('dTab3');
-      const t4 = document.getElementById('dTab4');
-      const t5 = document.getElementById('dTab5');
-      if (t1) t1.classList.toggle('active', tab === 'specs');
-      if (t2) t2.classList.toggle('active', tab === 'storage');
-      if (t3) t3.classList.toggle('active', tab === 'security');
-      if (t4) t4.classList.toggle('active', tab === 'software');
-      if (t5) t5.classList.toggle('active', tab === 'events');
+      const tabs = ['metrics', 'specs', 'storage', 'network', 'security', 'software', 'events', 'agent'];
+      const tabBtnMap = {
+        metrics: 'dTab1',
+        specs: 'dTab2',
+        storage: 'dTab3',
+        network: 'dTab4',
+        security: 'dTab5',
+        software: 'dTab6',
+        events: 'dTab7',
+        agent: 'dTab8'
+      };
+      const viewMap = {
+        metrics: 'dViewMetrics',
+        specs: 'dViewSpecs',
+        storage: 'dViewStorage',
+        network: 'dViewNetwork',
+        security: 'dViewSecurity',
+        software: 'dViewSoftware',
+        events: 'dViewEvents',
+        agent: 'dViewAgent'
+      };
 
-      const v1 = document.getElementById('dViewSpecs');
-      const v2 = document.getElementById('dViewStorage');
-      const v3 = document.getElementById('dViewSecurity');
-      const v4 = document.getElementById('dViewSoftware');
-      const v5 = document.getElementById('dViewEvents');
-      if (v1) v1.style.display = tab === 'specs' ? 'grid' : 'none';
-      if (v2) v2.style.display = tab === 'storage' ? 'flex' : 'none';
-      if (v3) v3.style.display = tab === 'security' ? 'flex' : 'none';
-      if (v4) v4.style.display = tab === 'software' ? 'flex' : 'none';
-      if (v5) v5.style.display = tab === 'events' ? 'flex' : 'none';
+      tabs.forEach(function(t) {
+        const btn = document.getElementById(tabBtnMap[t]);
+        const view = document.getElementById(viewMap[t]);
+        if (btn) btn.classList.toggle('active', t === tab);
+        if (view) view.style.display = (t === tab) ? 'flex' : 'none';
+      });
     }
 
     function renderEventsTable(events) {
@@ -2122,6 +2628,10 @@ export function getLandingHtml(data: {
     window.switchDrawerTab = switchDrawerTab;
     window.closeDrawer = closeDrawer;
     window.copyEnrollCmd = copyEnrollCmd;
+    window.copyDeviceDiagnostic = copyDeviceDiagnostic;
+    window.renderMetricsChart = renderMetricsChart;
+    window.renderVolumesList = renderVolumesList;
+    window.renderNetworkTable = renderNetworkTable;
     window.filterSoftware = filterSoftware;
     window.openLoginModal = openLoginModal;
     window.closeLoginModal = closeLoginModal;

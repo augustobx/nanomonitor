@@ -497,4 +497,53 @@ describe('Agent Ingestion & End-to-End HMAC Flow', () => {
     expect(body.data.events[0].severity).toBe('CRITICAL');
     expect(body.data.pagination.total).toBe(1);
   });
+
+  it('GET /api/v1/devices/:id/metrics returns chronological metrics for telemetry charts (F7)', async () => {
+    vi.spyOn(db.user, 'findUnique').mockResolvedValue({
+      id: 'u0000000-0000-0000-0000-000000000001',
+      tenantId: mockTenant.id,
+      email: 'admin@nanolabs.test',
+      role: 'ADMIN',
+      status: 'ACTIVE',
+    } as any);
+    vi.spyOn(db.deviceMetric, 'findMany').mockResolvedValue([
+      {
+        id: 'metric-1',
+        tenantId: mockTenant.id,
+        deviceId: mockDevice.id,
+        cpuPercent: 25.5,
+        ramUsedMB: 6500,
+        ramAvailMB: 9884,
+        networkLatencyMs: 14,
+        uptimeSeconds: 120000,
+        timestamp: new Date('2026-09-16T00:00:00.000Z'),
+      },
+      {
+        id: 'metric-2',
+        tenantId: mockTenant.id,
+        deviceId: mockDevice.id,
+        cpuPercent: 30.0,
+        ramUsedMB: 6700,
+        ramAvailMB: 9684,
+        networkLatencyMs: 12,
+        uptimeSeconds: 120060,
+        timestamp: new Date('2026-09-16T00:01:00.000Z'),
+      },
+    ] as any);
+
+    const response = await app.inject({
+      method: 'GET',
+      url: `/api/v1/devices/${mockDevice.id}/metrics?limit=50`,
+      headers: {
+        authorization: `Bearer ${adminToken}`,
+      },
+    });
+
+    expect(response.statusCode).toBe(200);
+    const body = JSON.parse(response.body);
+    expect(body.data).toHaveLength(2);
+    expect(body.data[0].cpuPercent).toBe(30.0); // reverse order gives chronological
+    expect(body.data[1].cpuPercent).toBe(25.5);
+  });
 });
+
