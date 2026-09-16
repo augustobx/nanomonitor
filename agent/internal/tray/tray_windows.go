@@ -450,9 +450,16 @@ func (app *TrayApp) handleRestartService() {
 	go func() {
 		pVerb, _ := windows.UTF16PtrFromString("runas")
 		pCmd, _ := windows.UTF16PtrFromString("cmd.exe")
-		pArgs, _ := windows.UTF16PtrFromString("/c net stop " + app.serviceName + " & net start " + app.serviceName)
 
-		shellExecute.Call(
+		var cmdStr string
+		if app.isServiceRunning() {
+			cmdStr = "/c net stop " + app.serviceName + " & net start " + app.serviceName
+		} else {
+			cmdStr = "/c net start " + app.serviceName
+		}
+		pArgs, _ := windows.UTF16PtrFromString(cmdStr)
+
+		ret, _, _ := shellExecute.Call(
 			0,
 			uintptr(unsafe.Pointer(pVerb)),
 			uintptr(unsafe.Pointer(pCmd)),
@@ -460,6 +467,10 @@ func (app *TrayApp) handleRestartService() {
 			0,
 			SW_HIDE,
 		)
+		if ret <= 32 {
+			app.ShowNotification("Permisos Requeridos", "Debe aceptar el diálogo de administrador de Windows para iniciar el servicio.")
+			return
+		}
 
 		for i := 0; i < 6; i++ {
 			time.Sleep(1 * time.Second)
