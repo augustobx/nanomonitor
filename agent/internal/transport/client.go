@@ -15,6 +15,8 @@ import (
 	"net/http"
 	"strconv"
 	"time"
+
+	"github.com/nanolabs/nanomonitor/agent/internal/collector"
 )
 
 // Client handles HTTP communication with the NanoLabs API
@@ -41,14 +43,18 @@ func NewClient(baseURL, agentID, agentSecret string, logger *slog.Logger) *Clien
 
 // HeartbeatPayload is the data sent in heartbeat requests
 type HeartbeatPayload struct {
-	AgentVersion  string      `json:"agentVersion"`
-	Timestamp     time.Time   `json:"timestamp"`
-	UptimeSeconds int64       `json:"uptimeSeconds"`
-	Status        string      `json:"status"`
-	CPUPercent    float64     `json:"cpuPercent"`
-	RAMUsedMB     int         `json:"ramUsedMb"`
-	RAMAvailMB    int         `json:"ramAvailMb"`
-	DiskSummary   interface{} `json:"diskSummary,omitempty"`
+	DeviceID        string                  `json:"deviceId,omitempty"`
+	AgentID         string                  `json:"agentId,omitempty"`
+	AgentVersion    string                  `json:"agentVersion"`
+	Timestamp       time.Time               `json:"timestamp"`
+	UptimeSeconds   int64                   `json:"uptimeSeconds"`
+	Status          string                  `json:"status"`
+	ServerLatencyMs int64                   `json:"serverLatencyMs,omitempty"`
+	CPUPercent      float64                 `json:"cpuPercent"`
+	RAMUsedMB       int                     `json:"ramUsedMb"`
+	RAMAvailMB      int                     `json:"ramAvailMb"`
+	DiskSummary     interface{}             `json:"diskSummary,omitempty"`
+	Security        *collector.SecurityInfo `json:"security,omitempty"`
 }
 
 // Response represents a generic API response

@@ -28,7 +28,7 @@ export const agentRoutes: FastifyPluginAsync = async (fastify: FastifyInstance) 
     }
 
     const { agentId, deviceId, tenantId } = request.agent!;
-    const { agentVersion, timestamp, uptimeSeconds, status, cpuPercent, ramUsedMb, ramAvailMb, diskSummary } =
+    const { agentVersion, timestamp, uptimeSeconds, status, cpuPercent, ramUsedMb, ramAvailMb, diskSummary, security } =
       parsed.data;
 
     const eventDate = new Date(timestamp);
@@ -40,14 +40,46 @@ export const agentRoutes: FastifyPluginAsync = async (fastify: FastifyInstance) 
         deviceId,
         agentVersion,
         timestamp: isNaN(eventDate.getTime()) ? new Date() : eventDate,
-        uptimeSeconds: BigInt(uptimeSeconds),
+        uptimeSeconds: BigInt(uptimeSeconds ?? 0),
         status,
-        cpuPercent,
-        ramUsedMB: ramUsedMb,
-        ramAvailMB: ramAvailMb,
+        cpuPercent: cpuPercent ?? 0,
+        ramUsedMB: ramUsedMb ?? 0,
+        ramAvailMB: ramAvailMb ?? 0,
         diskSummary: diskSummary || undefined,
       },
     });
+
+    // If lightweight security posture is included in heartbeat, persist to latest device inventory
+    if (security) {
+      const latestInv = await db.deviceInventory.findFirst({
+        where: { deviceId },
+        orderBy: { collectedAt: 'desc' },
+      });
+
+      if (latestInv) {
+        await db.deviceInventory.update({
+          where: { id: latestInv.id },
+          data: {
+            security: security as any,
+          },
+        });
+      } else {
+        await db.deviceInventory.create({
+          data: {
+            tenantId,
+            deviceId,
+            collectedAt: new Date(),
+            hardware: {},
+            network: {},
+            security: security as any,
+            checksum: 'security-hb-' + Date.now(),
+          },
+        });
+      }
+
+      // Re-evaluate alert rules with security state
+      evaluateDeviceAlerts(deviceId, tenantId).catch(() => {});
+    }
 
     // Update device status and lastSeenAt
     await db.device.update({
@@ -284,6 +316,34 @@ export const agentRoutes: FastifyPluginAsync = async (fastify: FastifyInstance) 
             occurrences: 1,
           },
         });
+      }
+
+      // If this is a security state transition event, instantly reflect in deviceInventory security snapshot
+      if (evt.category === 'Security' && evt.rawData) {
+        const raw = evt.rawData as any;
+        const latestInv = await db.deviceInventory.findFirst({
+          where: { deviceId },
+          orderBy: { collectedAt: 'desc' },
+        });
+        if (latestInv && latestInv.security) {
+          const currentSec = { ...(latestInv.security as any) };
+          if (raw.component === 'antivirus') {
+            const isEnabled = raw.currentState === 'enabled';
+            currentSec.defenderActive = isEnabled;
+            if (Array.isArray(currentSec.antivirusList)) {
+              currentSec.antivirusList.forEach((a: any) => { a.enabled = isEnabled; });
+            }
+          } else if (raw.component === 'firewall') {
+            const isEnabled = raw.currentState === 'enabled';
+            if (currentSec.firewallProfiles && raw.profile) {
+              currentSec.firewallProfiles[raw.profile] = isEnabled;
+            }
+          }
+          await db.deviceInventory.update({
+            where: { id: latestInv.id },
+            data: { security: currentSec },
+          });
+        }
       }
 
       processedCount++;

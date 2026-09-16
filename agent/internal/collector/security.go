@@ -4,7 +4,6 @@ import (
 	"strings"
 
 	"github.com/yusufpapurcu/wmi"
-	"golang.org/x/sys/windows/registry"
 )
 
 // AntivirusInfo represents an installed and registered antivirus product
@@ -13,21 +12,59 @@ type AntivirusInfo struct {
 	Enabled     bool   `json:"enabled"`
 	UpToDate    bool   `json:"upToDate"`
 	StateCode   uint32 `json:"stateCode"`
+	Provider    string `json:"provider,omitempty"`
 }
 
-// FirewallInfo represents a registered firewall product or Windows Firewall
+// FirewallInfo represents a registered firewall product
 type FirewallInfo struct {
 	DisplayName string `json:"displayName"`
 	Enabled     bool   `json:"enabled"`
 }
 
-// SecurityInfo holds security posture including AV, Defender and Firewall
+// FirewallProfiles represents the operational state of Windows Firewall per profile
+type FirewallProfiles struct {
+	Domain  bool `json:"domain"`
+	Private bool `json:"private"`
+	Public  bool `json:"public"`
+}
+
+// SecurityInfo holds operational security posture including AV, Defender, Firewall and individual profiles
 type SecurityInfo struct {
-	AntivirusList   []AntivirusInfo `json:"antivirusList"`
-	FirewallList    []FirewallInfo  `json:"firewallList"`
-	DefenderActive  bool            `json:"defenderActive"`
-	DefenderUpdated bool            `json:"defenderUpdated"`
-	FirewallActive  bool            `json:"firewallActive"`
+	AntivirusList    []AntivirusInfo  `json:"antivirusList"`
+	FirewallList     []FirewallInfo   `json:"firewallList"`
+	FirewallProfiles FirewallProfiles `json:"firewallProfiles"`
+	DefenderActive   bool             `json:"defenderActive"`
+	DefenderUpdated  bool             `json:"defenderUpdated"`
+	FirewallActive   bool             `json:"firewallActive"`
+}
+
+// HasEnabledAV returns true if any recognized antivirus is enabled
+func (s *SecurityInfo) HasEnabledAV() bool {
+	if s == nil {
+		return false
+	}
+	if s.DefenderActive {
+		return true
+	}
+	for _, av := range s.AntivirusList {
+		if av.Enabled {
+			return true
+		}
+	}
+	return false
+}
+
+// PrimaryAVName returns the display name of the primary antivirus product
+func (s *SecurityInfo) PrimaryAVName() string {
+	if s == nil {
+		return "Desconocido"
+	}
+	for _, av := range s.AntivirusList {
+		if strings.TrimSpace(av.DisplayName) != "" {
+			return strings.TrimSpace(av.DisplayName)
+		}
+	}
+	return "Windows Defender"
 }
 
 type wmiAntiVirusProduct struct {
@@ -40,91 +77,72 @@ type wmiFirewallProduct struct {
 	ProductState uint32
 }
 
-// CollectSecurity collects antivirus, defender and firewall statuses
+// CollectSecurity queries security posture using available providers
 func CollectSecurity() (*SecurityInfo, error) {
 	sec := &SecurityInfo{
 		AntivirusList: make([]AntivirusInfo, 0),
 		FirewallList:  make([]FirewallInfo, 0),
+		FirewallProfiles: FirewallProfiles{
+			Domain:  true,
+			Private: true,
+			Public:  true,
+		},
 	}
 
-	// 1. Query Antivirus from root\SecurityCenter2
-	var avList []wmiAntiVirusProduct
-	queryAV := "SELECT DisplayName, ProductState FROM AntiVirusProduct"
-	if err := queryWmiNamespace(`root\SecurityCenter2`, queryAV, &avList); err == nil {
-		for _, av := range avList {
-			name := strings.TrimSpace(av.DisplayName)
-			if name == "" {
-				continue
-			}
-
-			// In Windows SecurityCenter2:
-			// productState is a bitfield:
-			// (productState & 0x1000) != 0 -> Real-time protection / AV enabled
-			// (productState & 0x0010) == 0 -> Definitions are up-to-date (0 = current, 0x10 = outdated)
-			enabled := (av.ProductState & 0x1000) != 0
-			upToDate := (av.ProductState & 0x0010) == 0
-
-			if strings.Contains(strings.ToLower(name), "defender") {
-				sec.DefenderActive = enabled
-				sec.DefenderUpdated = upToDate
-			}
-
-			sec.AntivirusList = append(sec.AntivirusList, AntivirusInfo{
-				DisplayName: name,
-				Enabled:     enabled,
-				UpToDate:    upToDate,
-				StateCode:   av.ProductState,
-			})
+	// 1. Collect from Windows Security Center 2 if applicable
+	scProvider := &WindowsSecurityCenterProvider{}
+	if scProvider.IsApplicable() {
+		scSec, err := scProvider.Collect()
+		if err == nil && scSec != nil {
+			sec.AntivirusList = scSec.AntivirusList
+			sec.FirewallList = scSec.FirewallList
+			sec.DefenderActive = scSec.DefenderActive
+			sec.DefenderUpdated = scSec.DefenderUpdated
+			sec.FirewallActive = scSec.FirewallActive
 		}
 	}
 
-	// Fallback check for Defender in Registry if SecurityCenter2 didn't report it
-	if len(sec.AntivirusList) == 0 {
-		k, err := registry.OpenKey(registry.LOCAL_MACHINE, `SOFTWARE\Microsoft\Windows Defender`, registry.QUERY_VALUE)
-		if err == nil {
-			defer k.Close()
-			sec.DefenderActive = true
-			sec.DefenderUpdated = true
-			sec.AntivirusList = append(sec.AntivirusList, AntivirusInfo{
-				DisplayName: "Windows Defender",
-				Enabled:     true,
-				UpToDate:    true,
-			})
+	// 2. If no AV detected or Defender not reported via SecurityCenter2, check Defender registry fallback
+	if len(sec.AntivirusList) == 0 || !sec.DefenderActive {
+		defRegProvider := &WindowsDefenderRegistryProvider{}
+		if defRegProvider.IsApplicable() {
+			defSec, err := defRegProvider.Collect()
+			if err == nil && defSec != nil && len(defSec.AntivirusList) > 0 {
+				if len(sec.AntivirusList) == 0 {
+					sec.AntivirusList = defSec.AntivirusList
+					sec.DefenderActive = defSec.DefenderActive
+					sec.DefenderUpdated = defSec.DefenderUpdated
+				} else if defSec.DefenderActive {
+					sec.DefenderActive = true
+				}
+			}
 		}
 	}
 
-	// 2. Query Firewall products from root\SecurityCenter2
-	var fwList []wmiFirewallProduct
-	queryFW := "SELECT DisplayName, ProductState FROM FirewallProduct"
-	if err := queryWmiNamespace(`root\SecurityCenter2`, queryFW, &fwList); err == nil {
-		for _, fw := range fwList {
-			name := strings.TrimSpace(fw.DisplayName)
-			if name == "" {
-				continue
-			}
-			enabled := (fw.ProductState & 0x1000) != 0
-			if enabled {
-				sec.FirewallActive = true
-			}
-			sec.FirewallList = append(sec.FirewallList, FirewallInfo{
-				DisplayName: name,
-				Enabled:     enabled,
-			})
-		}
+	// 3. Collect individual Firewall profile states (Domain, Private, Public)
+	fwProfilesProvider := &WindowsFirewallProfilesProvider{}
+	sec.FirewallProfiles = fwProfilesProvider.CollectProfiles()
+
+	// Overall firewall active if at least the active profiles are enabled
+	if !sec.FirewallActive {
+		sec.FirewallActive = sec.FirewallProfiles.Domain && sec.FirewallProfiles.Private && sec.FirewallProfiles.Public
 	}
 
-	// 3. Check Windows Native Firewall via Registry if no third-party firewall registered
+	// If firewallList is empty, add Windows native firewall entries
 	if len(sec.FirewallList) == 0 {
-		k, err := registry.OpenKey(registry.LOCAL_MACHINE, `SYSTEM\CurrentControlSet\Services\SharedAccess\Parameters\FirewallPolicy\StandardProfile`, registry.QUERY_VALUE)
-		if err == nil {
-			defer k.Close()
-			val, _, err := k.GetIntegerValue("EnableFirewall")
-			fwEnabled := err == nil && val == 1
-			sec.FirewallActive = fwEnabled
-			sec.FirewallList = append(sec.FirewallList, FirewallInfo{
-				DisplayName: "Windows Firewall (StandardProfile)",
-				Enabled:     fwEnabled,
-			})
+		sec.FirewallList = append(sec.FirewallList,
+			FirewallInfo{DisplayName: "Windows Firewall (Domain)", Enabled: sec.FirewallProfiles.Domain},
+			FirewallInfo{DisplayName: "Windows Firewall (Private)", Enabled: sec.FirewallProfiles.Private},
+			FirewallInfo{DisplayName: "Windows Firewall (Public)", Enabled: sec.FirewallProfiles.Public},
+		)
+	}
+
+	// Ensure DefenderActive flag is accurate based on AntivirusList
+	for _, av := range sec.AntivirusList {
+		if strings.Contains(strings.ToLower(av.DisplayName), "defender") {
+			sec.DefenderActive = av.Enabled
+			sec.DefenderUpdated = av.UpToDate
+			break
 		}
 	}
 

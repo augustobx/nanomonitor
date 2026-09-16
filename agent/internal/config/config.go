@@ -36,32 +36,38 @@ type Config struct {
 	AgentSecret string `yaml:"agentSecret,omitempty"`
 
 	// Intervals (in seconds)
-	HeartbeatInterval  int `yaml:"heartbeatInterval"`
-	MetricsInterval    int `yaml:"metricsInterval"`
-	InventoryInterval  int `yaml:"inventoryInterval"`
-	EventCheckInterval int `yaml:"eventCheckInterval"`
+	HeartbeatInterval     int `yaml:"heartbeatInterval"`
+	SecurityInterval      int `yaml:"securityInterval"`
+	MetricsInterval       int `yaml:"metricsInterval"`
+	SmartInterval         int `yaml:"smartInterval"`
+	WindowsUpdateInterval int `yaml:"windowsUpdateInterval"`
+	InventoryInterval     int `yaml:"inventoryInterval"`
+	EventCheckInterval    int `yaml:"eventCheckInterval"`
 
 	// Logging
 	LogLevel string `yaml:"logLevel"`
 	LogFile  string `yaml:"logFile"`
 
 	// Buffer
-	BufferDBPath   string `yaml:"bufferDbPath"`
-	BufferMaxSizeMB int   `yaml:"bufferMaxSizeMb"`
+	BufferDBPath    string `yaml:"bufferDbPath"`
+	BufferMaxSizeMB int    `yaml:"bufferMaxSizeMb"`
 }
 
 // DefaultConfig returns a Config with sensible defaults
 func DefaultConfig() *Config {
 	return &Config{
-		APIUrl:             "https://monitor.nanolabs.com.ar",
-		HeartbeatInterval:  180,  // 3 minutes
-		MetricsInterval:    300,  // 5 minutes
-		InventoryInterval:  86400, // 24 hours
-		EventCheckInterval: 60,   // 1 minute
-		LogLevel:           "info",
-		LogFile:            filepath.Join(DefaultLogDir, "agent.log"),
-		BufferDBPath:       filepath.Join(DefaultConfigDir, "buffer.db"),
-		BufferMaxSizeMB:    10,
+		APIUrl:                "https://monitor.nanolabs.com.ar",
+		HeartbeatInterval:     180,   // 3 minutes
+		SecurityInterval:      180,   // 3 minutes (coupled with heartbeat)
+		MetricsInterval:       300,   // 5 minutes
+		SmartInterval:         3600,  // 1 hour
+		WindowsUpdateInterval: 14400, // 4 hours
+		InventoryInterval:     86400, // 24 hours
+		EventCheckInterval:    60,    // 1 minute
+		LogLevel:              "info",
+		LogFile:               filepath.Join(DefaultLogDir, "agent.log"),
+		BufferDBPath:          filepath.Join(DefaultConfigDir, "buffer.db"),
+		BufferMaxSizeMB:       10,
 	}
 }
 

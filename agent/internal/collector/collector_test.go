@@ -362,3 +362,15 @@ func TestCollectRecentEventsLive(t *testing.T) {
 	}
 }
 
+func TestCollectSmart(t *testing.T) {
+	report, err := CollectSmart()
+	if err != nil {
+		t.Fatalf("CollectSmart failed: %v", err)
+	}
+	t.Logf("SMART Report: Overall=%s, Disks=%d, DegradedCount=%d", report.OverallStatus, len(report.Disks), report.DegradedCount)
+	for _, d := range report.Disks {
+		t.Logf("  Disk %s (%s): Health=%s, OpStatus=%s, PredFail=%v", d.FriendlyName, d.MediaType, d.HealthStatus, d.OperationalStatus, d.PredictFailure)
+	}
+}
+
+

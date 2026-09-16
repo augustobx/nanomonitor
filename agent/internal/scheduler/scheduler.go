@@ -2,103 +2,179 @@ package scheduler
 
 import (
 	"context"
+	"encoding/json"
 	"log/slog"
+	"math/rand"
 	"sync"
 	"time"
 
+	"github.com/nanolabs/nanomonitor/agent/internal/buffer"
 	"github.com/nanolabs/nanomonitor/agent/internal/collector"
 	"github.com/nanolabs/nanomonitor/agent/internal/config"
 	"github.com/nanolabs/nanomonitor/agent/internal/transport"
 	"github.com/nanolabs/nanomonitor/agent/internal/version"
 )
 
-// Scheduler manages the tick loops for different data collection types
+// Scheduler manages the tick loops for decoupled data collection types
 type Scheduler struct {
-	cfg       *config.Config
-	client    *transport.Client
-	logger    *slog.Logger
-	wg        sync.WaitGroup
+	cfg           *config.Config
+	client        *transport.Client
+	logger        *slog.Logger
+	buffer        *buffer.PriorityBuffer
+	stateDetector *StateChangeDetector
+	wg            sync.WaitGroup
 
 	// State tracking
 	lastInventoryChecksum string
 	lastSoftwareChecksum  string
 	lastSoftwareItems     []collector.SoftwareItem
 	lastEventRecordIDs    map[string]uint64
+	lastLatencyMs         int
 }
 
-// New creates a new Scheduler
+// New creates a new Scheduler with priority buffering and state change detection
 func New(cfg *config.Config, client *transport.Client, logger *slog.Logger) *Scheduler {
+	// Initialize priority offline buffer
+	buf, err := buffer.NewPriorityBuffer(cfg.BufferDBPath, cfg.BufferMaxSizeMB*1024*1024)
+	if err != nil {
+		logger.Warn("failed to open priority buffer DB, operating in-memory only", "error", err)
+	}
+
 	return &Scheduler{
 		cfg:                cfg,
 		client:             client,
 		logger:             logger,
+		buffer:             buf,
+		stateDetector:      NewStateChangeDetector(),
 		lastEventRecordIDs: make(map[string]uint64),
 	}
 }
 
-// Run starts all scheduled collection loops and blocks until ctx is cancelled
+// Run starts all decoupled collection loops with staggered boot and blocks until ctx is cancelled
 func (s *Scheduler) Run(ctx context.Context) error {
-	s.logger.Info("scheduler starting",
-		"heartbeat_interval", s.cfg.HeartbeatInterval,
-		"metrics_interval", s.cfg.MetricsInterval,
-		"inventory_interval", s.cfg.InventoryInterval,
+	s.logger.Info("scheduler starting with decoupled telemetry architecture",
+		"heartbeat_sec", s.cfg.HeartbeatInterval,
+		"security_sec", s.cfg.SecurityInterval,
+		"metrics_sec", s.cfg.MetricsInterval,
+		"smart_sec", s.cfg.SmartInterval,
+		"wu_sec", s.cfg.WindowsUpdateInterval,
+		"inventory_sec", s.cfg.InventoryInterval,
+		"events_sec", s.cfg.EventCheckInterval,
 	)
 
-	// Run initial inventory and software immediately
+	// Establish baseline watermark for Windows Event Log before starting loops
+	s.lastEventRecordIDs = collector.GetInitialHighestRecordIDs()
+	s.logger.Info("events baseline established", "record_ids", s.lastEventRecordIDs)
+
+	// Execute staggered startup sequence to avoid CPU/disk/network contention
 	s.wg.Add(1)
 	go func() {
 		defer s.wg.Done()
-		s.collectAndSendInventory(ctx)
-		s.collectAndSendSoftware(ctx)
+		s.executeStaggeredStartup(ctx)
 	}()
 
-	// Start heartbeat loop
+	// 1. Critical System Events Loop (every 60s, exact cadence, no jitter)
 	s.wg.Add(1)
 	go func() {
 		defer s.wg.Done()
-		s.runLoop(ctx, "heartbeat", time.Duration(s.cfg.HeartbeatInterval)*time.Second, s.collectAndSendHeartbeat)
+		s.runLoopExact(ctx, "events", time.Duration(s.cfg.EventCheckInterval)*time.Second, s.collectAndSendEvents)
 	}()
 
-	// Start metrics loop
+	// 2. Heartbeat + Operational Security State Loop (every 180s / 3m)
 	s.wg.Add(1)
 	go func() {
 		defer s.wg.Done()
-		s.runLoop(ctx, "metrics", time.Duration(s.cfg.MetricsInterval)*time.Second, s.collectAndSendMetrics)
+		s.runLoopExact(ctx, "heartbeat_security", time.Duration(s.cfg.HeartbeatInterval)*time.Second, s.collectAndSendHeartbeatAndSecurity)
 	}()
 
-	// Start inventory loop (includes security, storage, windows update, software)
+	// 3. Performance Metrics Loop (every 300s / 5m ± 10s jitter)
 	s.wg.Add(1)
 	go func() {
 		defer s.wg.Done()
-		s.runLoop(ctx, "inventory", time.Duration(s.cfg.InventoryInterval)*time.Second, func(ctx context.Context) {
+		s.runLoopWithJitter(ctx, "metrics", time.Duration(s.cfg.MetricsInterval)*time.Second, 10*time.Second, s.collectAndSendMetrics)
+	}()
+
+	// 4. Physical Storage & SMART Health Loop (every 3600s / 60m ± 60s jitter)
+	s.wg.Add(1)
+	go func() {
+		defer s.wg.Done()
+		s.runLoopWithJitter(ctx, "smart", time.Duration(s.cfg.SmartInterval)*time.Second, 60*time.Second, s.collectAndSendSmart)
+	}()
+
+	// 5. Windows Update Loop (every 14400s / 4h ± 120s jitter)
+	s.wg.Add(1)
+	go func() {
+		defer s.wg.Done()
+		s.runLoopWithJitter(ctx, "windows_update", time.Duration(s.cfg.WindowsUpdateInterval)*time.Second, 120*time.Second, s.collectAndSendWindowsUpdate)
+	}()
+
+	// 6. Low-Frequency General Inventory (every 86400s / 24h + 300s jitter)
+	s.wg.Add(1)
+	go func() {
+		defer s.wg.Done()
+		s.runLoopWithJitter(ctx, "inventory", time.Duration(s.cfg.InventoryInterval)*time.Second, 300*time.Second, func(ctx context.Context) {
 			s.collectAndSendInventory(ctx)
 			s.collectAndSendSoftware(ctx)
 		})
 	}()
 
-	// Initialize baseline event record IDs and start event monitoring loop
-	s.lastEventRecordIDs = collector.GetInitialHighestRecordIDs()
-	s.logger.Info("events baseline established", "record_ids", s.lastEventRecordIDs)
-
-	s.wg.Add(1)
-	go func() {
-		defer s.wg.Done()
-		s.runLoop(ctx, "events", 60*time.Second, s.collectAndSendEvents)
-	}()
-
-	// Wait for all loops to finish
+	// Wait for cancellation
 	<-ctx.Done()
 	s.wg.Wait()
 	s.logger.Info("scheduler stopped")
 	return nil
 }
 
-// runLoop runs a collection function on a ticker interval
-func (s *Scheduler) runLoop(ctx context.Context, name string, interval time.Duration, fn func(ctx context.Context)) {
+// executeStaggeredStartup executes boot collectors spaced in time to prevent system freeze
+func (s *Scheduler) executeStaggeredStartup(ctx context.Context) {
+	log := s.logger.With("phase", "startup")
+	log.Info("executing staggered startup sequence...")
+
+	// T0: Heartbeat + Security state immediate check
+	s.collectAndSendHeartbeatAndSecurity(ctx)
+
+	// T+5s: Windows Update check
+	select {
+	case <-ctx.Done():
+		return
+	case <-time.After(5 * time.Second):
+		s.collectAndSendWindowsUpdate(ctx)
+	}
+
+	// T+10s: SMART physical disk check
+	select {
+	case <-ctx.Done():
+		return
+	case <-time.After(5 * time.Second):
+		s.collectAndSendSmart(ctx)
+	}
+
+	// T+15s: General hardware & software inventory
+	select {
+	case <-ctx.Done():
+		return
+	case <-time.After(5 * time.Second):
+		s.collectAndSendInventory(ctx)
+		s.collectAndSendSoftware(ctx)
+	}
+
+	// T+20s: Flush any remaining offline buffered items
+	select {
+	case <-ctx.Done():
+		return
+	case <-time.After(5 * time.Second):
+		s.flushOfflineBuffer(ctx)
+	}
+
+	log.Info("staggered startup sequence completed successfully")
+}
+
+// runLoopExact runs a ticker without jitter for critical events & heartbeat
+func (s *Scheduler) runLoopExact(ctx context.Context, name string, interval time.Duration, fn func(ctx context.Context)) {
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
 
-	s.logger.Info("loop started", "name", name, "interval", interval.String())
+	s.logger.Info("exact cadence loop started", "name", name, "interval", interval.String())
 
 	for {
 		select {
@@ -107,28 +183,88 @@ func (s *Scheduler) runLoop(ctx context.Context, name string, interval time.Dura
 			return
 		case <-ticker.C:
 			fn(ctx)
+			s.flushOfflineBuffer(ctx)
 		}
 	}
 }
 
-func (s *Scheduler) collectAndSendHeartbeat(ctx context.Context) {
-	log := s.logger.With("task", "heartbeat")
+// runLoopWithJitter runs a ticker with a randomized jitter offset
+func (s *Scheduler) runLoopWithJitter(ctx context.Context, name string, baseInterval, jitterRange time.Duration, fn func(ctx context.Context)) {
+	s.logger.Info("jittered loop started", "name", name, "base_interval", baseInterval.String())
 
+	for {
+		// Calculate jitter between -jitterRange and +jitterRange
+		var jitter time.Duration
+		if jitterRange > 0 {
+			jitterSec := (rand.Float64()*2 - 1) * jitterRange.Seconds()
+			jitter = time.Duration(jitterSec * float64(time.Second))
+		}
+		sleepDuration := baseInterval + jitter
+		if sleepDuration < 5*time.Second {
+			sleepDuration = 5 * time.Second
+		}
+
+		select {
+		case <-ctx.Done():
+			s.logger.Info("loop stopping", "name", name)
+			return
+		case <-time.After(sleepDuration):
+			fn(ctx)
+			s.flushOfflineBuffer(ctx)
+		}
+	}
+}
+
+// collectAndSendHeartbeatAndSecurity runs every 3 minutes (Heartbeat + lightweight SecurityState)
+func (s *Scheduler) collectAndSendHeartbeatAndSecurity(ctx context.Context) {
+	log := s.logger.With("task", "heartbeat_security")
+
+	// 1. Collect operational performance snapshot for heartbeat
 	perf, err := collector.CollectPerformance()
 	if err != nil {
 		log.Error("failed to collect performance for heartbeat", "error", err)
-		return
 	}
 
+	// 2. Measure latency to NanoLabs API
+	start := time.Now()
+	latencyMs := collector.MeasureServerLatency(s.cfg.APIUrl)
+	s.lastLatencyMs = latencyMs
+	_ = start
+
+	// 3. Lightweight Security State collection (Antivirus + Firewall profiles)
+	sec, err := collector.CollectSecurity()
+	if err != nil {
+		log.Warn("failed to collect security state", "error", err)
+	}
+
+	// 4. State Change Detector: detect immediate transitions
+	if sec != nil {
+		transitions := s.stateDetector.DetectSecurityChanges(sec)
+		if len(transitions) > 0 {
+			log.Info("SECURITY STATE TRANSITION DETECTED! Sending immediately", "count", len(transitions))
+			for _, tr := range transitions {
+				s.sendEventImmediate(ctx, tr, buffer.PrioritySecurity)
+			}
+		}
+	}
+
+	// 5. Assemble Heartbeat Payload
 	payload := &transport.HeartbeatPayload{
-		AgentVersion:  version.Version,
-		Timestamp:     perf.Timestamp,
-		UptimeSeconds: perf.UptimeSecs,
-		Status:        "healthy",
-		CPUPercent:    perf.CPUPercent,
-		RAMUsedMB:     perf.RAMUsedMB,
-		RAMAvailMB:    perf.RAMAvailMB,
-		DiskSummary:   perf.Volumes,
+		DeviceID:        s.cfg.DeviceID,
+		AgentID:         s.cfg.AgentID,
+		AgentVersion:    version.Version,
+		Timestamp:       time.Now().UTC(),
+		Status:          "healthy",
+		ServerLatencyMs: int64(s.lastLatencyMs),
+		Security:        sec,
+	}
+
+	if perf != nil {
+		payload.UptimeSeconds = perf.UptimeSecs
+		payload.CPUPercent = perf.CPUPercent
+		payload.RAMUsedMB = perf.RAMUsedMB
+		payload.RAMAvailMB = perf.RAMAvailMB
+		payload.DiskSummary = perf.Volumes
 	}
 
 	resp, err := s.client.SendWithRetry(ctx, func(ctx context.Context) (*transport.Response, error) {
@@ -136,28 +272,31 @@ func (s *Scheduler) collectAndSendHeartbeat(ctx context.Context) {
 	}, 2)
 
 	if err != nil {
-		log.Warn("failed to send heartbeat", "error", err)
-		// TODO: buffer for offline sending
+		log.Warn("failed to send heartbeat, buffering offline", "error", err)
+		if s.buffer != nil {
+			_ = s.buffer.Enqueue(buffer.PriorityHeartbeat, "/agent/heartbeat", payload)
+		}
 		return
 	}
 
 	if resp.StatusCode >= 200 && resp.StatusCode < 300 {
-		log.Debug("heartbeat sent",
-			"cpu", perf.CPUPercent,
-			"ram_used_mb", perf.RAMUsedMB,
-			"uptime_s", perf.UptimeSecs,
+		log.Debug("heartbeat + security sent successfully",
+			"latency_ms", s.lastLatencyMs,
+			"defender_active", sec != nil && sec.DefenderActive,
+			"firewall_active", sec != nil && sec.FirewallActive,
 		)
 	} else {
-		log.Warn("heartbeat rejected", "status", resp.StatusCode)
+		log.Warn("heartbeat rejected by server", "status", resp.StatusCode)
 	}
 }
 
+// collectAndSendMetrics runs every 5 minutes (CPU, RAM, Volumes)
 func (s *Scheduler) collectAndSendMetrics(ctx context.Context) {
 	log := s.logger.With("task", "metrics")
 
 	perf, err := collector.CollectPerformance()
 	if err != nil {
-		log.Error("failed to collect metrics", "error", err)
+		log.Error("failed to collect performance metrics", "error", err)
 		return
 	}
 
@@ -166,25 +305,96 @@ func (s *Scheduler) collectAndSendMetrics(ctx context.Context) {
 	}, 2)
 
 	if err != nil {
-		log.Warn("failed to send metrics", "error", err)
+		log.Warn("failed to send metrics, buffering offline", "error", err)
+		if s.buffer != nil {
+			_ = s.buffer.Enqueue(buffer.PriorityMetrics, "/agent/metrics", perf)
+		}
 		return
 	}
 
 	if resp.StatusCode >= 200 && resp.StatusCode < 300 {
-		log.Debug("metrics sent",
+		log.Debug("performance metrics sent successfully",
 			"cpu", perf.CPUPercent,
 			"ram_percent", perf.RAMPercent,
 			"volumes", len(perf.Volumes),
 		)
 	} else {
-		log.Warn("metrics rejected", "status", resp.StatusCode)
+		log.Warn("metrics rejected by server", "status", resp.StatusCode)
 	}
 }
 
+// collectAndSendSmart runs every 60 minutes (Physical drive SMART health)
+func (s *Scheduler) collectAndSendSmart(ctx context.Context) {
+	log := s.logger.With("task", "smart")
+
+	report, err := collector.CollectSmart()
+	if err != nil {
+		log.Warn("failed to collect SMART report", "error", err)
+		return
+	}
+
+	// Detect if physical disk status degraded
+	degradations := s.stateDetector.DetectSmartChanges(report)
+	if len(degradations) > 0 {
+		log.Warn("STORAGE SMART DEGRADATION DETECTED! Sending immediate event", "status", report.OverallStatus)
+		for _, ev := range degradations {
+			s.sendEventImmediate(ctx, ev, buffer.PriorityCriticalEvent)
+		}
+	}
+
+	// Send SMART disk inventory to API
+	resp, err := s.client.SendWithRetry(ctx, func(ctx context.Context) (*transport.Response, error) {
+		return s.client.SendInventory(ctx, map[string]interface{}{
+			"smart": report,
+		})
+	}, 2)
+
+	if err != nil {
+		log.Warn("failed to send smart telemetry, buffering offline", "error", err)
+		if s.buffer != nil {
+			_ = s.buffer.Enqueue(buffer.PriorityMetrics, "/agent/inventory", map[string]interface{}{"smart": report})
+		}
+		return
+	}
+
+	if resp.StatusCode >= 200 && resp.StatusCode < 300 {
+		log.Debug("SMART health telemetry sent", "overall", report.OverallStatus, "disks", len(report.Disks))
+	}
+}
+
+// collectAndSendWindowsUpdate runs every 4 hours + boot
+func (s *Scheduler) collectAndSendWindowsUpdate(ctx context.Context) {
+	log := s.logger.With("task", "windows_update")
+
+	wu, err := collector.CollectWindowsUpdate()
+	if err != nil {
+		log.Warn("failed to collect windows update info", "error", err)
+		return
+	}
+
+	resp, err := s.client.SendWithRetry(ctx, func(ctx context.Context) (*transport.Response, error) {
+		return s.client.SendInventory(ctx, map[string]interface{}{
+			"windowsUpdate": wu,
+		})
+	}, 2)
+
+	if err != nil {
+		log.Warn("failed to send windows update telemetry, buffering offline", "error", err)
+		if s.buffer != nil {
+			_ = s.buffer.Enqueue(buffer.PriorityInventory, "/agent/inventory", map[string]interface{}{"windowsUpdate": wu})
+		}
+		return
+	}
+
+	if resp.StatusCode >= 200 && resp.StatusCode < 300 {
+		log.Debug("windows update telemetry sent", "reboot_pending", wu.RebootPending, "hotfixes", wu.HotfixCount)
+	}
+}
+
+// collectAndSendInventory runs every 24 hours + boot
 func (s *Scheduler) collectAndSendInventory(ctx context.Context) {
 	log := s.logger.With("task", "inventory")
 
-	// Collect all inventory data
 	identity, err := collector.CollectIdentity()
 	if err != nil {
 		log.Error("failed to collect identity", "error", err)
@@ -199,59 +409,36 @@ func (s *Scheduler) collectAndSendInventory(ctx context.Context) {
 	if err != nil {
 		log.Error("failed to collect network", "error", err)
 	}
-
-	// Measure server latency
 	if network != nil {
-		network.ServerLatencyMs = collector.MeasureServerLatency(s.cfg.APIUrl)
-	}
-
-	// Security posture (AV, Defender, Firewall)
-	security, err := collector.CollectSecurity()
-	if err != nil {
-		log.Error("failed to collect security posture", "error", err)
-	}
-
-	// Physical storage (NVMe/SSD/HDD, health, SMART)
-	storage, err := collector.CollectStorage()
-	if err != nil {
-		log.Error("failed to collect storage inventory", "error", err)
-	}
-
-	// Windows update status & pending reboots
-	windowsUpdate, err := collector.CollectWindowsUpdate()
-	if err != nil {
-		log.Error("failed to collect windows update status", "error", err)
+		network.ServerLatencyMs = s.lastLatencyMs
 	}
 
 	payload := map[string]interface{}{
-		"identity":      identity,
-		"hardware":      hardware,
-		"network":       network,
-		"security":      security,
-		"storage":       storage,
-		"windowsUpdate": windowsUpdate,
+		"identity": identity,
+		"hardware": hardware,
+		"network":  network,
 	}
 
 	resp, err := s.client.SendWithRetry(ctx, func(ctx context.Context) (*transport.Response, error) {
 		return s.client.SendInventory(ctx, payload)
-	}, 3)
+	}, 2)
 
 	if err != nil {
-		log.Warn("failed to send inventory", "error", err)
+		log.Warn("failed to send inventory, buffering offline", "error", err)
+		if s.buffer != nil {
+			_ = s.buffer.Enqueue(buffer.PriorityInventory, "/agent/inventory", payload)
+		}
 		return
 	}
 
 	if resp.StatusCode >= 200 && resp.StatusCode < 300 {
-		log.Info("inventory sent successfully",
-			"has_security", security != nil,
-			"has_storage", storage != nil,
-			"has_wu", windowsUpdate != nil,
-		)
+		log.Info("heavy general inventory sent successfully")
 	} else {
-		log.Warn("inventory rejected", "status", resp.StatusCode)
+		log.Warn("inventory rejected by server", "status", resp.StatusCode)
 	}
 }
 
+// collectAndSendSoftware runs every 24 hours + boot (uses checksum to avoid unnecessary uploads)
 func (s *Scheduler) collectAndSendSoftware(ctx context.Context) {
 	log := s.logger.With("task", "software")
 
@@ -263,13 +450,14 @@ func (s *Scheduler) collectAndSendSoftware(ctx context.Context) {
 
 	// Check if software has changed since last sync
 	if s.lastSoftwareChecksum == sw.Checksum && len(s.lastSoftwareItems) > 0 {
-		log.Debug("software inventory unchanged, skipping upload", "count", sw.Count, "checksum", sw.Checksum)
+		log.Debug("software inventory unchanged (checksum matches), skipping upload",
+			"count", sw.Count,
+			"checksum", sw.Checksum,
+		)
 		return
 	}
 
-	// Calculate delta
 	changes := collector.ComputeSoftwareDelta(s.lastSoftwareItems, sw.Items)
-
 	payload := map[string]interface{}{
 		"checksum": sw.Checksum,
 		"count":    sw.Count,
@@ -279,10 +467,13 @@ func (s *Scheduler) collectAndSendSoftware(ctx context.Context) {
 
 	resp, err := s.client.SendWithRetry(ctx, func(ctx context.Context) (*transport.Response, error) {
 		return s.client.SendSoftware(ctx, payload)
-	}, 3)
+	}, 2)
 
 	if err != nil {
-		log.Warn("failed to send software inventory", "error", err)
+		log.Warn("failed to send software inventory, buffering offline", "error", err)
+		if s.buffer != nil {
+			_ = s.buffer.Enqueue(buffer.PriorityInventory, "/agent/software", payload)
+		}
 		return
 	}
 
@@ -292,7 +483,6 @@ func (s *Scheduler) collectAndSendSoftware(ctx context.Context) {
 			"changes", len(changes),
 			"checksum", sw.Checksum,
 		)
-		// Update cache only on successful delivery
 		s.lastSoftwareChecksum = sw.Checksum
 		s.lastSoftwareItems = sw.Items
 	} else {
@@ -300,6 +490,7 @@ func (s *Scheduler) collectAndSendSoftware(ctx context.Context) {
 	}
 }
 
+// collectAndSendEvents runs every 60 seconds (critical Windows events using watermark bookmark)
 func (s *Scheduler) collectAndSendEvents(ctx context.Context) {
 	log := s.logger.With("task", "events")
 
@@ -309,21 +500,29 @@ func (s *Scheduler) collectAndSendEvents(ctx context.Context) {
 		return
 	}
 
-	// Update watermark IDs
 	s.lastEventRecordIDs = updatedIDs
 
 	if len(events) == 0 {
 		return
 	}
 
-	log.Info("sending windows events", "count", len(events))
+	log.Info("new system events detected", "count", len(events))
 
 	resp, err := s.client.SendWithRetry(ctx, func(ctx context.Context) (*transport.Response, error) {
 		return s.client.SendEvents(ctx, events)
 	}, 2)
 
 	if err != nil {
-		log.Warn("failed to send events", "error", err)
+		log.Warn("failed to send events, buffering offline", "error", err)
+		if s.buffer != nil {
+			for _, ev := range events {
+				pri := buffer.PriorityAlert
+				if ev.Severity == "CRITICAL" {
+					pri = buffer.PriorityCriticalEvent
+				}
+				_ = s.buffer.Enqueue(pri, "/agent/events", []collector.DeviceEventPayload{ev})
+			}
+		}
 		return
 	}
 
@@ -332,4 +531,81 @@ func (s *Scheduler) collectAndSendEvents(ctx context.Context) {
 	} else {
 		log.Warn("events rejected", "status", resp.StatusCode)
 	}
+}
+
+// sendEventImmediate transmits a critical event immediately or queues it in priority buffer
+func (s *Scheduler) sendEventImmediate(ctx context.Context, ev collector.DeviceEventPayload, pri buffer.Priority) {
+	log := s.logger.With("event_immediate", ev.Title, "priority", pri)
+
+	payload := []collector.DeviceEventPayload{ev}
+	resp, err := s.client.SendWithRetry(ctx, func(ctx context.Context) (*transport.Response, error) {
+		return s.client.SendEvents(ctx, payload)
+	}, 2)
+
+	if err != nil || resp == nil || resp.StatusCode >= 400 {
+		log.Warn("immediate event transmission failed, queueing in priority buffer", "error", err)
+		if s.buffer != nil {
+			_ = s.buffer.Enqueue(pri, "/agent/events", payload)
+		}
+		return
+	}
+
+	log.Info("immediate event transmitted successfully to API")
+}
+
+// flushOfflineBuffer drains buffered items in strict priority order
+func (s *Scheduler) flushOfflineBuffer(ctx context.Context) {
+	if s.buffer == nil || s.buffer.Len() == 0 {
+		return
+	}
+
+	items := s.buffer.PeekSorted()
+	if len(items) == 0 {
+		return
+	}
+
+	s.logger.Info("flushing offline priority buffer", "items_queued", len(items), "size_bytes", s.buffer.SizeBytes())
+
+	for _, item := range items {
+		var err error
+		var resp *transport.Response
+
+		switch item.Endpoint {
+		case "/agent/events":
+			var payloads []collector.DeviceEventPayload
+			if err = json.Unmarshal(item.Payload, &payloads); err == nil {
+				resp, err = s.client.SendEvents(ctx, payloads)
+			}
+		case "/agent/heartbeat":
+			var payload transport.HeartbeatPayload
+			if err = json.Unmarshal(item.Payload, &payload); err == nil {
+				resp, err = s.client.SendHeartbeat(ctx, &payload)
+			}
+		case "/agent/metrics":
+			var payload interface{}
+			if err = json.Unmarshal(item.Payload, &payload); err == nil {
+				resp, err = s.client.SendMetrics(ctx, payload)
+			}
+		case "/agent/inventory":
+			var payload interface{}
+			if err = json.Unmarshal(item.Payload, &payload); err == nil {
+				resp, err = s.client.SendInventory(ctx, payload)
+			}
+		case "/agent/software":
+			var payload interface{}
+			if err = json.Unmarshal(item.Payload, &payload); err == nil {
+				resp, err = s.client.SendSoftware(ctx, payload)
+			}
+		}
+
+		if err != nil || (resp != nil && resp.StatusCode >= 400) {
+			s.logger.Warn("offline buffer delivery failed, stopping drain until next tick", "endpoint", item.Endpoint, "error", err)
+			return
+		}
+
+		// Item delivered successfully, remove from buffer
+		_ = s.buffer.Remove(item.ID)
+	}
+
+	s.logger.Info("offline buffer drain completed successfully")
 }

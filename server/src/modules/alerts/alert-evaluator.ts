@@ -197,23 +197,26 @@ export async function evaluateDeviceAlerts(
 
       case 'SMART': {
         canAutoHeal = false; // Physical disk damage requires technician clearance
-        if ((latestInventory?.storage as any)?.physicalDisks) {
-          const disks = (latestInventory?.storage as any).physicalDisks;
-          const unhealthyDisk = disks.find((d: any) => {
-            const h = String(d.health || d.status || '').toLowerCase();
-            return (
-              h.includes('degrad') ||
-              h.includes('warn') ||
-              h.includes('unhealthy') ||
-              h.includes('predfail') ||
-              h.includes('caution') ||
-              h.includes('bad')
-            );
-          });
-          if (unhealthyDisk) {
-            isTriggered = true;
-            dynamicDescription = `Fallo predictivo SMART detectado en la unidad física "${unhealthyDisk.model || 'Disco'}" (Estado: ${unhealthyDisk.health || unhealthyDisk.status || 'No saludable'}). Se recomienda respaldo preventivo inmediato.`;
-          }
+        const storageObj = latestInventory?.storage as any;
+        const smartObj = (latestInventory as any)?.smart as any;
+        const disks = storageObj?.disks || storageObj?.physicalDisks || smartObj?.disks || [];
+        const unhealthyDisk = disks.find((d: any) => {
+          const h = String(d.healthStatus || d.health || d.status || d.operationalStatus || '').toLowerCase();
+          return (
+            d.predictFailure === true ||
+            h.includes('degrad') ||
+            h.includes('warn') ||
+            h.includes('unhealthy') ||
+            h.includes('predfail') ||
+            h.includes('caution') ||
+            h.includes('bad') ||
+            h.includes('critical') ||
+            h.includes('fail')
+          );
+        });
+        if (unhealthyDisk) {
+          isTriggered = true;
+          dynamicDescription = `Fallo predictivo SMART detectado en la unidad física "${unhealthyDisk.friendlyName || unhealthyDisk.model || 'Disco'}" (Estado: ${unhealthyDisk.healthStatus || unhealthyDisk.operationalStatus || 'No saludable'}). Se recomienda respaldo preventivo inmediato.`;
         }
         break;
       }
@@ -275,16 +278,50 @@ export async function evaluateDeviceAlerts(
         canAutoHeal = true;
         if (latestInventory?.security) {
           const sec = latestInventory.security as any;
-          if (sec.antivirus && Array.isArray(sec.antivirus) && sec.antivirus.length > 0) {
-            const hasActiveAv = sec.antivirus.some(
-              (av: any) => av.enabled === true || av.realTimeProtection === true
-            );
-            if (!hasActiveAv) {
+          const isEnabled =
+            sec.defenderActive === true ||
+            (Array.isArray(sec.antivirusList) && sec.antivirusList.some((av: any) => av.enabled === true)) ||
+            (Array.isArray(sec.antivirus) && sec.antivirus.some((av: any) => av.enabled === true || av.realTimeProtection === true));
+
+          if (!isEnabled) {
+            // Persistence window (default 5 minutes)
+            const persistenceMinutes = condition.persistenceMinutes ?? 5;
+            const persistenceMs = persistenceMinutes * 60 * 1000;
+            const existingAlert = activeAlertMap.get(rule.id) || activeAlertMap.get(rule.name);
+
+            if (existingAlert) {
+              // Condition still active, keep alert open
               isTriggered = true;
               dynamicDescription = `La protección antivirus en tiempo real se encuentra desactivada en el endpoint.`;
             } else {
-              isTriggered = false;
+              // Find when this disabled state started (from security transition events or inventory snapshot)
+              const disabledEvt = recentEvents.find(
+                (e) =>
+                  e.category === 'Security' &&
+                  (e.dedupKey.includes('Antivirus:disabled') ||
+                    (e.title && e.title.toLowerCase().includes('antivirus desactivado')) ||
+                    (e.rawData && (e.rawData as any).currentState === 'disabled'))
+              );
+              const detectedAt = disabledEvt
+                ? new Date(disabledEvt.timestamp).getTime()
+                : new Date(latestInventory.collectedAt).getTime();
+              const elapsedMs = now.getTime() - detectedAt;
+
+              if (elapsedMs >= persistenceMs) {
+                isTriggered = true;
+                const elapsedMins = Math.round(elapsedMs / 60000);
+                dynamicDescription = `La protección antivirus en tiempo real se encuentra desactivada desde hace ${elapsedMins} minutos (ventana de persistencia: ${persistenceMinutes} min).`;
+              } else {
+                // In grace/persistence window (< 5m): do not open alert yet to prevent false positives
+                isTriggered = false;
+                logger.debug(
+                  { deviceId, elapsedMs, persistenceMs },
+                  'Antivirus is disabled but within persistence window (delaying alert)'
+                );
+              }
             }
+          } else {
+            isTriggered = false;
           }
         }
         break;
@@ -294,14 +331,54 @@ export async function evaluateDeviceAlerts(
         canAutoHeal = true;
         if (latestInventory?.security) {
           const sec = latestInventory.security as any;
-          if (sec.firewall && Array.isArray(sec.firewall) && sec.firewall.length > 0) {
-            const anyDisabled = sec.firewall.some((fw: any) => fw.enabled === false);
-            if (anyDisabled) {
+          let anyDisabled = false;
+          let disabledProfiles: string[] = [];
+
+          if (sec.firewallProfiles) {
+            if (sec.firewallProfiles.domain === false) disabledProfiles.push('Dominio');
+            if (sec.firewallProfiles.private === false) disabledProfiles.push('Privado');
+            if (sec.firewallProfiles.public === false) disabledProfiles.push('Público');
+            anyDisabled = disabledProfiles.length > 0;
+          } else if (Array.isArray(sec.firewallList)) {
+            anyDisabled = sec.firewallList.some((f: any) => f.enabled === false);
+          } else if (Array.isArray(sec.firewall)) {
+            anyDisabled = sec.firewall.some((fw: any) => fw.enabled === false);
+          } else if (sec.firewallActive === false) {
+            anyDisabled = true;
+          }
+
+          if (anyDisabled) {
+            const persistenceMinutes = condition.persistenceMinutes ?? 5;
+            const persistenceMs = persistenceMinutes * 60 * 1000;
+            const existingAlert = activeAlertMap.get(rule.id) || activeAlertMap.get(rule.name);
+
+            if (existingAlert) {
               isTriggered = true;
-              dynamicDescription = `El Firewall de Windows se encuentra desactivado para uno o más perfiles de red.`;
+              const profileMsg = disabledProfiles.length > 0 ? ` (Perfiles: ${disabledProfiles.join(', ')})` : '';
+              dynamicDescription = `El Firewall de Windows se encuentra desactivado para uno o más perfiles de red${profileMsg}.`;
             } else {
-              isTriggered = false;
+              const disabledEvt = recentEvents.find(
+                (e) =>
+                  e.category === 'Security' &&
+                  (e.dedupKey.includes('Firewall') ||
+                    (e.title && e.title.toLowerCase().includes('firewall')))
+              );
+              const detectedAt = disabledEvt
+                ? new Date(disabledEvt.timestamp).getTime()
+                : new Date(latestInventory.collectedAt).getTime();
+              const elapsedMs = now.getTime() - detectedAt;
+
+              if (elapsedMs >= persistenceMs) {
+                isTriggered = true;
+                const elapsedMins = Math.round(elapsedMs / 60000);
+                const profileMsg = disabledProfiles.length > 0 ? ` (${disabledProfiles.join(', ')})` : '';
+                dynamicDescription = `El Firewall de Windows se encuentra desactivado${profileMsg} desde hace ${elapsedMins} minutos (ventana de persistencia: ${persistenceMinutes} min).`;
+              } else {
+                isTriggered = false;
+              }
             }
+          } else {
+            isTriggered = false;
           }
         }
         break;
@@ -399,18 +476,20 @@ export async function evaluateDeviceAlerts(
       }
     } else if (canAutoHeal && existingAlert) {
       // Auto-healing: condition normalized, mark resolved!
+      const durationSec = Math.round((now.getTime() - existingAlert.firstSeenAt.getTime()) / 1000);
+      const durationText = durationSec >= 60 ? `${Math.round(durationSec / 60)} min` : `${durationSec} seg`;
       await db.alert.update({
         where: { id: existingAlert.id },
         data: {
           status: AlertStatus.RESOLVED,
           resolvedAt: now,
-          description: `${existingAlert.description} — [Auto-resuelto por telemetría normalizada a las ${now.toLocaleTimeString()}]`,
+          description: `${existingAlert.description} — [Auto-resuelto tras ${durationText} de persistencia por telemetría normalizada a las ${now.toLocaleTimeString()}]`,
         },
       });
       result.alertsResolved++;
       logger.info(
-        { deviceId, hostname: device.hostname, rule: rule.name },
-        `✅ Alert auto-resolved: ${rule.name} on ${device.hostname}`
+        { deviceId, hostname: device.hostname, rule: rule.name, durationSec },
+        `✅ Alert auto-resolved: ${rule.name} on ${device.hostname} (Duración: ${durationText})`
       );
     }
   }

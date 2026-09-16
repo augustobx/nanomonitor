@@ -3,12 +3,16 @@ import { z } from 'zod';
 export const agentHeartbeatSchema = z.object({
   agentVersion: z.string().min(1),
   timestamp: z.string().or(z.date()),
-  uptimeSeconds: z.number().int().nonnegative(),
+  uptimeSeconds: z.number().int().nonnegative().optional().default(0),
   status: z.string().default('healthy'),
-  cpuPercent: z.number().min(0).max(100),
-  ramUsedMb: z.number().int().nonnegative(),
-  ramAvailMb: z.number().int().nonnegative(),
+  cpuPercent: z.number().min(0).max(100).optional(),
+  ramUsedMb: z.number().int().nonnegative().optional(),
+  ramAvailMb: z.number().int().nonnegative().optional(),
   diskSummary: z.any().optional(),
+  deviceId: z.string().optional(),
+  agentId: z.string().optional(),
+  serverLatencyMs: z.number().optional(),
+  security: z.any().optional(),
 });
 
 export const volumeSchema = z.object({
@@ -38,6 +42,7 @@ export const agentInventorySchema = z.object({
   network: z.any().optional(),
   security: z.any().optional(),
   storage: z.any().optional(),
+  smart: z.any().optional(),
   windowsUpdate: z.any().optional(),
 });
 

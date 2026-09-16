@@ -12,11 +12,23 @@ func TestDefaultConfig(t *testing.T) {
 	if cfg.HeartbeatInterval != 180 {
 		t.Errorf("expected heartbeat interval 180, got %d", cfg.HeartbeatInterval)
 	}
+	if cfg.SecurityInterval != 180 {
+		t.Errorf("expected security interval 180, got %d", cfg.SecurityInterval)
+	}
 	if cfg.MetricsInterval != 300 {
 		t.Errorf("expected metrics interval 300, got %d", cfg.MetricsInterval)
 	}
+	if cfg.SmartInterval != 3600 {
+		t.Errorf("expected smart interval 3600, got %d", cfg.SmartInterval)
+	}
+	if cfg.WindowsUpdateInterval != 14400 {
+		t.Errorf("expected windows update interval 14400, got %d", cfg.WindowsUpdateInterval)
+	}
 	if cfg.InventoryInterval != 86400 {
 		t.Errorf("expected inventory interval 86400, got %d", cfg.InventoryInterval)
+	}
+	if cfg.EventCheckInterval != 60 {
+		t.Errorf("expected event check interval 60, got %d", cfg.EventCheckInterval)
 	}
 	if cfg.LogLevel != "info" {
 		t.Errorf("expected log level 'info', got %s", cfg.LogLevel)

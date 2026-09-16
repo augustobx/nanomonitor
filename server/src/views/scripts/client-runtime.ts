@@ -1989,15 +1989,35 @@ export function getClientRuntimeScript(): string {
       const sec = inv ? inv.security : null;
       const winUp = inv ? inv.windowsUpdate : null;
 
-      const avOn = sec ? (sec.defenderActive ?? (sec.antivirus ? sec.antivirus.realTimeProtection : false)) : false;
-      const fwOn = sec ? (sec.firewallActive ?? (sec.firewall ? sec.firewall.domain : true)) : true;
+      const avName = (sec && sec.antivirusList && sec.antivirusList.length > 0 && sec.antivirusList[0].displayName)
+        ? sec.antivirusList[0].displayName
+        : 'Windows Defender Antivirus';
+      const avOn = sec ? (
+        sec.defenderActive === true ||
+        (Array.isArray(sec.antivirusList) && sec.antivirusList.some(function(a){ return a.enabled; })) ||
+        (sec.antivirus ? sec.antivirus.realTimeProtection : false)
+      ) : false;
+
+      const fwProfiles = sec && sec.firewallProfiles ? sec.firewallProfiles : null;
+      const fwOn = fwProfiles
+        ? (fwProfiles.domain && fwProfiles.private && fwProfiles.public)
+        : (sec ? (sec.firewallActive ?? true) : true);
+
+      const fwProfilesHtml = fwProfiles
+        ? '<div style="display: flex; gap: 8px; margin-top: 6px; font-size: 11px;">' +
+            '<span class="status-pill ' + (fwProfiles.domain ? 'status-online' : 'status-danger') + '">Dominio: ' + (fwProfiles.domain ? 'ON' : 'OFF') + '</span>' +
+            '<span class="status-pill ' + (fwProfiles.private ? 'status-online' : 'status-danger') + '">Privado: ' + (fwProfiles.private ? 'ON' : 'OFF') + '</span>' +
+            '<span class="status-pill ' + (fwProfiles.public ? 'status-online' : 'status-danger') + '">Público: ' + (fwProfiles.public ? 'ON' : 'OFF') + '</span>' +
+          '</div>'
+        : '';
+
       const reboot = winUp ? (winUp.rebootPending ?? false) : (sec ? sec.rebootRequired : false);
       const rebootReason = winUp && winUp.rebootReason ? winUp.rebootReason : (reboot ? 'Actualizaciones acumulativas pendientes' : 'No hay parches o instalaciones pendientes de reinicio.');
 
       g.innerHTML = 
         '<div style="background: var(--bg-surface-subtle); border: 1px solid var(--border-subtle); border-radius: var(--radius-md); padding: 14px;">' +
           '<div style="display: flex; justify-content: space-between; align-items: center;">' +
-            '<strong style="color: #fff; font-size: 13px;">Windows Defender Antivirus</strong>' +
+            '<strong style="color: #fff; font-size: 13px;">' + avName + '</strong>' +
             '<span class="status-pill ' + (avOn ? 'status-online' : 'status-danger') + '">' + (avOn ? 'Activo' : 'Desactivado') + '</span>' +
           '</div>' +
           '<div style="font-size: 12px; color: var(--text-secondary); margin-top: 6px;">Protección en tiempo real contra amenazas y malware. ' + (avOn ? 'El servicio monitorea el sistema.' : '⚠️ Se recomienda reactivar la protección residente.') + '</div>' +
@@ -2009,6 +2029,7 @@ export function getClientRuntimeScript(): string {
             '<span class="status-pill ' + (fwOn ? 'status-online' : 'status-danger') + '">' + (fwOn ? 'Activo' : 'Desactivado') + '</span>' +
           '</div>' +
           '<div style="font-size: 12px; color: var(--text-secondary); margin-top: 6px;">Filtrado de puertos y paquetes entrantes en perfiles de red.</div>' +
+          fwProfilesHtml +
         '</div>' +
 
         '<div style="background: var(--bg-surface-subtle); border: 1px solid var(--border-subtle); border-radius: var(--radius-md); padding: 14px;">' +
