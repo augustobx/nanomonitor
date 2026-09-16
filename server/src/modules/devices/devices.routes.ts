@@ -5,6 +5,7 @@ import { authenticateUser, requireRole } from '../../middleware/user-auth.js';
 import { getTenantId } from '../../middleware/tenant-isolation.js';
 import { updateDeviceSchema } from '../../schemas/management.schema.js';
 import { logAudit } from '../../middleware/audit.js';
+import { calculateAndPersistDeviceHealthScore } from '../health/health-scorer.js';
 
 export const devicesRoutes: FastifyPluginAsync = async (fastify: FastifyInstance) => {
   fastify.addHook('preHandler', authenticateUser);
@@ -57,6 +58,7 @@ export const devicesRoutes: FastifyPluginAsync = async (fastify: FastifyInstance
           customer: { select: { id: true, name: true, code: true } },
           site: { select: { id: true, name: true } },
           agent: { select: { id: true, agentVersion: true, status: true, lastAuthAt: true } },
+          healthScores: { take: 1, orderBy: { calculatedAt: 'desc' } },
         },
         orderBy: { lastSeenAt: 'desc' },
         skip,
@@ -97,6 +99,10 @@ export const devicesRoutes: FastifyPluginAsync = async (fastify: FastifyInstance
             enrolledAt: true,
           },
         },
+        healthScores: {
+          take: 1,
+          orderBy: { calculatedAt: 'desc' },
+        },
         inventories: {
           take: 1,
           orderBy: { collectedAt: 'desc' },
@@ -125,6 +131,47 @@ export const devicesRoutes: FastifyPluginAsync = async (fastify: FastifyInstance
     }
 
     return reply.send({ statusCode: 200, data: device });
+  });
+
+  // GET /api/v1/devices/:id/health
+  fastify.get('/:id/health', async (request, reply) => {
+    const tenantId = getTenantId(request);
+    const { id } = request.params as { id: string };
+
+    const device = await db.device.findFirst({
+      where: { id, tenantId },
+      select: { id: true, tenantId: true },
+    });
+
+    if (!device) {
+      return reply.status(404).send({ statusCode: 404, message: 'Device not found' });
+    }
+
+    let latest = await db.healthScore.findFirst({
+      where: { deviceId: id, tenantId },
+      orderBy: { calculatedAt: 'desc' },
+    });
+
+    if (!latest) {
+      const computed = await calculateAndPersistDeviceHealthScore(id);
+      if (computed) {
+        latest = await db.healthScore.findUnique({ where: { id: computed.id } });
+      }
+    }
+
+    const history = await db.healthScore.findMany({
+      where: { deviceId: id, tenantId },
+      orderBy: { calculatedAt: 'desc' },
+      take: 30,
+    });
+
+    return reply.send({
+      statusCode: 200,
+      data: {
+        current: latest,
+        history: history.reverse(),
+      },
+    });
   });
 
   // GET /api/v1/devices/:id/metrics

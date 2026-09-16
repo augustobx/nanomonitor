@@ -2,6 +2,7 @@ import { aggregateHourlyMetrics } from './metric-aggregator.js';
 import { aggregateDailyMetrics } from './daily-aggregator.js';
 import { runRetentionCleanup } from './retention-cleanup.js';
 import { ensurePartitionsExist } from './partition-creator.js';
+import { runHealthScoringJob } from './health-scorer.js';
 import { db } from '../lib/db.js';
 import { cacheService } from '../lib/redis.js';
 
@@ -24,6 +25,9 @@ async function main() {
       case 'partitions':
         await ensurePartitionsExist(2);
         break;
+      case 'health':
+        await runHealthScoringJob();
+        break;
       case 'all':
         console.log('--- 1. Partitions ---');
         await ensurePartitionsExist(2);
@@ -33,9 +37,11 @@ async function main() {
         await aggregateDailyMetrics();
         console.log('--- 4. Retention Cleanup ---');
         await runRetentionCleanup();
+        console.log('--- 5. Health Scoring ---');
+        await runHealthScoringJob();
         break;
       default:
-        console.error(`Unknown job task: ${task}. Valid options: hourly, daily, cleanup, partitions, all`);
+        console.error(`Unknown job task: ${task}. Valid options: hourly, daily, cleanup, partitions, health, all`);
         process.exit(1);
     }
 

@@ -101,6 +101,7 @@ export async function buildApp(): Promise<FastifyInstance> {
             softwareInventories: { take: 1, orderBy: { collectedAt: 'desc' } },
             metrics: { take: 1, orderBy: { timestamp: 'desc' } },
             events: { take: 20, orderBy: { timestamp: 'desc' } },
+            healthScores: { take: 1, orderBy: { calculatedAt: 'desc' } },
           },
           orderBy: { lastSeenAt: 'desc' },
         });
@@ -196,6 +197,7 @@ export async function buildApp(): Promise<FastifyInstance> {
           softwareInventories: { take: 1, orderBy: { collectedAt: 'desc' } },
           metrics: { take: 1, orderBy: { timestamp: 'desc' } },
           events: { take: 20, orderBy: { timestamp: 'desc' } },
+          healthScores: { take: 1, orderBy: { calculatedAt: 'desc' } },
         },
         orderBy: { lastSeenAt: 'desc' },
       });

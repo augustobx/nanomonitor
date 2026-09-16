@@ -2,6 +2,7 @@ import { aggregateHourlyMetrics } from './metric-aggregator.js';
 import { aggregateDailyMetrics } from './daily-aggregator.js';
 import { runRetentionCleanup } from './retention-cleanup.js';
 import { ensurePartitionsExist } from './partition-creator.js';
+import { runHealthScoringJob } from './health-scorer.js';
 import { logger } from '../lib/logger.js';
 import { db } from '../lib/db.js';
 import { cacheService } from '../lib/redis.js';
@@ -15,10 +16,24 @@ export class BackgroundJobScheduler {
     this.isRunning = true;
     logger.info('🚀 Background Job Scheduler started');
 
-    // Run partition check immediately on startup
+    // Run partition check and initial health scoring immediately on startup
     ensurePartitionsExist(2).catch((err) => {
       logger.error({ err }, 'Initial partition check failed');
     });
+
+    runHealthScoringJob().catch((err) => {
+      logger.error({ err }, 'Initial health scoring job failed');
+    });
+
+    // Schedule health scoring (runs every 10 minutes)
+    const healthInterval = setInterval(async () => {
+      try {
+        await runHealthScoringJob();
+      } catch (err) {
+        logger.error({ err }, 'Scheduled health scoring failed');
+      }
+    }, 10 * 60 * 1000);
+    this.intervals.push(healthInterval);
 
     // Schedule hourly aggregation (runs every 10 minutes checking the last complete hour)
     const hourlyInterval = setInterval(async () => {

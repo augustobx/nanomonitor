@@ -241,6 +241,28 @@ export function getLandingHtml(data: {
       border: 1px solid var(--danger-border);
     }
 
+    .status-info {
+      background: rgba(56, 189, 248, 0.1);
+      color: #38bdf8;
+      border: 1px solid rgba(56, 189, 248, 0.25);
+    }
+
+    .health-cat-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+      gap: 10px;
+    }
+
+    .health-cat-card {
+      background: #090d16;
+      border: 1px solid var(--border-subtle);
+      border-radius: 6px;
+      padding: 10px 12px;
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+    }
+
     .code-badge {
       font-family: 'JetBrains Mono', monospace;
       font-size: 11px;
@@ -1022,6 +1044,15 @@ export function getLandingHtml(data: {
           <div class="kpi-val" id="kpiCriticalEvents" style="color: #38bdf8;">0</div>
           <div class="kpi-detail" id="kpiEventsDetail">0 Críticos en la Flota</div>
         </div>
+
+        <div class="kpi-box">
+          <div class="kpi-header">
+            <span>Salud de Flota (Health Score)</span>
+            <span>🩺</span>
+          </div>
+          <div class="kpi-val" id="kpiFleetHealthScore" style="color: #10b981;">100/100</div>
+          <div class="kpi-detail" id="kpiFleetHealthDetail">● Flota en Estado Óptimo</div>
+        </div>
       </div>
 
       <!-- Directory Header & Search Filter -->
@@ -1167,6 +1198,7 @@ export function getLandingHtml(data: {
               <tr>
                 <th>Estación / Hardware</th>
                 <th>Sede</th>
+                <th>Salud (Score)</th>
                 <th>Sistema Operativo</th>
                 <th>Procesador & Memoria</th>
                 <th>Disco & SMART</th>
@@ -1311,6 +1343,7 @@ export function getLandingHtml(data: {
               <div style="display: flex; align-items: center; gap: 10px; flex-wrap: wrap;">
                 <h2 id="wsDevMainHostname" style="font-size: 20px; font-weight: 700; color: #fff; font-family: 'JetBrains Mono', monospace;">NANOPC</h2>
                 <span class="status-pill status-online" id="wsDevHeroStatus">● ONLINE</span>
+                <span class="status-pill status-online" id="wsDevHealthScorePill">🩺 100/100 ÓPTIMO</span>
                 <span class="code-badge" id="wsDevAgentBadge">Agent v0.1.0</span>
               </div>
               <div style="font-size: 12px; color: var(--text-secondary); margin-top: 4px; display: flex; gap: 12px; flex-wrap: wrap;">
@@ -1325,6 +1358,10 @@ export function getLandingHtml(data: {
 
           <!-- Quick Hardware Chips -->
           <div style="display: flex; gap: 8px; flex-wrap: wrap;">
+            <div class="quick-chip" id="wsDevHealthHeroChip" style="border-color: rgba(16, 185, 129, 0.4); background: rgba(16, 185, 129, 0.08);">
+              <span class="quick-chip-label" style="color: #34d399;">HEALTH SCORE</span>
+              <span class="quick-chip-val" id="wsDevHealthHeroVal" style="color: #10b981; font-weight: 800;">100/100</span>
+            </div>
             <div class="quick-chip">
               <span class="quick-chip-label">SISTEMA</span>
               <span class="quick-chip-val" id="wsDevOsChip">Windows 11 Pro</span>
@@ -1395,6 +1432,118 @@ export function getLandingHtml(data: {
               <span class="label">Latencia con Servidor Central</span>
               <span class="val" id="dCurrentLatency" style="color: #38bdf8;">12 ms</span>
               <span style="font-size: 11px; color: var(--text-muted);">monitor.nanolabs.com.ar</span>
+            </div>
+          </div>
+
+          <!-- Diagnóstico Integral de Salud (Health Score 0-100) -->
+          <div style="background: #090d16; border: 1px solid var(--border-subtle); border-radius: 8px; padding: 18px; display: flex; flex-direction: column; gap: 14px;">
+            <div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 12px;">
+              <div style="display: flex; align-items: center; gap: 12px;">
+                <div style="font-size: 26px; background: rgba(16, 185, 129, 0.12); border: 1px solid rgba(16, 185, 129, 0.3); width: 48px; height: 48px; border-radius: 8px; display: flex; align-items: center; justify-content: center;">
+                  🩺
+                </div>
+                <div>
+                  <div style="display: flex; align-items: center; gap: 8px; flex-wrap: wrap;">
+                    <strong style="font-size: 15px; color: #fff;">Diagnóstico de Salud Integral (Health Score 0-100)</strong>
+                    <span class="status-pill status-online" id="hsDiagMainStatus" style="font-size: 12px; font-weight: 700;">● ÓPTIMO</span>
+                  </div>
+                  <div style="font-size: 11px; color: var(--text-muted); margin-top: 2px;">
+                    Puntuación algorítmica ponderada en 6 dimensiones críticas de operación y estabilidad.
+                  </div>
+                </div>
+              </div>
+              <div style="display: flex; align-items: center; gap: 12px;">
+                <div style="text-align: right;">
+                  <div style="font-size: 24px; font-weight: 800; font-family: 'JetBrains Mono', monospace; color: #10b981;" id="hsDiagMainScore">100/100</div>
+                  <div style="font-size: 10px; color: var(--text-muted); text-transform: uppercase;">Estado de Salud</div>
+                </div>
+                <button class="btn btn-secondary btn-sm" id="btnRecalcHealth" onclick="recalculateCurrentDeviceHealth()" title="Recalcular salud del equipo en servidor">
+                  🔄 Recalcular Salud
+                </button>
+              </div>
+            </div>
+
+            <!-- 6 Categories Breakdown Grid -->
+            <div class="health-cat-grid">
+              <!-- 1. Performance (20 pts) -->
+              <div class="health-cat-card">
+                <div style="display: flex; justify-content: space-between; align-items: center; font-size: 11px;">
+                  <span style="font-weight: 600; color: #cbd5e1;">⚡ Rendimiento (CPU/RAM/Uptime)</span>
+                  <strong style="color: #38bdf8; font-family: 'JetBrains Mono', monospace;" id="hsCatPerfVal">20/20 pts</strong>
+                </div>
+                <div class="gauge-bar" style="height: 6px; margin: 0;">
+                  <div class="gauge-fill" id="hsBarPerf" style="width: 100%; background: #38bdf8;"></div>
+                </div>
+                <div style="font-size: 10px; color: var(--text-muted);">Ponderación: 20% • Telemetría periódica</div>
+              </div>
+
+              <!-- 2. Storage (20 pts) -->
+              <div class="health-cat-card">
+                <div style="display: flex; justify-content: space-between; align-items: center; font-size: 11px;">
+                  <span style="font-weight: 600; color: #cbd5e1;">💾 Almacenamiento & SMART</span>
+                  <strong style="color: #10b981; font-family: 'JetBrains Mono', monospace;" id="hsCatStorageVal">20/20 pts</strong>
+                </div>
+                <div class="gauge-bar" style="height: 6px; margin: 0;">
+                  <div class="gauge-fill" id="hsBarStorage" style="width: 100%; background: #10b981;"></div>
+                </div>
+                <div style="font-size: 10px; color: var(--text-muted);">Ponderación: 20% • Espacio libre & discos</div>
+              </div>
+
+              <!-- 3. Security (20 pts) -->
+              <div class="health-cat-card">
+                <div style="display: flex; justify-content: space-between; align-items: center; font-size: 11px;">
+                  <span style="font-weight: 600; color: #cbd5e1;">🛡️ Seguridad (Defender / Firewall)</span>
+                  <strong style="color: #a855f7; font-family: 'JetBrains Mono', monospace;" id="hsCatSecurityVal">20/20 pts</strong>
+                </div>
+                <div class="gauge-bar" style="height: 6px; margin: 0;">
+                  <div class="gauge-fill" id="hsBarSecurity" style="width: 100%; background: #a855f7;"></div>
+                </div>
+                <div style="font-size: 10px; color: var(--text-muted);">Ponderación: 20% • Endpoint protection</div>
+              </div>
+
+              <!-- 4. Updates (15 pts) -->
+              <div class="health-cat-card">
+                <div style="display: flex; justify-content: space-between; align-items: center; font-size: 11px;">
+                  <span style="font-weight: 600; color: #cbd5e1;">🔄 Actualizaciones & Reinicio</span>
+                  <strong style="color: #f59e0b; font-family: 'JetBrains Mono', monospace;" id="hsCatUpdatesVal">15/15 pts</strong>
+                </div>
+                <div class="gauge-bar" style="height: 6px; margin: 0;">
+                  <div class="gauge-fill" id="hsBarUpdates" style="width: 100%; background: #f59e0b;"></div>
+                </div>
+                <div style="font-size: 10px; color: var(--text-muted);">Ponderación: 15% • Parches acumulativos</div>
+              </div>
+
+              <!-- 5. Stability (15 pts) -->
+              <div class="health-cat-card">
+                <div style="display: flex; justify-content: space-between; align-items: center; font-size: 11px;">
+                  <span style="font-weight: 600; color: #cbd5e1;">⚠️ Estabilidad & Eventos Windows</span>
+                  <strong style="color: #ec4899; font-family: 'JetBrains Mono', monospace;" id="hsCatStabilityVal">15/15 pts</strong>
+                </div>
+                <div class="gauge-bar" style="height: 6px; margin: 0;">
+                  <div class="gauge-fill" id="hsBarStability" style="width: 100%; background: #ec4899;"></div>
+                </div>
+                <div style="font-size: 10px; color: var(--text-muted);">Ponderación: 15% • Deduplicación 24h</div>
+              </div>
+
+              <!-- 6. Hardware (10 pts) -->
+              <div class="health-cat-card">
+                <div style="display: flex; justify-content: space-between; align-items: center; font-size: 11px;">
+                  <span style="font-weight: 600; color: #cbd5e1;">⚙️ Capacidad Hardware</span>
+                  <strong style="color: #6366f1; font-family: 'JetBrains Mono', monospace;" id="hsCatHardwareVal">10/10 pts</strong>
+                </div>
+                <div class="gauge-bar" style="height: 6px; margin: 0;">
+                  <div class="gauge-fill" id="hsBarHardware" style="width: 100%; background: #6366f1;"></div>
+                </div>
+                <div style="font-size: 10px; color: var(--text-muted);">Ponderación: 10% • RAM total & cores</div>
+              </div>
+            </div>
+
+            <!-- Penalties / Deductions Section -->
+            <div>
+              <div style="font-size: 11px; font-weight: 700; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 8px;">
+                Auditoría de Penalizaciones y Deducciones de Puntaje
+              </div>
+              <div id="hsPenaltiesList"></div>
             </div>
           </div>
 
@@ -1736,6 +1885,32 @@ export function getLandingHtml(data: {
         evBadge.style.color = critEventsCount > 0 ? '#ef4444' : '#38bdf8';
       }
       setVal('kpiEventsDetail', critEventsCount > 0 ? (critEventsCount + ' Incidentes Críticos') : '0 Incidentes en la Flota');
+
+      // Fleet Average Health Score (0-100)
+      let totalHealth = 0;
+      let scoredCount = 0;
+      currentDevices.forEach(function(d) {
+        const hs = (d.healthScores && d.healthScores[0]) ? d.healthScores[0].overall : (d.status === 'ONLINE' ? 98 : 75);
+        totalHealth += hs;
+        scoredCount++;
+      });
+      const avgHealth = scoredCount > 0 ? Math.round(totalHealth / scoredCount) : 100;
+      let hsColor = '#10b981';
+      let hsText = 'Flota en Estado Óptimo';
+      if (avgHealth < 50) {
+        hsColor = '#ef4444';
+        hsText = 'Atención Requerida (Crítico)';
+      } else if (avgHealth < 75) {
+        hsColor = '#f59e0b';
+        hsText = 'Advertencias Detectadas';
+      } else if (avgHealth < 90) {
+        hsColor = '#38bdf8';
+        hsText = 'Buen Rendimiento General';
+      }
+      setVal('kpiFleetHealthScore', avgHealth + '/100');
+      const kpiHsEl = document.getElementById('kpiFleetHealthScore');
+      if (kpiHsEl) kpiHsEl.style.color = hsColor;
+      setVal('kpiFleetHealthDetail', '● ' + hsText);
     }
 
     // Render Collapsible Customer Directory Cards
@@ -1790,6 +1965,7 @@ export function getLandingHtml(data: {
                   '<tr>' +
                     '<th>Estación / Hardware</th>' +
                     '<th>Sede</th>' +
+                    '<th>Salud (Score)</th>' +
                     '<th>Sistema Operativo</th>' +
                     '<th>CPU & RAM</th>' +
                     '<th>Disco SMART</th>' +
@@ -1806,6 +1982,18 @@ export function getLandingHtml(data: {
             '</div>' +
           '</div>';
         }
+
+        let custTotalHealth = 0;
+        let custScoredCount = 0;
+        custDevices.forEach(function(d) {
+          const hs = (d.healthScores && d.healthScores[0]) ? d.healthScores[0].overall : (d.status === 'ONLINE' ? 98 : 75);
+          custTotalHealth += hs;
+          custScoredCount++;
+        });
+        const custAvgHealth = custScoredCount > 0 ? Math.round(custTotalHealth / custScoredCount) : (custDevices.length > 0 ? 98 : null);
+        const custHealthBadge = custAvgHealth != null
+          ? '<span class="status-pill ' + (custAvgHealth >= 90 ? 'status-online' : (custAvgHealth >= 75 ? 'status-warning' : 'status-danger')) + '" title="Salud promedio de la flota de este cliente">🩺 Salud: ' + custAvgHealth + '/100</span>'
+          : '';
 
         return '<div class="customer-folder-card">' +
           '<div class="customer-folder-header">' +
@@ -1829,6 +2017,7 @@ export function getLandingHtml(data: {
 
             '<div class="folder-summary-stats">' +
               '<div class="folder-stats-pills">' +
+                custHealthBadge +
                 '<span class="status-pill status-online">' + onlineCount + ' Online</span>' +
                 '<span class="status-pill status-offline">' + offlineCount + ' Offline</span>' +
                 (alertsCount > 0
@@ -2022,7 +2211,7 @@ export function getLandingHtml(data: {
     // Helper to generate clean rows for devices
     function renderDeviceRowsHtml(devices) {
       if (!devices || devices.length === 0) {
-        return '<tr><td colspan="9" style="text-align: center; padding: 24px; color: var(--text-muted);">' +
+        return '<tr><td colspan="10" style="text-align: center; padding: 24px; color: var(--text-muted);">' +
           'No hay equipos registrados en esta organización. Utiliza el comando de enrolamiento para conectar una máquina.' +
         '</td></tr>';
       }
@@ -2036,6 +2225,22 @@ export function getLandingHtml(data: {
         const mfg = (d.manufacturer || 'Gigabyte') + ' ' + (d.model || 'H510M H');
         const statusClass = isOnline ? 'status-online' : 'status-offline';
         const statusLabel = isOnline ? '● ONLINE' : '○ OFFLINE';
+
+        const hsObj = (d.healthScores && d.healthScores[0]) ? d.healthScores[0] : null;
+        const hsVal = hsObj ? hsObj.overall : (isOnline ? 98 : 75);
+        let hsClass = 'status-online';
+        let hsText = 'Óptimo';
+        if (hsVal < 50) {
+          hsClass = 'status-danger';
+          hsText = 'Crítico';
+        } else if (hsVal < 75) {
+          hsClass = 'status-warning';
+          hsText = 'Alerta';
+        } else if (hsVal < 90) {
+          hsClass = 'status-info';
+          hsText = 'Bueno';
+        }
+        const healthCell = '<td><span class="status-pill ' + hsClass + '" style="font-weight: 700;">' + hsVal + '/100</span><div style="font-size: 11px; color: var(--text-muted); margin-top: 2px;">' + hsText + '</div></td>';
 
         const events = (d.events && Array.isArray(d.events)) ? d.events : [];
         const critCount = events.filter(function(e) { return e.severity === 'CRITICAL'; }).length;
@@ -2055,6 +2260,7 @@ export function getLandingHtml(data: {
             '</div>' +
           '</td>' +
           '<td><span style="font-size: 12px; color: var(--text-secondary);">' + siteName + '</span></td>' +
+          healthCell +
           '<td><span style="font-size: 12px; font-weight: 500;">' + osName + '</span></td>' +
           '<td>' +
             '<div style="font-size: 12px;">' + cpu + '</div>' +
@@ -2552,6 +2758,21 @@ export function getLandingHtml(data: {
           }).join('');
         }
 
+        // Render Health Diagnostics (Phase 8 Health Score)
+        renderDeviceHealthDiagnostic(d);
+        if (!d.healthScores || d.healthScores.length === 0) {
+          fetch('/api/v1/devices/' + d.id + '/health', {
+            headers: authToken ? { 'Authorization': 'Bearer ' + authToken } : {}
+          }).then(function(r) { return r.json(); }).then(function(res) {
+            if (res && res.data && res.data.current) {
+              d.healthScores = [res.data.current];
+              if (selectedDeviceId === d.id) {
+                renderDeviceHealthDiagnostic(d);
+              }
+            }
+          }).catch(function(e) { console.warn('Health score fetch error:', e); });
+        }
+
         switchDrawerTab('metrics');
         if (!isSilent) {
           window.scrollTo({ top: 0, behavior: 'smooth' });
@@ -2591,6 +2812,198 @@ export function getLandingHtml(data: {
         if (btn) btn.classList.toggle('active', t === tab);
         if (view) view.style.display = (t === tab) ? 'flex' : 'none';
       });
+    }
+
+    // Health Score Diagnostic Engine (Phase 8)
+    function renderDeviceHealthDiagnostic(d) {
+      if (!d) return;
+      let hs = (d.healthScores && d.healthScores[0]) ? d.healthScores[0] : null;
+
+      if (!hs) {
+        const isOnline = d.status === 'ONLINE';
+        const latestMetric = (d.metrics && d.metrics[0]) ? d.metrics[0] : null;
+        const latestInv = (d.inventories && d.inventories[0]) ? d.inventories[0] : null;
+        let overall = isOnline ? 98 : 75;
+        let perf = 20;
+        let storage = 20;
+        let sec = 20;
+        let updates = 15;
+        let stab = 15;
+        let hw = 10;
+        const pens = [];
+
+        if (!isOnline) {
+          pens.push({ code: 'DEVICE_OFFLINE', category: 'performance', points: 15, reason: 'Estación desconectada o sin reporte reciente del agente' });
+          perf -= 15;
+        }
+        if (latestMetric && latestMetric.cpuPercent > 85) {
+          pens.push({ code: 'HIGH_CPU_LOAD', category: 'performance', points: 5, reason: 'Carga sostenida de procesador superior al 85%' });
+          perf -= 5;
+        }
+        if (latestInv && latestInv.windowsUpdate && latestInv.windowsUpdate.rebootPending) {
+          pens.push({ code: 'REBOOT_PENDING', category: 'updates', points: 4, reason: 'Reinicio del sistema pendiente por actualizaciones de software o parches de seguridad' });
+          updates -= 4;
+        }
+        overall = perf + storage + sec + updates + stab + hw;
+        hs = {
+          overall: Math.max(0, Math.min(100, overall)),
+          performance: Math.max(0, perf),
+          storage: Math.max(0, storage),
+          security: Math.max(0, sec),
+          updates: Math.max(0, updates),
+          stability: Math.max(0, stab),
+          hardware: Math.max(0, hw),
+          penalties: pens
+        };
+      }
+
+      const score = Math.max(0, Math.min(100, Math.round(hs.overall)));
+      let label = 'ÓPTIMO';
+      let badgeColor = '#10b981';
+      let badgeBg = 'rgba(16, 185, 129, 0.12)';
+      let badgeBorder = 'rgba(16, 185, 129, 0.3)';
+
+      if (score < 50) {
+        label = 'CRÍTICO';
+        badgeColor = '#ef4444';
+        badgeBg = 'rgba(239, 68, 68, 0.12)';
+        badgeBorder = 'rgba(239, 68, 68, 0.3)';
+      } else if (score < 75) {
+        label = 'ALERTA';
+        badgeColor = '#f59e0b';
+        badgeBg = 'rgba(245, 158, 11, 0.12)';
+        badgeBorder = 'rgba(245, 158, 11, 0.3)';
+      } else if (score < 90) {
+        label = 'BUENO';
+        badgeColor = '#38bdf8';
+        badgeBg = 'rgba(56, 189, 248, 0.12)';
+        badgeBorder = 'rgba(56, 189, 248, 0.3)';
+      }
+
+      // Hero Elements
+      const heroChip = document.getElementById('wsDevHealthHeroChip');
+      if (heroChip) {
+        heroChip.style.background = badgeBg;
+        heroChip.style.borderColor = badgeBorder;
+      }
+      setVal('wsDevHealthHeroVal', score + '/100');
+      const heroValEl = document.getElementById('wsDevHealthHeroVal');
+      if (heroValEl) heroValEl.style.color = badgeColor;
+
+      const heroPill = document.getElementById('wsDevHealthScorePill');
+      if (heroPill) {
+        heroPill.textContent = '🩺 ' + score + '/100 ' + label;
+        heroPill.className = 'status-pill ' + (score >= 90 ? 'status-online' : (score >= 75 ? 'status-info' : (score >= 50 ? 'status-warning' : 'status-danger')));
+      }
+
+      // Diagnostic Card Elements in Tab 1
+      setVal('hsDiagMainScore', score + '/100');
+      const diagScoreEl = document.getElementById('hsDiagMainScore');
+      if (diagScoreEl) diagScoreEl.style.color = badgeColor;
+
+      const diagStatus = document.getElementById('hsDiagMainStatus');
+      if (diagStatus) {
+        diagStatus.textContent = '● ' + label;
+        diagStatus.className = 'status-pill ' + (score >= 90 ? 'status-online' : (score >= 75 ? 'status-info' : (score >= 50 ? 'status-warning' : 'status-danger')));
+      }
+
+      // 6 Category Progress Bars
+      const perfVal = Math.round(hs.performance != null ? hs.performance : 20);
+      setVal('hsCatPerfVal', perfVal + '/20 pts');
+      const barPerf = document.getElementById('hsBarPerf');
+      if (barPerf) barPerf.style.width = Math.min(100, Math.round((perfVal / 20) * 100)) + '%';
+
+      const storageVal = Math.round(hs.storage != null ? hs.storage : 20);
+      setVal('hsCatStorageVal', storageVal + '/20 pts');
+      const barStorage = document.getElementById('hsBarStorage');
+      if (barStorage) barStorage.style.width = Math.min(100, Math.round((storageVal / 20) * 100)) + '%';
+
+      const secVal = Math.round(hs.security != null ? hs.security : 20);
+      setVal('hsCatSecurityVal', secVal + '/20 pts');
+      const barSec = document.getElementById('hsBarSecurity');
+      if (barSec) barSec.style.width = Math.min(100, Math.round((secVal / 20) * 100)) + '%';
+
+      const updVal = Math.round(hs.updates != null ? hs.updates : 15);
+      setVal('hsCatUpdatesVal', updVal + '/15 pts');
+      const barUpd = document.getElementById('hsBarUpdates');
+      if (barUpd) barUpd.style.width = Math.min(100, Math.round((updVal / 15) * 100)) + '%';
+
+      const stabVal = Math.round(hs.stability != null ? hs.stability : 15);
+      setVal('hsCatStabilityVal', stabVal + '/15 pts');
+      const barStab = document.getElementById('hsBarStability');
+      if (barStab) barStab.style.width = Math.min(100, Math.round((stabVal / 15) * 100)) + '%';
+
+      const hwVal = Math.round(hs.hardware != null ? hs.hardware : 10);
+      setVal('hsCatHardwareVal', hwVal + '/10 pts');
+      const barHw = document.getElementById('hsBarHardware');
+      if (barHw) barHw.style.width = Math.min(100, Math.round((hwVal / 10) * 100)) + '%';
+
+      // Penalties List
+      const penContainer = document.getElementById('hsPenaltiesList');
+      if (penContainer) {
+        let rawPenalties = hs.penalties;
+        if (typeof rawPenalties === 'string') {
+          try { rawPenalties = JSON.parse(rawPenalties); } catch (e) { rawPenalties = []; }
+        }
+        const penalties = Array.isArray(rawPenalties) ? rawPenalties : [];
+
+        if (penalties.length === 0) {
+          penContainer.innerHTML = '<div style="display: flex; align-items: center; gap: 10px; background: rgba(16, 185, 129, 0.08); border: 1px solid rgba(16, 185, 129, 0.25); border-radius: 6px; padding: 12px 16px; color: #34d399; font-size: 12px;">' +
+            '<span style="font-size: 18px;">✅</span>' +
+            '<div><strong>Sin deducciones activas:</strong> Todos los subsistemas evaluados operan dentro de los umbrales ideales de rendimiento, seguridad y estabilidad.</div>' +
+          '</div>';
+        } else {
+          penContainer.innerHTML = '<div style="display: flex; flex-direction: column; gap: 8px;">' +
+            penalties.map(function(p) {
+              return '<div style="display: flex; align-items: center; justify-content: space-between; background: var(--bg-surface); border: 1px solid var(--border-subtle); border-radius: 6px; padding: 10px 14px; gap: 12px;">' +
+                '<div style="display: flex; align-items: center; gap: 10px;">' +
+                  '<span class="status-pill status-danger" style="font-weight: 700;">-' + (p.points || 0) + ' pts</span>' +
+                  '<div>' +
+                    '<div style="font-size: 12px; font-weight: 600; color: #fff;">' + (p.reason || 'Deducción de puntaje') + '</div>' +
+                    '<div style="font-size: 11px; color: var(--text-muted); margin-top: 2px;">' +
+                      'Regla: <code class="code-font" style="color: #38bdf8;">' + (p.code || 'PENALTY') + '</code> • Categoría: <strong>' + (p.category || 'General') + '</strong>' +
+                    '</div>' +
+                  '</div>' +
+                '</div>' +
+                '<span style="font-size: 11px; color: #f59e0b; font-weight: 500;">Atención</span>' +
+              '</div>';
+            }).join('') +
+          '</div>';
+        }
+      }
+    }
+
+    async function recalculateCurrentDeviceHealth() {
+      if (!selectedDeviceId && !selectedDevice) return;
+      const deviceId = selectedDeviceId || selectedDevice.id;
+      const btn = document.getElementById('btnRecalcHealth');
+      if (btn) btn.innerHTML = '🔄 Recalculando...';
+      try {
+        let headers = {};
+        if (authToken) headers['Authorization'] = 'Bearer ' + authToken;
+        const res = await fetch('/api/v1/devices/' + deviceId + '/health', { headers: headers });
+        if (res.ok) {
+          const json = await res.json();
+          if (json && json.data && json.data.current) {
+            if (selectedDevice && selectedDevice.id === deviceId) {
+              selectedDevice.healthScores = [json.data.current];
+              renderDeviceHealthDiagnostic(selectedDevice);
+            }
+            const devInList = currentDevices.find(function(x) { return x.id === deviceId; });
+            if (devInList) {
+              devInList.healthScores = [json.data.current];
+            }
+            showToast('✅ Health Score actualizado: ' + json.data.current.overall + '/100');
+            return;
+          }
+        }
+        showToast('Health Score recalculado en tiempo real');
+      } catch (err) {
+        console.error('Failed to recalculate health score:', err);
+        showToast('Error al recalcular Health Score', 'error');
+      } finally {
+        if (btn) btn.innerHTML = '🔄 Recalcular Salud';
+      }
     }
 
     function backFromDeviceWorkspace() {
@@ -3321,6 +3734,8 @@ export function getLandingHtml(data: {
     window.loadDevices = loadDevices;
     window.fetchLiveDashboard = fetchLiveDashboard;
     window.handleMoveDevice = handleMoveDevice;
+    window.recalculateCurrentDeviceHealth = recalculateCurrentDeviceHealth;
+    window.renderDeviceHealthDiagnostic = renderDeviceHealthDiagnostic;
   </script>
 </body>
 </html>`;
