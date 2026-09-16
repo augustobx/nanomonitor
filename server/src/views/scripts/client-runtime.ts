@@ -1077,11 +1077,11 @@ export function getClientRuntimeScript(): string {
             const hsClass = hs != null ? (hs >= 80 ? 'status-online' : (hs >= 50 ? 'status-warning' : 'status-danger')) : 'status-info';
 
             return '<tr>' +
-              '<td><strong class="code-font" style="color: #fff; cursor: pointer;" onclick="openDeviceWorkspace(\'' + d.id + '\')">' + host + '</strong></td>' +
+              '<td><strong class="code-font" style="color: #fff; cursor: pointer;" onclick="openDeviceWorkspace(\\'' + d.id + '\\')">' + host + '</strong></td>' +
               '<td>' + site + '</td>' +
               '<td><span class="status-pill ' + (isOnline ? 'status-online' : 'status-offline') + '">' + (isOnline ? 'ONLINE' : 'OFFLINE') + '</span></td>' +
               '<td><span class="status-pill ' + hsClass + '">' + hsStr + '</span></td>' +
-              '<td style="text-align: right;"><button class="btn btn-secondary btn-sm" onclick="openDeviceWorkspace(\'' + d.id + '\')">Ver Equipo</button></td>' +
+              '<td style="text-align: right;"><button class="btn btn-secondary btn-sm" onclick="openDeviceWorkspace(\\'' + d.id + '\\')">Ver Equipo</button></td>' +
             '</tr>';
           }).join('');
         }
@@ -1103,7 +1103,7 @@ export function getClientRuntimeScript(): string {
                 '<strong style="color: #fff; font-size: 12px; margin-left: 6px;">' + (a.title || 'Alerta') + '</strong>' +
                 '<div style="font-size: 11px; color: var(--text-muted); margin-top: 2px;">' + (a.device ? a.device.hostname : 'Dispositivo') + '</div>' +
               '</div>' +
-              '<button class="btn btn-secondary btn-sm" onclick="openAlertDetailModal(\'' + a.id + '\')">Detalle</button>' +
+              '<button class="btn btn-secondary btn-sm" onclick="openAlertDetailModal(\\'' + a.id + '\\')">Detalle</button>' +
             '</div>';
           }).join('');
         }
@@ -1130,7 +1130,7 @@ export function getClientRuntimeScript(): string {
             const lastSeen = d.lastSeenAt ? new Date(d.lastSeenAt).toLocaleString('es-AR') : 'Nunca';
 
             return '<tr>' +
-              '<td><strong class="code-font" style="color: #fff; cursor: pointer;" onclick="openDeviceWorkspace(\'' + d.id + '\')">' + d.hostname + '</strong></td>' +
+              '<td><strong class="code-font" style="color: #fff; cursor: pointer;" onclick="openDeviceWorkspace(\\'' + d.id + '\\')">' + d.hostname + '</strong></td>' +
               '<td>' + site + '</td>' +
               '<td><span class="status-pill ' + (isOnline ? 'status-online' : 'status-offline') + '">' + (isOnline ? 'ONLINE' : 'OFFLINE') + '</span></td>' +
               '<td><span class="status-pill ' + hsClass + '">' + hsStr + '</span></td>' +
@@ -1138,7 +1138,7 @@ export function getClientRuntimeScript(): string {
               '<td><span class="code-badge">OK</span></td>' +
               '<td><span class="status-pill status-online">Protegido</span></td>' +
               '<td><span class="code-font" style="font-size: 11px; color: var(--text-muted);">' + lastSeen + '</span></td>' +
-              '<td style="text-align: right;"><button class="btn btn-primary btn-sm" onclick="openDeviceWorkspace(\'' + d.id + '\')">Ver Equipo</button></td>' +
+              '<td style="text-align: right;"><button class="btn btn-primary btn-sm" onclick="openDeviceWorkspace(\\'' + d.id + '\\')">Ver Equipo</button></td>' +
             '</tr>';
           }).join('');
         }
@@ -1473,7 +1473,7 @@ export function getClientRuntimeScript(): string {
           '<td>' +
             '<div style="display: flex; align-items: center; gap: 8px;">' +
               '<span style="font-size: 14px;">💻</span>' +
-              '<strong class="code-font" style="color: #fff; cursor: pointer;" onclick="openDeviceWorkspace(\'' + d.id + '\')">' + host + '</strong>' +
+              '<strong class="code-font" style="color: #fff; cursor: pointer;" onclick="openDeviceWorkspace(\\'' + d.id + '\\')">' + host + '</strong>' +
             '</div>' +
           '</td>' +
           '<td><span style="color: var(--text-secondary);">' + custName + '</span> <span style="font-size: 11px; color: var(--text-muted);">(' + siteName + ')</span></td>' +
@@ -1491,7 +1491,7 @@ export function getClientRuntimeScript(): string {
           '</td>' +
           '<td><span class="code-font" style="font-size: 11px; color: var(--text-muted);">' + lastSeen + '</span></td>' +
           '<td style="text-align: right;">' +
-            '<button class="btn btn-primary btn-sm" onclick="openDeviceWorkspace(\'' + d.id + '\')">Ver Equipo</button>' +
+            '<button class="btn btn-primary btn-sm" onclick="openDeviceWorkspace(\\'' + d.id + '\\')">Ver Equipo</button>' +
           '</td>' +
         '</tr>';
       }).join('');
