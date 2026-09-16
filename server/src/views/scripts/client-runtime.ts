@@ -52,6 +52,44 @@ export function getClientRuntimeScript(): string {
       return m + 'm';
     }
 
+    // Telemetry & Data Model Resolvers
+    function getDeviceMetricsCpu(d) {
+      if (!d) return null;
+      const m = (d.metrics && d.metrics.length > 0) ? d.metrics[0] : (d.cpuPercent != null ? d : null);
+      if (!m) return null;
+      if (m.cpuPercent != null && !isNaN(m.cpuPercent)) return Number(m.cpuPercent);
+      if (m.cpuUsage != null && !isNaN(m.cpuUsage)) return Number(m.cpuUsage);
+      return null;
+    }
+
+    function getDeviceMetricsRam(d) {
+      if (!d) return null;
+      const m = (d.metrics && d.metrics.length > 0) ? d.metrics[0] : null;
+      if (!m) return null;
+      if (m.ramUsedMB != null && m.ramAvailMB != null) {
+        const tot = Number(m.ramUsedMB) + Number(m.ramAvailMB);
+        return tot > 0 ? (Number(m.ramUsedMB) / tot) * 100 : 0;
+      }
+      if (m.ramUsage != null && !isNaN(m.ramUsage)) return Number(m.ramUsage);
+      return null;
+    }
+
+    function getDeviceHealthScore(d) {
+      if (!d || !d.healthScores || d.healthScores.length === 0) return null;
+      const hs = d.healthScores[0];
+      if (hs.overall != null && !isNaN(hs.overall)) return Number(hs.overall);
+      if (hs.score != null && !isNaN(hs.score)) return Number(hs.score);
+      return null;
+    }
+
+    function formatOsName(osVersion) {
+      if (!osVersion) return 'Windows';
+      const clean = String(osVersion).replace('Microsoft ', '').trim();
+      if (clean.startsWith('10.0.2')) return 'Windows 11 (' + clean + ')';
+      if (clean.startsWith('10.0.1')) return 'Windows 10 (' + clean + ')';
+      return 'Windows ' + clean;
+    }
+
     // Sidebar & Layout Controls
     function toggleSidebar() {
       const sb = document.getElementById('appSidebar');
@@ -328,7 +366,7 @@ export function getClientRuntimeScript(): string {
       let healthSum = 0;
       let healthCount = 0;
       devices.forEach(function(d) {
-        const hs = (d.healthScores && d.healthScores.length > 0) ? d.healthScores[0].score : null;
+        const hs = getDeviceHealthScore(d);
         if (hs !== null && hs !== undefined) {
           healthSum += hs;
           healthCount++;
@@ -1021,7 +1059,7 @@ export function getClientRuntimeScript(): string {
       const probTbody = document.getElementById('cdTableProblemDevices');
       if (probTbody) {
         const problems = devList.filter(function(d) {
-          const s = (d.healthScores && d.healthScores.length > 0) ? d.healthScores[0].score : 100;
+          const s = getDeviceHealthScore(d) ?? 100;
           return d.status !== 'ONLINE' || s < 80;
         });
         if (problems.length === 0) {
@@ -1033,14 +1071,16 @@ export function getClientRuntimeScript(): string {
             const host = d.hostname || 'Equipo';
             const site = d.site ? d.site.name : 'Principal';
             const isOnline = d.status === 'ONLINE';
-            const hs = (d.healthScores && d.healthScores.length > 0) ? d.healthScores[0].score : '--';
+            const hs = getDeviceHealthScore(d);
+            const hsStr = hs != null ? hs : '--';
+            const hsClass = hs != null ? (hs >= 80 ? 'status-online' : (hs >= 50 ? 'status-warning' : 'status-danger')) : 'status-info';
 
             return '<tr>' +
-              '<td><strong class="code-font" style="color: #fff; cursor: pointer;" onclick="openDeviceWorkspace(\\'' + d.id + '\\')">' + host + '</strong></td>' +
+              '<td><strong class="code-font" style="color: #fff; cursor: pointer;" onclick="openDeviceWorkspace(\'' + d.id + '\')">' + host + '</strong></td>' +
               '<td>' + site + '</td>' +
               '<td><span class="status-pill ' + (isOnline ? 'status-online' : 'status-offline') + '">' + (isOnline ? 'ONLINE' : 'OFFLINE') + '</span></td>' +
-              '<td><span class="status-pill ' + (hs >= 80 ? 'status-online' : (hs >= 50 ? 'status-warning' : 'status-danger')) + '">' + hs + '</span></td>' +
-              '<td style="text-align: right;"><button class="btn btn-secondary btn-sm" onclick="openDeviceWorkspace(\\'' + d.id + '\\')">Ver Equipo</button></td>' +
+              '<td><span class="status-pill ' + hsClass + '">' + hsStr + '</span></td>' +
+              '<td style="text-align: right;"><button class="btn btn-secondary btn-sm" onclick="openDeviceWorkspace(\'' + d.id + '\')">Ver Equipo</button></td>' +
             '</tr>';
           }).join('');
         }
@@ -1062,7 +1102,7 @@ export function getClientRuntimeScript(): string {
                 '<strong style="color: #fff; font-size: 12px; margin-left: 6px;">' + (a.title || 'Alerta') + '</strong>' +
                 '<div style="font-size: 11px; color: var(--text-muted); margin-top: 2px;">' + (a.device ? a.device.hostname : 'Dispositivo') + '</div>' +
               '</div>' +
-              '<button class="btn btn-secondary btn-sm" onclick="openAlertDetailModal(\\'' + a.id + '\\')">Detalle</button>' +
+              '<button class="btn btn-secondary btn-sm" onclick="openAlertDetailModal(\'' + a.id + '\')">Detalle</button>' +
             '</div>';
           }).join('');
         }
@@ -1079,22 +1119,25 @@ export function getClientRuntimeScript(): string {
           devTbody.innerHTML = devList.map(function(d) {
             const isOnline = d.status === 'ONLINE';
             const site = d.site ? d.site.name : 'Principal';
-            const metrics = d.metrics && d.metrics.length > 0 ? d.metrics[0] : null;
-            const cpu = metrics ? Math.round(metrics.cpuUsage) + '%' : '--';
-            const ram = metrics ? Math.round(metrics.ramUsage) + '%' : '--';
-            const hs = (d.healthScores && d.healthScores.length > 0) ? d.healthScores[0].score : '--';
+            const cpuVal = getDeviceMetricsCpu(d);
+            const ramVal = getDeviceMetricsRam(d);
+            const cpu = cpuVal != null ? Math.round(cpuVal) + '%' : '--';
+            const ram = ramVal != null ? Math.round(ramVal) + '%' : '--';
+            const hs = getDeviceHealthScore(d);
+            const hsStr = hs != null ? hs : '--';
+            const hsClass = hs != null ? (hs >= 80 ? 'status-online' : (hs >= 50 ? 'status-warning' : 'status-danger')) : 'status-info';
             const lastSeen = d.lastSeenAt ? new Date(d.lastSeenAt).toLocaleString('es-AR') : 'Nunca';
 
             return '<tr>' +
-              '<td><strong class="code-font" style="color: #fff; cursor: pointer;" onclick="openDeviceWorkspace(\\'' + d.id + '\\')">' + d.hostname + '</strong></td>' +
+              '<td><strong class="code-font" style="color: #fff; cursor: pointer;" onclick="openDeviceWorkspace(\'' + d.id + '\')">' + d.hostname + '</strong></td>' +
               '<td>' + site + '</td>' +
               '<td><span class="status-pill ' + (isOnline ? 'status-online' : 'status-offline') + '">' + (isOnline ? 'ONLINE' : 'OFFLINE') + '</span></td>' +
-              '<td><span class="status-pill ' + (hs >= 80 ? 'status-online' : (hs >= 50 ? 'status-warning' : 'status-danger')) + '">' + hs + '</span></td>' +
+              '<td><span class="status-pill ' + hsClass + '">' + hsStr + '</span></td>' +
               '<td><span class="code-font" style="font-size: 11px;">CPU: ' + cpu + ' • RAM: ' + ram + '</span></td>' +
               '<td><span class="code-badge">OK</span></td>' +
               '<td><span class="status-pill status-online">Protegido</span></td>' +
               '<td><span class="code-font" style="font-size: 11px; color: var(--text-muted);">' + lastSeen + '</span></td>' +
-              '<td style="text-align: right;"><button class="btn btn-primary btn-sm" onclick="openDeviceWorkspace(\\'' + d.id + '\\')">Ver Equipo</button></td>' +
+              '<td style="text-align: right;"><button class="btn btn-primary btn-sm" onclick="openDeviceWorkspace(\'' + d.id + '\')">Ver Equipo</button></td>' +
             '</tr>';
           }).join('');
         }
@@ -1401,15 +1444,21 @@ export function getClientRuntimeScript(): string {
         const host = d.hostname || 'Equipo';
         const custName = d.customer ? d.customer.name : '-';
         const siteName = d.site ? d.site.name : 'Principal';
-        const metrics = d.metrics && d.metrics.length > 0 ? d.metrics[0] : null;
-        const cpu = metrics ? Math.round(metrics.cpuUsage) + '%' : '--';
-        const ram = metrics ? Math.round(metrics.ramUsage) + '%' : '--';
-        const hs = (d.healthScores && d.healthScores.length > 0) ? d.healthScores[0].score : '--';
-        const hsClass = hs >= 80 ? 'status-online' : (hs >= 50 ? 'status-warning' : 'status-danger');
+        
+        const cpuVal = getDeviceMetricsCpu(d);
+        const ramVal = getDeviceMetricsRam(d);
+        const cpu = cpuVal != null ? Math.round(cpuVal) + '%' : '--';
+        const ram = ramVal != null ? Math.round(ramVal) + '%' : '--';
+        
+        const hs = getDeviceHealthScore(d);
+        const hsStr = hs != null ? hs : '--';
+        const hsClass = hs != null ? (hs >= 80 ? 'status-online' : (hs >= 50 ? 'status-warning' : 'status-danger')) : 'status-info';
 
         const inv = d.inventories && d.inventories.length > 0 ? d.inventories[0] : null;
-        const rebootReq = inv && inv.security && inv.security.rebootRequired;
-        const defenderOn = inv && inv.security && inv.security.antivirus && inv.security.antivirus.realTimeProtection;
+        const sec = inv ? inv.security : null;
+        const winUp = inv ? inv.windowsUpdate : null;
+        const rebootReq = winUp ? (winUp.rebootPending ?? false) : (sec ? sec.rebootRequired : false);
+        const defenderOn = sec ? (sec.defenderActive ?? (sec.antivirus ? sec.antivirus.realTimeProtection : false)) : false;
 
         // Alerts count for this device
         const devAlerts = (currentAlerts || []).filter(function(a) {
@@ -1423,12 +1472,12 @@ export function getClientRuntimeScript(): string {
           '<td>' +
             '<div style="display: flex; align-items: center; gap: 8px;">' +
               '<span style="font-size: 14px;">💻</span>' +
-              '<strong class="code-font" style="color: #fff; cursor: pointer;" onclick="openDeviceWorkspace(\\'' + d.id + '\\')">' + host + '</strong>' +
+              '<strong class="code-font" style="color: #fff; cursor: pointer;" onclick="openDeviceWorkspace(\'' + d.id + '\')">' + host + '</strong>' +
             '</div>' +
           '</td>' +
           '<td><span style="color: var(--text-secondary);">' + custName + '</span> <span style="font-size: 11px; color: var(--text-muted);">(' + siteName + ')</span></td>' +
           '<td><span class="status-pill ' + (isOnline ? 'status-online' : 'status-offline') + '">' + (isOnline ? 'ONLINE' : 'OFFLINE') + '</span></td>' +
-          '<td><span class="status-pill ' + hsClass + '">' + hs + '</span></td>' +
+          '<td><span class="status-pill ' + hsClass + '">' + hsStr + '</span></td>' +
           '<td><span class="code-font" style="font-size: 11px;">' + cpu + ' / ' + ram + '</span></td>' +
           '<td><span class="code-badge">OK</span></td>' +
           '<td>' +
@@ -1441,7 +1490,7 @@ export function getClientRuntimeScript(): string {
           '</td>' +
           '<td><span class="code-font" style="font-size: 11px; color: var(--text-muted);">' + lastSeen + '</span></td>' +
           '<td style="text-align: right;">' +
-            '<button class="btn btn-primary btn-sm" onclick="openDeviceWorkspace(\\'' + d.id + '\\')">Ver Equipo</button>' +
+            '<button class="btn btn-primary btn-sm" onclick="openDeviceWorkspace(\'' + d.id + '\')">Ver Equipo</button>' +
           '</td>' +
         '</tr>';
       }).join('');
@@ -1473,38 +1522,60 @@ export function getClientRuntimeScript(): string {
 
       setVal('dCustomerBadge', d.customer ? d.customer.name : 'NanoLabs');
       setVal('dSiteBadge', d.site ? d.site.name : 'Principal');
-      setVal('dIpText', d.ipAddress || (d.agent ? d.agent.lastIp : '127.0.0.1'));
 
       const inv = d.inventories && d.inventories.length > 0 ? d.inventories[0] : null;
-      setVal('dOsText', (d.osVersion || (inv ? inv.osVersion : 'Windows')).replace('Microsoft ', ''));
-      setVal('dCpuSummary', inv && inv.cpuModel ? (inv.cpuModel.split('@')[0] || inv.cpuModel) : (d.cpuModel || '-'));
-      setVal('dRamSummary', inv && inv.totalRamBytes ? Math.round(Number(inv.totalRamBytes) / (1024*1024*1024)) + ' GB' : '-');
+      const hw = inv && inv.hardware ? inv.hardware : {};
+      const cpuObj = hw.cpu || {};
+      const ramObj = hw.ram || {};
+      const sec = inv ? inv.security : null;
+      const winUp = inv ? inv.windowsUpdate : null;
+      const net = inv ? inv.network : null;
+
+      // IP
+      const iface0 = (net && Array.isArray(net.interfaces) && net.interfaces.length > 0) ? net.interfaces[0] : null;
+      const ip = d.ipAddress || (iface0 && Array.isArray(iface0.ipAddresses) && iface0.ipAddresses.length > 0 ? iface0.ipAddresses[0] : (iface0 ? iface0.ipAddress : null)) || (d.agent ? d.agent.lastIp : '127.0.0.1');
+      setVal('dIpText', ip);
+
+      // OS
+      setVal('dOsText', formatOsName(d.osVersion || (inv ? inv.osVersion : null)));
+
+      // CPU Summary
+      const cpuSummary = cpuObj.name ? (cpuObj.name.split('@')[0] || cpuObj.name) : (d.cpuModel || (inv ? inv.cpuModel : '-'));
+      setVal('dCpuSummary', cpuSummary);
+
+      // RAM Summary
+      const ramTotalGb = ramObj.totalMb ? Math.round(ramObj.totalMb / 1024) + ' GB' : (inv && inv.totalRamBytes ? Math.round(Number(inv.totalRamBytes) / (1024*1024*1024)) + ' GB' : (d.totalRamBytes ? Math.round(Number(d.totalRamBytes) / (1024*1024*1024)) + ' GB' : '-'));
+      setVal('dRamSummary', ramTotalGb);
+
+      // Agent Version
       setVal('dAgentVersion', d.agentVersion || (d.agent ? d.agent.agentVersion : 'v0.1.0'));
 
       // 2. Metrics & Operational Cards
-      const metrics = d.metrics && d.metrics.length > 0 ? d.metrics[0] : null;
-      const cpuUsage = metrics ? Math.round(metrics.cpuUsage) : 0;
-      const ramUsage = metrics ? Math.round(metrics.ramUsage) : 0;
-      setVal('dKpiCpuUsage', cpuUsage + '% CPU');
-      setVal('dKpiRamUsage', 'RAM: ' + ramUsage + '% en uso');
+      const cpuVal = getDeviceMetricsCpu(d);
+      const ramVal = getDeviceMetricsRam(d);
+      setVal('dKpiCpuUsage', (cpuVal != null ? Math.round(cpuVal) : 0) + '% CPU');
+      setVal('dKpiRamUsage', 'RAM: ' + (ramVal != null ? Math.round(ramVal) : 0) + '% en uso');
 
-      const vols = (inv && Array.isArray(inv.volumes)) ? inv.volumes : [];
-      const mainVol = vols.length > 0 ? vols[0] : null;
-      if (mainVol) {
-        const freeGb = Math.round(Number(mainVol.freeBytes || 0) / (1024*1024*1024));
-        const totalGb = Math.round(Number(mainVol.totalBytes || 1) / (1024*1024*1024));
-        setVal('dKpiDiskFree', freeGb + ' GB Libres');
-        setVal('dKpiSmartStatus', 'De ' + totalGb + ' GB (' + mainVol.mountPoint + ')');
+      // Storage
+      const storageDisks = (inv && inv.storage && Array.isArray(inv.storage.disks)) ? inv.storage.disks :
+        ((inv && inv.hardware && Array.isArray(inv.hardware.disks)) ? inv.hardware.disks :
+        ((inv && Array.isArray(inv.volumes)) ? inv.volumes : []));
+      const firstDisk = storageDisks.length > 0 ? storageDisks[0] : null;
+      if (firstDisk) {
+        const diskSize = firstDisk.sizeGb ? firstDisk.sizeGb + ' GB' : (firstDisk.totalBytes ? Math.round(Number(firstDisk.totalBytes)/(1024*1024*1024)) + ' GB' : 'Disco');
+        setVal('dKpiDiskFree', diskSize + ' (' + (firstDisk.mediaType || firstDisk.interface || 'Almacenamiento') + ')');
+        setVal('dKpiSmartStatus', 'SMART: ' + (firstDisk.healthStatus || firstDisk.operationalStatus || 'Operativo'));
       } else {
-        setVal('dKpiDiskFree', 'OK');
-        setVal('dKpiSmartStatus', 'Sin partición registrada');
+        setVal('dKpiDiskFree', 'Almacenamiento OK');
+        setVal('dKpiSmartStatus', 'Sin detalles de disco');
       }
 
-      const sec = inv ? inv.security : null;
-      const rebootRequired = sec && sec.rebootRequired;
-      const defenderOn = sec && sec.antivirus && sec.antivirus.realTimeProtection;
-      const firewallOn = sec && sec.firewall && sec.firewall.domain;
-      setVal('dKpiSecurityStatus', (defenderOn && firewallOn) ? 'Protegido' : 'Revisar');
+      // Security
+      const defenderOn = sec ? (sec.defenderActive ?? (sec.antivirus ? sec.antivirus.realTimeProtection : false)) : false;
+      const firewallOn = sec ? (sec.firewallActive ?? (sec.firewall ? sec.firewall.domain : true)) : true;
+      const rebootRequired = winUp ? (winUp.rebootPending ?? false) : (sec ? sec.rebootRequired : false);
+      const rebootReason = winUp && winUp.rebootReason ? winUp.rebootReason : '';
+      setVal('dKpiSecurityStatus', (defenderOn && firewallOn) ? 'Protegido' : (defenderOn ? 'Firewall a revisar' : 'Sin AV Residente'));
       setVal('dKpiRebootStatus', rebootRequired ? '⚠️ Reinicio Pendiente' : 'Sin reinicio pendiente');
 
       const devAlerts = (currentAlerts || []).filter(function(a) {
@@ -1520,12 +1591,11 @@ export function getClientRuntimeScript(): string {
       if (attBox && attItems) {
         const issues = [];
         if (!isOnline) issues.push('🔌 Telemetría interrumpida (Equipo desconectado)');
-        if (rebootRequired) issues.push('🔄 Reinicio pendiente del sistema');
-        if (sec && sec.antivirus && !sec.antivirus.realTimeProtection) issues.push('🛡️ Windows Defender protección en tiempo real desactivada');
-        if (sec && sec.firewall && !sec.firewall.domain) issues.push('🔥 Firewall de Windows apagado');
-        if (mainVol) {
-          const pct = Math.round((Number(mainVol.freeBytes) / Number(mainVol.totalBytes)) * 100);
-          if (pct < 10) issues.push('💾 Poco espacio libre en disco (' + pct + '% restante)');
+        if (rebootRequired) issues.push('🔄 Reinicio pendiente del sistema' + (rebootReason ? ' (' + rebootReason + ')' : ''));
+        if (!defenderOn) issues.push('🛡️ Windows Defender protección en tiempo real desactivada');
+        if (!firewallOn) issues.push('🔥 Firewall de Windows desactivado');
+        if (firstDisk && firstDisk.healthStatus && !firstDisk.healthStatus.toLowerCase().includes('health')) {
+          issues.push('💾 SMART alerta en disco: ' + firstDisk.healthStatus);
         }
         if (critCount > 0) issues.push('🚨 ' + critCount + ' Alertas críticas activas');
 
@@ -1608,7 +1678,7 @@ export function getClientRuntimeScript(): string {
 
     function renderDeviceHealthDiagnostic(d) {
       const hsObj = (d.healthScores && d.healthScores.length > 0) ? d.healthScores[0] : null;
-      const score = hsObj ? hsObj.score : 85;
+      const score = hsObj ? (hsObj.overall ?? hsObj.score ?? 85) : 85;
       setVal('hsScoreDisplay', score);
 
       const pill = document.getElementById('hsStatusPill');
@@ -1621,22 +1691,23 @@ export function getClientRuntimeScript(): string {
       const grid = document.getElementById('hsCategoriesGrid');
       if (grid) {
         const categories = [
-          { name: 'Rendimiento', score: 95, color: 'var(--success)' },
-          { name: 'Almacenamiento', score: 90, color: 'var(--success)' },
-          { name: 'Seguridad', score: 80, color: 'var(--warning)' },
-          { name: 'Actualizaciones', score: 85, color: 'var(--success)' },
-          { name: 'Estabilidad', score: 90, color: 'var(--success)' },
-          { name: 'Capacidad', score: 92, color: 'var(--success)' }
+          { name: 'Rendimiento', score: hsObj ? (hsObj.performance ?? 100) : 100 },
+          { name: 'Almacenamiento', score: hsObj ? (hsObj.storage ?? 100) : 100 },
+          { name: 'Seguridad', score: hsObj ? (hsObj.security ?? 80) : 80 },
+          { name: 'Actualizaciones', score: hsObj ? (hsObj.updates ?? 85) : 85 },
+          { name: 'Estabilidad', score: hsObj ? (hsObj.stability ?? 90) : 90 },
+          { name: 'Hardware', score: hsObj ? (hsObj.hardware ?? 100) : 100 }
         ];
 
         grid.innerHTML = categories.map(function(c) {
+          const color = c.score >= 80 ? 'var(--success)' : (c.score >= 50 ? 'var(--warning)' : 'var(--danger)');
           return '<div class="health-category-box">' +
             '<div class="health-cat-header">' +
               '<span>' + c.name + '</span>' +
               '<span style="color: #fff;">' + c.score + '%</span>' +
             '</div>' +
             '<div class="health-cat-bar">' +
-              '<div class="health-cat-fill" style="width: ' + c.score + '%; background: ' + c.color + ';"></div>' +
+              '<div class="health-cat-fill" style="width: ' + c.score + '%; background: ' + color + ';"></div>' +
             '</div>' +
           '</div>';
         }).join('');
@@ -1655,8 +1726,8 @@ export function getClientRuntimeScript(): string {
           penList.innerHTML = penalties.map(function(p) {
             return '<div style="background: var(--bg-surface-subtle); border: 1px solid var(--border-subtle); border-radius: var(--radius-md); padding: 10px 14px; display: flex; align-items: center; justify-content: space-between; gap: 12px;">' +
               '<div>' +
-                '<strong style="color: #fff; font-size: 12px;">' + (p.reason || p.category || 'Penalización') + '</strong>' +
-                '<div style="font-size: 11px; color: var(--text-muted); margin-top: 2px;">' + (p.recommendation || 'Verificar configuración en el equipo') + '</div>' +
+                '<strong style="color: #fff; font-size: 12px;">' + (p.reason || p.description || p.code || 'Penalización') + '</strong>' +
+                '<div style="font-size: 11px; color: var(--text-muted); margin-top: 2px;">Categoría: ' + (p.category || 'General') + '</div>' +
               '</div>' +
               '<span class="status-pill status-danger">-' + (p.points || 10) + ' pts</span>' +
             '</div>';
@@ -1741,29 +1812,46 @@ export function getClientRuntimeScript(): string {
       let cpuPoints = '';
       let ramPoints = '';
 
+      function getMetricCpuVal(m) {
+        if (!m) return 0;
+        if (m.cpuPercent != null && !isNaN(m.cpuPercent)) return Number(m.cpuPercent);
+        if (m.cpuUsage != null && !isNaN(m.cpuUsage)) return Number(m.cpuUsage);
+        return 0;
+      }
+
+      function getMetricRamVal(m) {
+        if (!m) return 0;
+        if (m.ramUsedMB != null && m.ramAvailMB != null) {
+          const tot = Number(m.ramUsedMB) + Number(m.ramAvailMB);
+          return tot > 0 ? (Number(m.ramUsedMB) / tot) * 100 : 0;
+        }
+        if (m.ramUsage != null && !isNaN(m.ramUsage)) return Number(m.ramUsage);
+        return 0;
+      }
+
       if (list.length === 1) {
-        const cpuY = Math.max(5, Math.min(95, 100 - (list[0].cpuUsage || 0)));
-        const ramY = Math.max(5, Math.min(95, 100 - (list[0].ramUsage || 0)));
+        const cpuY = Math.max(5, Math.min(95, 100 - getMetricCpuVal(list[0])));
+        const ramY = Math.max(5, Math.min(95, 100 - getMetricRamVal(list[0])));
         cpuPoints = '0,' + cpuY + ' 500,' + cpuY;
         ramPoints = '0,' + ramY + ' 500,' + ramY;
       } else {
         const maxIdx = list.length - 1;
         cpuPoints = list.map(function(m, idx) {
           const x = Math.round((idx / maxIdx) * 500);
-          const y = Math.max(5, Math.min(95, 100 - (m.cpuUsage || 0)));
+          const y = Math.max(5, Math.min(95, 100 - getMetricCpuVal(m)));
           return x + ',' + y;
         }).join(' ');
 
         ramPoints = list.map(function(m, idx) {
           const x = Math.round((idx / maxIdx) * 500);
-          const y = Math.max(5, Math.min(95, 100 - (m.ramUsage || 0)));
+          const y = Math.max(5, Math.min(95, 100 - getMetricRamVal(m)));
           return x + ',' + y;
         }).join(' ');
       }
 
       const latest = list[list.length - 1];
-      const latestCpu = Math.round(latest.cpuUsage || 0);
-      const latestRam = Math.round(latest.ramUsage || 0);
+      const latestCpu = Math.round(getMetricCpuVal(latest));
+      const latestRam = Math.round(getMetricRamVal(latest));
 
       c.innerHTML = 
         '<div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px; font-size: 12px;">' +
@@ -1788,17 +1876,28 @@ export function getClientRuntimeScript(): string {
       const g = document.getElementById('dHardwareGrid');
       if (!g) return;
       const inv = d.inventories && d.inventories.length > 0 ? d.inventories[0] : null;
+      const hw = inv && inv.hardware ? inv.hardware : {};
+      const cpuObj = hw.cpu || {};
+      const ramObj = hw.ram || {};
+
+      const cpuName = cpuObj.name || inv.cpuModel || d.cpuModel || '-';
+      const cpuCores = cpuObj.cores ? (cpuObj.cores + ' Físicos / ' + (cpuObj.logicalCores || cpuObj.cores) + ' Lógicos') : (inv && inv.cpuCores ? inv.cpuCores + ' Núcleos' : '-');
+      const ramTotal = ramObj.totalMb ? Math.round(ramObj.totalMb / 1024) + ' GB' : (inv && inv.totalRamBytes ? Math.round(Number(inv.totalRamBytes) / (1024*1024*1024)) + ' GB' : '-');
+      const osName = formatOsName(d.osVersion || (inv ? inv.osVersion : null));
+      const manufacturer = d.manufacturer || hw.manufacturer || (inv ? inv.manufacturer : 'Ensamblado / OEM');
+      const model = d.model || hw.model || (inv ? inv.model : 'Genérico');
+      const uptime = formatUptime(d.uptimeSeconds || (d.metrics && d.metrics[0] ? d.metrics[0].uptimeSeconds : null));
 
       const props = [
         { label: 'Hostname / Nombre de Red', val: d.hostname || '-' },
-        { label: 'Sistema Operativo', val: d.osVersion || (inv ? inv.osVersion : 'Windows') },
-        { label: 'Procesador (CPU)', val: inv && inv.cpuModel ? inv.cpuModel : (d.cpuModel || '-') },
-        { label: 'Núcleos de CPU', val: (inv && inv.cpuCores) ? inv.cpuCores + ' Núcleos' : '-' },
-        { label: 'Memoria RAM Total', val: inv && inv.totalRamBytes ? Math.round(Number(inv.totalRamBytes) / (1024*1024*1024)) + ' GB' : '-' },
+        { label: 'Sistema Operativo', val: osName },
+        { label: 'Procesador (CPU)', val: cpuName },
+        { label: 'Núcleos de Procesador', val: cpuCores },
+        { label: 'Memoria RAM Instalada', val: ramTotal },
         { label: 'Número de Serie (BIOS)', val: d.serialNumber || (inv ? inv.biosSerial : '-') },
-        { label: 'Fabricante de Hardware', val: (inv && inv.manufacturer) ? inv.manufacturer : '-' },
-        { label: 'Modelo del Equipo', val: (inv && inv.model) ? inv.model : '-' },
-        { label: 'Tiempo de Actividad (Uptime)', val: formatUptime(d.uptimeSeconds) }
+        { label: 'Fabricante de Hardware', val: manufacturer },
+        { label: 'Modelo del Equipo / Motherboard', val: model },
+        { label: 'Tiempo de Actividad (Uptime)', val: uptime }
       ];
 
       g.innerHTML = props.map(function(p) {
@@ -1813,30 +1912,30 @@ export function getClientRuntimeScript(): string {
       const l = document.getElementById('dVolumesList');
       if (!l) return;
       const inv = d.inventories && d.inventories.length > 0 ? d.inventories[0] : null;
-      const vols = (inv && Array.isArray(inv.volumes)) ? inv.volumes : [];
+      const storageDisks = (inv && inv.storage && Array.isArray(inv.storage.disks)) ? inv.storage.disks :
+        ((inv && inv.hardware && Array.isArray(inv.hardware.disks)) ? inv.hardware.disks :
+        ((inv && Array.isArray(inv.volumes)) ? inv.volumes : []));
 
-      if (vols.length === 0) {
-        l.innerHTML = '<div style="text-align: center; color: var(--text-muted); padding: 24px;">No se registraron unidades de disco.</div>';
+      if (storageDisks.length === 0) {
+        l.innerHTML = '<div style="text-align: center; color: var(--text-muted); padding: 24px;">No se registraron unidades de disco en el último inventario.</div>';
         return;
       }
 
-      l.innerHTML = vols.map(function(v) {
-        const totalGb = Math.round(Number(v.totalBytes || 1) / (1024*1024*1024));
-        const freeGb = Math.round(Number(v.freeBytes || 0) / (1024*1024*1024));
-        const usedGb = totalGb - freeGb;
-        const usedPct = totalGb > 0 ? Math.round((usedGb / totalGb) * 100) : 0;
+      l.innerHTML = storageDisks.map(function(disk) {
+        const name = disk.friendlyName || disk.model || disk.mountPoint || 'Unidad de Almacenamiento';
+        const size = disk.sizeGb ? disk.sizeGb + ' GB' : (disk.totalBytes ? Math.round(Number(disk.totalBytes)/(1024*1024*1024)) + ' GB' : '-');
+        const media = disk.mediaType || disk.busType || disk.interface || 'Disco';
+        const health = disk.healthStatus || disk.operationalStatus || 'Healthy';
+        const isHealthy = health.toLowerCase().includes('health') || health.toLowerCase().includes('ok');
 
         return '<div style="background: var(--bg-surface-subtle); border: 1px solid var(--border-subtle); border-radius: var(--radius-md); padding: 14px 18px; display: flex; flex-direction: column; gap: 8px;">' +
           '<div style="display: flex; justify-content: space-between; align-items: center;">' +
-            '<div><strong style="color: #fff; font-size: 14px;">' + (v.mountPoint || 'C:') + '</strong> <span style="font-size: 12px; color: var(--text-muted);">(' + (v.fileSystem || 'NTFS') + ')</span></div>' +
-            '<span class="status-pill ' + (usedPct > 90 ? 'status-danger' : (usedPct > 80 ? 'status-warning' : 'status-online')) + '">' + freeGb + ' GB Libres (' + (100 - usedPct) + '%)</span>' +
+            '<div><strong style="color: #fff; font-size: 14px;">' + name + '</strong> <span style="font-size: 12px; color: var(--text-muted);">(' + media + ')</span></div>' +
+            '<span class="status-pill ' + (isHealthy ? 'status-online' : 'status-danger') + '">SMART: ' + health + '</span>' +
           '</div>' +
-          '<div style="height: 6px; background: rgba(255, 255, 255, 0.08); border-radius: 3px; overflow: hidden;">' +
-            '<div style="width: ' + usedPct + '%; height: 100%; background: ' + (usedPct > 90 ? 'var(--danger)' : (usedPct > 80 ? 'var(--warning)' : 'var(--primary)')) + ';"></div>' +
-          '</div>' +
-          '<div style="display: flex; justify-content: space-between; font-size: 11px; color: var(--text-muted);">' +
-            '<span>Usado: ' + usedGb + ' GB</span>' +
-            '<span>Total: ' + totalGb + ' GB</span>' +
+          '<div style="display: flex; justify-content: space-between; font-size: 12px; color: var(--text-secondary);">' +
+            '<span>Capacidad: <strong style="color: #fff;">' + size + '</strong></span>' +
+            '<span>Tipo de bus: <strong style="color: #60a5fa;">' + (disk.busType || disk.interface || 'SATA/NVMe') + '</strong></span>' +
           '</div>' +
         '</div>';
       }).join('');
@@ -1846,7 +1945,8 @@ export function getClientRuntimeScript(): string {
       const tb = document.getElementById('dNetworkTableBody');
       if (!tb) return;
       const inv = d.inventories && d.inventories.length > 0 ? d.inventories[0] : null;
-      const ifaces = (inv && Array.isArray(inv.networkInterfaces)) ? inv.networkInterfaces : [];
+      const ifaces = (inv && inv.network && Array.isArray(inv.network.interfaces)) ? inv.network.interfaces :
+        ((inv && Array.isArray(inv.networkInterfaces)) ? inv.networkInterfaces : []);
 
       if (ifaces.length === 0) {
         tb.innerHTML = '<tr><td colspan="7" style="text-align: center; color: var(--text-muted); padding: 24px;">No hay adaptadores de red registrados.</td></tr>';
@@ -1854,14 +1954,19 @@ export function getClientRuntimeScript(): string {
       }
 
       tb.innerHTML = ifaces.map(function(iface) {
+        const ip = (Array.isArray(iface.ipAddresses) && iface.ipAddresses.length > 0) ? iface.ipAddresses[0] : (iface.ipAddress || '-');
+        const dhcp = iface.dhcp != null ? (iface.dhcp ? 'Sí (Dinámica)' : 'No (Estática)') : (iface.dhcpEnabled ? 'Sí (Dinámica)' : 'No (Estática)');
+        const speed = iface.speed || iface.description || '1 Gbps';
+        const isConn = (iface.status || '').toLowerCase() !== 'disconnected';
+
         return '<tr>' +
           '<td><strong style="color: #fff;">' + (iface.name || 'Ethernet') + '</strong></td>' +
-          '<td><span class="code-font" style="color: #60a5fa;">' + (iface.ipAddress || '-') + '</span></td>' +
-          '<td><span class="code-font">' + (iface.subnetMask || '255.255.255.0') + '</span></td>' +
+          '<td><span class="code-font" style="color: #60a5fa;">' + ip + '</span></td>' +
+          '<td><span class="code-font">' + speed + '</span></td>' +
           '<td><span class="code-font" style="color: var(--text-muted);">' + (iface.macAddress || '-') + '</span></td>' +
-          '<td>' + (iface.dhcpEnabled ? 'Sí (Dinámica)' : 'No (Estática)') + '</td>' +
+          '<td>' + dhcp + '</td>' +
           '<td><span class="code-font">' + (iface.gateway || '-') + '</span></td>' +
-          '<td><span class="status-pill status-online">Conectado</span></td>' +
+          '<td><span class="status-pill ' + (isConn ? 'status-online' : 'status-danger') + '">' + (iface.status || 'Conectado') + '</span></td>' +
         '</tr>';
       }).join('');
     }
@@ -1871,10 +1976,12 @@ export function getClientRuntimeScript(): string {
       if (!g) return;
       const inv = d.inventories && d.inventories.length > 0 ? d.inventories[0] : null;
       const sec = inv ? inv.security : null;
+      const winUp = inv ? inv.windowsUpdate : null;
 
-      const avOn = sec && sec.antivirus && sec.antivirus.realTimeProtection;
-      const fwOn = sec && sec.firewall && sec.firewall.domain;
-      const reboot = sec && sec.rebootRequired;
+      const avOn = sec ? (sec.defenderActive ?? (sec.antivirus ? sec.antivirus.realTimeProtection : false)) : false;
+      const fwOn = sec ? (sec.firewallActive ?? (sec.firewall ? sec.firewall.domain : true)) : true;
+      const reboot = winUp ? (winUp.rebootPending ?? false) : (sec ? sec.rebootRequired : false);
+      const rebootReason = winUp && winUp.rebootReason ? winUp.rebootReason : (reboot ? 'Actualizaciones acumulativas pendientes' : 'No hay parches o instalaciones pendientes de reinicio.');
 
       g.innerHTML = 
         '<div style="background: var(--bg-surface-subtle); border: 1px solid var(--border-subtle); border-radius: var(--radius-md); padding: 14px;">' +
@@ -1882,7 +1989,7 @@ export function getClientRuntimeScript(): string {
             '<strong style="color: #fff; font-size: 13px;">Windows Defender Antivirus</strong>' +
             '<span class="status-pill ' + (avOn ? 'status-online' : 'status-danger') + '">' + (avOn ? 'Activo' : 'Desactivado') + '</span>' +
           '</div>' +
-          '<div style="font-size: 12px; color: var(--text-secondary); margin-top: 6px;">Protección en tiempo real contra amenazas y malware.</div>' +
+          '<div style="font-size: 12px; color: var(--text-secondary); margin-top: 6px;">Protección en tiempo real contra amenazas y malware. ' + (avOn ? 'El servicio monitorea el sistema.' : '⚠️ Se recomienda reactivar la protección residente.') + '</div>' +
         '</div>' +
 
         '<div style="background: var(--bg-surface-subtle); border: 1px solid var(--border-subtle); border-radius: var(--radius-md); padding: 14px;">' +
@@ -1890,15 +1997,15 @@ export function getClientRuntimeScript(): string {
             '<strong style="color: #fff; font-size: 13px;">Firewall de Windows</strong>' +
             '<span class="status-pill ' + (fwOn ? 'status-online' : 'status-danger') + '">' + (fwOn ? 'Activo' : 'Desactivado') + '</span>' +
           '</div>' +
-          '<div style="font-size: 12px; color: var(--text-secondary); margin-top: 6px;">Filtrado de puertos y paquetes entrantes en perfil Dominio/Privado.</div>' +
+          '<div style="font-size: 12px; color: var(--text-secondary); margin-top: 6px;">Filtrado de puertos y paquetes entrantes en perfiles de red.</div>' +
         '</div>' +
 
         '<div style="background: var(--bg-surface-subtle); border: 1px solid var(--border-subtle); border-radius: var(--radius-md); padding: 14px;">' +
           '<div style="display: flex; justify-content: space-between; align-items: center;">' +
-            '<strong style="color: #fff; font-size: 13px;">Reinicio del Sistema</strong>' +
+            '<strong style="color: #fff; font-size: 13px;">Reinicio del Sistema (Windows Update)</strong>' +
             '<span class="status-pill ' + (reboot ? 'status-warning' : 'status-online') + '">' + (reboot ? 'Reinicio Pendiente' : 'Al día') + '</span>' +
           '</div>' +
-          '<div style="font-size: 12px; color: var(--text-secondary); margin-top: 6px;">' + (reboot ? 'Se requiere reinicio para consolidar parches del sistema operativo.' : 'No hay parches o instalaciones pendientes de reinicio.') + '</div>' +
+          '<div style="font-size: 12px; color: var(--text-secondary); margin-top: 6px;">' + rebootReason + '</div>' +
         '</div>';
     }
 
@@ -1907,7 +2014,7 @@ export function getClientRuntimeScript(): string {
       const countEl = document.getElementById('dCountSoftware');
       if (!tb) return;
       const sinv = d.softwareInventories && d.softwareInventories.length > 0 ? d.softwareInventories[0] : null;
-      const items = (sinv && Array.isArray(sinv.items)) ? sinv.items : [];
+      const items = sinv ? (Array.isArray(sinv.software) ? sinv.software : (Array.isArray(sinv.items) ? sinv.items : [])) : [];
       cachedSoftwareList = items;
       if (countEl) countEl.textContent = items.length;
 
@@ -1955,13 +2062,15 @@ export function getClientRuntimeScript(): string {
         const isCrit = ev.severity === 'CRITICAL' || ev.severity === 'ERROR';
         const isWarn = ev.severity === 'WARNING';
         const sevClass = isCrit ? 'status-danger' : (isWarn ? 'status-warning' : 'status-info');
+        const desc = ev.description || ev.title || ev.message || '-';
+        const provider = ev.source || ev.provider || ev.category || 'Sistema';
 
         return '<tr>' +
           '<td><span class="status-pill ' + sevClass + '">' + (ev.severity || 'INFO') + '</span></td>' +
-          '<td><strong style="color: #fff;">' + (ev.provider || ev.source || 'Sistema') + '</strong></td>' +
+          '<td><strong style="color: #fff;">' + provider + '</strong></td>' +
           '<td><span class="code-badge">' + (ev.eventId || '-') + '</span></td>' +
           '<td><span class="code-font" style="font-size: 11px; color: var(--text-muted);">' + (ev.timestamp ? new Date(ev.timestamp).toLocaleString('es-AR') : '-') + '</span></td>' +
-          '<td><span style="font-size: 12px; color: var(--text-secondary);">' + (ev.message || '-') + '</span></td>' +
+          '<td><span style="font-size: 12px; color: var(--text-secondary);">' + desc + '</span></td>' +
         '</tr>';
       }).join('');
     }
