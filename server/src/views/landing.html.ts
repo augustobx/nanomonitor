@@ -43,7 +43,7 @@ function renderInitialRows(devices: any[]): string {
           </span>
         </td>
         <td>
-          <button class="btn btn-primary" style="padding: 6px 12px; font-size: 12px;" onclick="openDeviceDetail('${d.id}')">
+          <button class="btn btn-primary btn-device-detail" style="padding: 6px 12px; font-size: 12px;" data-device-id="${d.id}">
             Ver Ficha F4
           </button>
         </td>
@@ -1142,22 +1142,22 @@ export function getLandingHtml(data: {
     }
 
     function renderDevicesTable(devices) {
-      const tbody = document.getElementById('devicesTableBody');
+      var tbody = document.getElementById('devicesTableBody');
       if (!tbody) return;
       if (!devices || devices.length === 0) {
-        tbody.innerHTML = '<tr><td colspan="8" style="text-align: center; padding: 32px; color: var(--text-muted);">No hay dispositivos registrados todavía. Utiliza la pestaña "Enrolar Nuevo Agente" para conectar tu primer equipo.</td></tr>';
+        tbody.innerHTML = '<tr><td colspan="8" style="text-align: center; padding: 32px; color: var(--text-muted);">No hay dispositivos registrados. Utiliza la pestaña Enrolar Nuevo Agente para conectar tu primer equipo.</td></tr>';
         return;
       }
 
       tbody.innerHTML = devices.map(function(d) {
-        const isOnline = d.status === 'ONLINE';
-        const clientName = (d.customer && d.customer.name) ? d.customer.name : 'NanoLabs Infraestructura Interna';
-        const osName = d.osEdition || 'Windows 11 Pro 64-bit';
-        const cpu = d.cpuName || '11th Gen Intel(R) Core(TM) i5-11400';
-        const ram = d.ramTotalMB ? Math.round(d.ramTotalMB / 1024) + ' GB' : '16 GB';
-        const mfg = (d.manufacturer || 'Gigabyte') + ' ' + (d.model || 'H510M H');
-        const statusClass = isOnline ? 'status-online' : 'status-offline';
-        const statusLabel = isOnline ? '● ONLINE' : '○ OFFLINE';
+        var isOnline = d.status === 'ONLINE';
+        var clientName = (d.customer && d.customer.name) ? d.customer.name : 'NanoLabs Infraestructura Interna';
+        var osName = d.osEdition || 'Windows 11 Pro 64-bit';
+        var cpu = d.cpuName || '11th Gen Intel(R) Core(TM) i5-11400';
+        var ram = d.ramTotalMB ? Math.round(d.ramTotalMB / 1024) + ' GB' : '16 GB';
+        var mfg = (d.manufacturer || 'Gigabyte') + ' ' + (d.model || 'H510M H');
+        var statusClass = isOnline ? 'status-online' : 'status-offline';
+        var statusLabel = isOnline ? '● ONLINE' : '○ OFFLINE';
 
         return '<tr>' +
           '<td>' +
@@ -1178,10 +1178,18 @@ export function getLandingHtml(data: {
           '<td><span class="status-pill status-online" style="font-size: 11px;">NVMe SSD 1TB</span><div style="font-size: 11px; color: #34d399; margin-top: 2px;">● Healthy SMART</div></td>' +
           '<td><span class="status-pill status-online" style="font-size: 11px;">Defender Activo</span><div style="font-size: 11px; color: #f59e0b; margin-top: 2px;">● Reinicio Pendiente</div></td>' +
           '<td><span class="status-pill ' + statusClass + '">' + statusLabel + '</span></td>' +
-          '<td><button class="btn btn-primary" style="padding: 6px 12px; font-size: 12px;" onclick="openDeviceDetail(\'' + d.id + '\')">Ver Ficha F4</button></td>' +
+          '<td><button class="btn btn-primary btn-device-detail" style="padding: 6px 12px; font-size: 12px;" data-device-id="' + d.id + '">Ver Ficha F4</button></td>' +
         '</tr>';
       }).join('');
     }
+
+    // Delegated click handler for "Ver Ficha F4" buttons
+    document.addEventListener('click', function(e) {
+      var btn = e.target.closest('.btn-device-detail');
+      if (btn && btn.dataset.deviceId) {
+        openDeviceDetail(btn.dataset.deviceId);
+      }
+    });
 
     // Open Device Detail Drawer
     async function openDeviceDetail(deviceId) {
@@ -1377,13 +1385,13 @@ export function getLandingHtml(data: {
 
     function copyEnrollCmd() {
       const el = document.getElementById('enrollCmd');
-      const text = el ? el.textContent : '.\\bin\\nanoagent.exe -api-url "https://monitor.nanolabs.com.ar" -token "NL-TEST-1D7FD86D54A5B873"';
+      const text = el ? el.textContent : 'nanoagent.exe -api-url https://monitor.nanolabs.com.ar -token NL-TEST-1D7FD86D54A5B873';
       if (navigator.clipboard) {
         navigator.clipboard.writeText(text).then(function() {
-          alert('¡Comando copiado al portapapeles!');
+          alert('Comando copiado al portapapeles');
         });
       } else {
-        alert('Comando para copiar:\n' + text);
+        alert('Comando para copiar: ' + text);
       }
     }
 
