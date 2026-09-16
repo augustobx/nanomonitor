@@ -33,6 +33,7 @@ export const updateSiteSchema = createSiteSchema.partial();
 
 export const updateDeviceSchema = z.object({
   displayName: z.string().max(100).optional(),
+  customerId: z.string().uuid().optional(),
   siteId: z.string().uuid().nullable().optional(),
   status: z.enum(['ONLINE', 'OFFLINE', 'WARNING', 'CRITICAL', 'MAINTENANCE']).optional(),
 });

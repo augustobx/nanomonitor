@@ -228,6 +228,15 @@ export const devicesRoutes: FastifyPluginAsync = async (fastify: FastifyInstance
         return reply.status(404).send({ statusCode: 404, message: 'Device not found' });
       }
 
+      if (parsed.data.customerId) {
+        const customer = await db.customer.findFirst({
+          where: { id: parsed.data.customerId, tenantId },
+        });
+        if (!customer) {
+          return reply.status(404).send({ statusCode: 404, message: 'Target customer not found in tenant' });
+        }
+      }
+
       const updated = await db.device.update({
         where: { id },
         data: parsed.data,

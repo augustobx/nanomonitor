@@ -15,6 +15,7 @@ import { sitesRoutes } from './modules/sites/sites.routes.js';
 import { devicesRoutes } from './modules/devices/devices.routes.js';
 import { db } from './lib/db.js';
 import { getLandingHtml } from './views/landing.html.js';
+import { generateRandomString } from './lib/crypto.js';
 
 // Global BigInt JSON serialization polyfill
 if (!('toJSON' in BigInt.prototype)) {
@@ -107,7 +108,12 @@ export async function buildApp(): Promise<FastifyInstance> {
         customers = await db.customer.findMany({
           include: {
             sites: { select: { id: true, name: true } },
-            enrollmentTokens: { select: { id: true, token: true, expiresAt: true }, take: 1 },
+            enrollmentTokens: {
+              select: { id: true, token: true, expiresAt: true },
+              where: { expiresAt: { gt: new Date() } },
+              orderBy: { createdAt: 'desc' },
+              take: 1,
+            },
             _count: {
               select: {
                 devices: true,
@@ -118,6 +124,25 @@ export async function buildApp(): Promise<FastifyInstance> {
           },
           orderBy: { name: 'asc' },
         });
+
+        // Ensure every customer has a dedicated enrollment token
+        for (const cust of customers) {
+          if (!cust.enrollmentTokens || cust.enrollmentTokens.length === 0) {
+            const cleanCode = cust.code.replace(/[^A-Z0-9]/gi, '').toUpperCase();
+            const tokenStr = `NL-${cleanCode}-${generateRandomString(8).toUpperCase()}`;
+            const newToken = await db.enrollmentToken.create({
+              data: {
+                tenantId: cust.tenantId,
+                customerId: cust.id,
+                token: tokenStr,
+                maxUses: 500,
+                expiresAt: new Date(Date.now() + 365 * 24 * 3600 * 1000),
+              },
+              select: { id: true, token: true, expiresAt: true },
+            });
+            cust.enrollmentTokens = [newToken];
+          }
+        }
 
         recentEvents = await db.deviceEvent.findMany({
           take: 8,
@@ -178,7 +203,12 @@ export async function buildApp(): Promise<FastifyInstance> {
       customers = await db.customer.findMany({
         include: {
           sites: { select: { id: true, name: true } },
-          enrollmentTokens: { select: { id: true, token: true, expiresAt: true }, take: 1 },
+          enrollmentTokens: {
+            select: { id: true, token: true, expiresAt: true },
+            where: { expiresAt: { gt: new Date() } },
+            orderBy: { createdAt: 'desc' },
+            take: 1,
+          },
           _count: {
             select: {
               devices: true,
@@ -189,6 +219,25 @@ export async function buildApp(): Promise<FastifyInstance> {
         },
         orderBy: { name: 'asc' },
       });
+
+      // Ensure every customer has a dedicated enrollment token
+      for (const cust of customers) {
+        if (!cust.enrollmentTokens || cust.enrollmentTokens.length === 0) {
+          const cleanCode = cust.code.replace(/[^A-Z0-9]/gi, '').toUpperCase();
+          const tokenStr = `NL-${cleanCode}-${generateRandomString(8).toUpperCase()}`;
+          const newToken = await db.enrollmentToken.create({
+            data: {
+              tenantId: cust.tenantId,
+              customerId: cust.id,
+              token: tokenStr,
+              maxUses: 500,
+              expiresAt: new Date(Date.now() + 365 * 24 * 3600 * 1000),
+            },
+            select: { id: true, token: true, expiresAt: true },
+          });
+          cust.enrollmentTokens = [newToken];
+        }
+      }
 
       recentEvents = await db.deviceEvent.findMany({
         take: 8,

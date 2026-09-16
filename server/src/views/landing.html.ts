@@ -1404,6 +1404,19 @@ export function getLandingHtml(data: {
               📋 Copiar Diagnóstico Rápido
             </button>
           </div>
+
+          <div style="background: rgba(255, 255, 255, 0.03); border: 1px solid var(--border-subtle); border-radius: 6px; padding: 16px; display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 12px;">
+            <div>
+              <strong style="color: #fff; font-size: 13px;">Reasignar Organización / Cliente</strong>
+              <div style="font-size: 12px; color: var(--text-secondary);">Mueve este equipo a otra empresa cliente si fue enrolado por error con otro token.</div>
+            </div>
+            <div style="display: flex; gap: 8px; align-items: center;">
+              <select id="moveCustomerSelect" class="form-input" style="max-width: 220px;"></select>
+              <button class="btn btn-secondary btn-sm" onclick="handleMoveDevice()">
+                🔄 Mover Equipo
+              </button>
+            </div>
+          </div>
         </div>
 
       </div>
@@ -1734,14 +1747,30 @@ export function getLandingHtml(data: {
       const sitesList = (customer.sites && customer.sites.length > 0) ? customer.sites.map(function(s) { return s.name; }).join(', ') : 'Casa Central';
       setVal('wsCustomerMeta', 'Organización cliente administrada • ' + sitesCount + ' Sedes (' + sitesList + ') • Contacto: ' + (customer.contactEmail || 'Sin email'));
 
-      // Assigned Token
-      let tokenStr = 'NL-TEST-1D7FD86D54A5B873';
+      // Assigned Token for this Customer
+      let tokenStr = '';
       if (customer.enrollmentTokens && customer.enrollmentTokens[0] && customer.enrollmentTokens[0].token) {
         tokenStr = customer.enrollmentTokens[0].token;
       }
-      setVal('wsCustomerTokenBadge', tokenStr);
-      setVal('wsEnrollCmdText', 'nanoagent.exe -api-url https://monitor.nanolabs.com.ar -token ' + tokenStr);
-      setVal('wsPs1CmdText', '& ([scriptblock]::Create((irm https://monitor.nanolabs.com.ar/downloads/install.ps1))) -Token "' + tokenStr + '"');
+
+      if (!tokenStr) {
+        setVal('wsCustomerTokenBadge', 'Generando token único...');
+        fetch('/api/v1/customers/' + customer.id + '/token').then(function(r) { return r.json(); }).then(function(res) {
+          if (res && res.data && res.data.token) {
+            if (!customer.enrollmentTokens) customer.enrollmentTokens = [];
+            customer.enrollmentTokens[0] = res.data;
+            if (currentActiveCustomerId === customer.id) {
+              setVal('wsCustomerTokenBadge', res.data.token);
+              setVal('wsEnrollCmdText', 'nanoagent.exe -api-url https://monitor.nanolabs.com.ar -token ' + res.data.token);
+              setVal('wsPs1CmdText', '& ([scriptblock]::Create((irm https://monitor.nanolabs.com.ar/downloads/install.ps1))) -Token "' + res.data.token + '"');
+            }
+          }
+        }).catch(function(err) { console.error('Token fetch error:', err); });
+      } else {
+        setVal('wsCustomerTokenBadge', tokenStr);
+        setVal('wsEnrollCmdText', 'nanoagent.exe -api-url https://monitor.nanolabs.com.ar -token ' + tokenStr);
+        setVal('wsPs1CmdText', '& ([scriptblock]::Create((irm https://monitor.nanolabs.com.ar/downloads/install.ps1))) -Token "' + tokenStr + '"');
+      }
 
       // Customer Devices & KPIs
       const custDevices = currentDevices.filter(function(d) {
@@ -1988,9 +2017,23 @@ export function getLandingHtml(data: {
       if (!sel) return;
       const custId = sel.value;
       const customer = currentCustomers.find(function(c) { return c.id === custId; });
-      let token = 'NL-TEST-1D7FD86D54A5B873';
-      if (customer && customer.enrollmentTokens && customer.enrollmentTokens[0] && customer.enrollmentTokens[0].token) {
+      if (!customer) return;
+      let token = '';
+      if (customer.enrollmentTokens && customer.enrollmentTokens[0] && customer.enrollmentTokens[0].token) {
         token = customer.enrollmentTokens[0].token;
+      }
+      if (!token) {
+        setVal('enrollCmdDisplay', 'Obteniendo clave de ' + customer.name + '...');
+        fetch('/api/v1/customers/' + customer.id + '/token').then(function(r) { return r.json(); }).then(function(res) {
+          if (res && res.data && res.data.token) {
+            if (!customer.enrollmentTokens) customer.enrollmentTokens = [];
+            customer.enrollmentTokens[0] = res.data;
+            if (sel.value === customer.id) {
+              setVal('enrollCmdDisplay', 'nanoagent.exe -api-url https://monitor.nanolabs.com.ar -token ' + res.data.token);
+            }
+          }
+        });
+        return;
       }
       setVal('enrollCmdDisplay', 'nanoagent.exe -api-url https://monitor.nanolabs.com.ar -token ' + token);
     }
@@ -2255,7 +2298,16 @@ export function getLandingHtml(data: {
         setVal('dDiagSite', siteName);
         setVal('dDiagEnrolledAt', d.createdAt ? new Date(d.createdAt).toLocaleString('es-AR') : '10/09/2026 14:00');
         setVal('dDiagLastAuth', d.lastSeen ? new Date(d.lastSeen).toLocaleString('es-AR') : 'En tiempo real');
-        setVal('dDiagToken', (d.enrollmentToken && d.enrollmentToken.token) ? d.enrollmentToken.token : 'NL-TEST-1D7FD86D54A5B873');
+        setVal('dDiagToken', (d.enrollmentToken && d.enrollmentToken.token) ? d.enrollmentToken.token : '-');
+
+        // Populate move customer dropdown
+        const moveSel = document.getElementById('moveCustomerSelect');
+        if (moveSel) {
+          moveSel.innerHTML = currentCustomers.map(function(c) {
+            const isSelected = (d.customer && d.customer.id === c.id) || d.customerId === c.id;
+            return '<option value="' + c.id + '"' + (isSelected ? ' selected' : '') + '>' + c.name + ' (' + c.code + ')</option>';
+          }).join('');
+        }
 
         switchDrawerTab('metrics');
         const drawer = document.getElementById('deviceDrawer');
@@ -2821,6 +2873,39 @@ export function getLandingHtml(data: {
       }
     }
 
+    async function handleMoveDevice() {
+      if (!selectedDevice) return;
+      const sel = document.getElementById('moveCustomerSelect');
+      if (!sel) return;
+      const targetCustomerId = sel.value;
+      if (!targetCustomerId) return;
+      if ((selectedDevice.customer && selectedDevice.customer.id === targetCustomerId) || selectedDevice.customerId === targetCustomerId) {
+        alert('El equipo ya pertenece a esta organización.');
+        return;
+      }
+      let token = localStorage.getItem('nl_token');
+      if (!token) token = await quickLoginDemo();
+      try {
+        const res = await fetch('/api/v1/devices/' + selectedDevice.id, {
+          method: 'PATCH',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': 'Bearer ' + token
+          },
+          body: JSON.stringify({ customerId: targetCustomerId })
+        });
+        if (res.ok) {
+          alert('✅ Equipo reasignado exitosamente.');
+          await fetchLiveDashboard(false);
+          closeDrawer();
+        } else {
+          alert('Error al reasignar equipo.');
+        }
+      } catch (err) {
+        console.error('Failed to move device:', err);
+      }
+    }
+
     // Window Global Bindings
     window.openDeviceDetail = openDeviceDetail;
     window.switchNavTab = switchNavTab;
@@ -2848,6 +2933,7 @@ export function getLandingHtml(data: {
     window.loadCustomers = loadCustomers;
     window.loadDevices = loadDevices;
     window.fetchLiveDashboard = fetchLiveDashboard;
+    window.handleMoveDevice = handleMoveDevice;
   </script>
 </body>
 </html>`;
