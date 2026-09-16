@@ -607,6 +607,102 @@ export function getLandingHtml(data: {
       color: #60a5fa;
     }
 
+    /* Customer Deployment Strip */
+    .customer-deploy-strip {
+      background: var(--bg-surface-elevated);
+      border: 1px solid var(--border-subtle);
+      border-radius: 8px;
+      padding: 10px 16px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      flex-wrap: wrap;
+    }
+
+    .deploy-strip-left {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      flex-wrap: wrap;
+    }
+
+    .deploy-strip-badge {
+      background: rgba(37, 99, 235, 0.15);
+      border: 1px solid rgba(37, 99, 235, 0.35);
+      color: #60a5fa;
+      font-size: 11px;
+      font-weight: 700;
+      padding: 3px 8px;
+      border-radius: 4px;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+    }
+
+    .deploy-strip-token {
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 12px;
+      color: #f8fafc;
+      background: #090d16;
+      border: 1px solid var(--border-subtle);
+      padding: 3px 8px;
+      border-radius: 4px;
+    }
+
+    .deploy-strip-actions {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      flex-wrap: wrap;
+    }
+
+    /* Workstation Hero Card & Quick Chips */
+    .workstation-hero-card {
+      background: var(--bg-surface);
+      border: 1px solid var(--border-subtle);
+      border-radius: 8px;
+      padding: 18px 20px;
+      display: flex;
+      flex-direction: column;
+      gap: 14px;
+    }
+
+    .quick-chip {
+      background: #090d16;
+      border: 1px solid var(--border-subtle);
+      border-radius: 6px;
+      padding: 6px 12px;
+      display: flex;
+      flex-direction: column;
+      gap: 2px;
+      min-width: 110px;
+    }
+
+    .quick-chip-label {
+      font-size: 10px;
+      font-weight: 700;
+      color: var(--text-muted);
+      letter-spacing: 0.5px;
+    }
+
+    .quick-chip-val {
+      font-size: 12px;
+      font-weight: 600;
+      color: #fff;
+      white-space: nowrap;
+    }
+
+    /* Spinning Icon Animation */
+    @keyframes spin {
+      from { transform: rotate(0deg); }
+      to { transform: rotate(360deg); }
+    }
+
+    .spinning {
+      animation: spin 0.7s linear infinite;
+      display: inline-block;
+    }
+
     /* Modal / Drawer */
     .drawer-overlay {
       position: fixed;
@@ -844,14 +940,14 @@ export function getLandingHtml(data: {
   <!-- Breadcrumb & Quick Actions Bar -->
   <div class="breadcrumb-bar">
     <div class="breadcrumb-path" id="breadcrumbPath">
-      <span>🖥️ NOC General</span>
+      <span style="cursor: pointer;" onclick="backToGeneralDashboard()" title="Ir al NOC General">🖥️ NOC General</span>
       <span class="breadcrumb-separator">/</span>
-      <strong id="breadcrumbCurrent">Directorio de Clientes & Flota</strong>
+      <strong id="breadcrumbCurrent">Directorio de Clientes &amp; Flota</strong>
     </div>
 
     <div style="display: flex; align-items: center; gap: 8px;" id="breadcrumbActions">
-      <button class="btn btn-secondary btn-sm" id="btnLiveRefresh" onclick="fetchLiveDashboard(false)" title="Actualizar datos en tiempo real">
-        🔄 Actualizar (En Vivo)
+      <button class="btn btn-secondary btn-sm" id="btnLiveRefresh" onclick="handleGlobalRefresh()" title="Actualizar datos en tiempo real">
+        <span id="globalRefreshIcon">🔄</span> Actualizar (En Vivo)
       </button>
       <button class="btn btn-secondary btn-sm" onclick="openCreateCustomerModal()">
         + Nuevo Cliente
@@ -859,8 +955,8 @@ export function getLandingHtml(data: {
       <button class="btn btn-primary btn-sm" onclick="switchNavTab('enroll')">
         + Enrolar Agente
       </button>
-      <button class="btn btn-secondary btn-sm" id="btnBackGlobal" style="display: none;" onclick="backToGeneralDashboard()">
-        ← Volver al NOC General
+      <button class="btn btn-secondary btn-sm" id="btnBackGlobal" style="display: none;" onclick="handleGlobalBack()">
+        ← Volver
       </button>
     </div>
   </div>
@@ -971,7 +1067,7 @@ export function getLandingHtml(data: {
     <div id="viewCustomerWorkspace" style="display: none; flex-direction: column; gap: 20px;">
       
       <!-- Customer Workspace Header Banner -->
-      <div class="workspace-banner">
+      <div class="workspace-banner" style="gap: 12px;">
         <div class="workspace-top">
           <div class="workspace-title-box">
             <h2>
@@ -983,41 +1079,44 @@ export function getLandingHtml(data: {
             <p id="wsCustomerMeta">Organización cliente administrada</p>
           </div>
 
-          <button class="btn btn-secondary" onclick="backToGeneralDashboard()">
-            ← Volver al Directorio de Clientes
-          </button>
+          <div style="display: flex; gap: 8px; align-items: center; flex-wrap: wrap;">
+            <button class="btn btn-secondary btn-sm" id="btnRefreshCustomerWs" onclick="refreshCustomerWorkspace()" title="Actualizar estado de todos los equipos del cliente">
+              <span id="wsRefreshIcon">🔄</span> Actualizar Flota
+            </button>
+            <button class="btn btn-secondary btn-sm" onclick="backToGeneralDashboard()">
+              ← Volver al Directorio de Clientes
+            </button>
+          </div>
         </div>
 
-        <!-- Deployment & Enrollment Box for this Customer -->
-        <div class="token-box" style="display: flex; flex-direction: column; gap: 12px; padding: 16px;">
-          <div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 10px;">
-            <div>
-              <div style="font-size: 11px; font-weight: 700; color: #38bdf8; text-transform: uppercase; letter-spacing: 0.5px;">
-                🚀 Despliegue de Agentes para este Cliente (Instalador Reutilizable)
-              </div>
-              <div style="font-size: 12px; color: var(--text-muted); margin-top: 2px;">
-                Token de organización: <code id="wsCustomerTokenBadge" style="color: #f8fafc; background: #1e293b; padding: 2px 6px; border-radius: 4px; font-family: monospace;">NL-TEST-***</code>
-              </div>
-            </div>
-            <div style="display: flex; gap: 8px; flex-wrap: wrap;">
-              <a href="/downloads/NanoMonitor-Setup.exe" class="btn btn-primary btn-sm" download style="text-decoration: none;">
-                ⬇️ Descargar Instalador (.exe)
-              </a>
-              <button class="btn btn-secondary btn-sm" onclick="copyCustomerPs1Cmd()">
-                ⚡ Copiar Script PowerShell (1 Clic)
-              </button>
-              <button class="btn btn-secondary btn-sm" onclick="copyCurrentCustomerEnrollCmd()">
-                📋 Copiar Comando CLI
-              </button>
-            </div>
+        <!-- Compact Horizontal Deployment Strip (No Scrolling Required) -->
+        <div class="customer-deploy-strip">
+          <div class="deploy-strip-left">
+            <span class="deploy-strip-badge">🚀 Instalador Reutilizable</span>
+            <span style="font-size: 12px; color: var(--text-secondary);">Token:</span>
+            <code class="deploy-strip-token" id="wsCustomerTokenBadge">NL-TEST-***</code>
+            <span style="font-size: 11px; color: var(--text-muted);">(Válido para todos los equipos de este cliente)</span>
           </div>
 
-          <div style="background: rgba(0,0,0,0.3); border: 1px solid var(--border-color); border-radius: 6px; padding: 10px 14px;">
-            <div style="font-size: 11px; color: var(--text-muted); margin-bottom: 4px;">
-              Instalación remota de 1 línea en PowerShell (Descarga + Servicio + Bandeja de sistema):
-            </div>
+          <div class="deploy-strip-actions">
+            <button class="btn btn-primary btn-sm" onclick="copyCustomerPs1Cmd()" title="Copiar script PowerShell listo para ejecutar como Administrador">
+              ⚡ Copiar PowerShell (1 Clic)
+            </button>
+            <a href="/downloads/NanoMonitor-Setup.exe" class="btn btn-secondary btn-sm" download style="text-decoration: none;" title="Descargar paquete de instalación ejecutable">
+              ⬇️ Instalador (.exe)
+            </a>
+            <button class="btn btn-secondary btn-sm" onclick="copyCurrentCustomerEnrollCmd()" title="Copiar comando CLI nanoagent.exe">
+              📋 Copiar CLI
+            </button>
+            <button class="btn btn-secondary btn-sm" onclick="togglePs1ScriptPreview()" id="btnTogglePs1Preview" title="Ver comando PowerShell completo">
+              👁️ Ver Script
+            </button>
+          </div>
+
+          <div id="wsPs1PreviewBox" style="display: none; width: 100%; margin-top: 6px; background: #090d16; border: 1px solid var(--border-subtle); border-radius: 6px; padding: 8px 12px;">
+            <div style="font-size: 11px; color: var(--text-muted); margin-bottom: 4px;">Instalación remota de 1 línea en PowerShell (Administrador):</div>
             <div class="token-text" id="wsPs1CmdText" style="font-size: 12px; word-break: break-all;">
-              & ([scriptblock]::Create((irm https://monitor.nanolabs.com.ar/downloads/install.ps1))) -Token "NL-TEST-***"
+              &amp; ([scriptblock]::Create((irm https://monitor.nanolabs.com.ar/downloads/install.ps1))) -Token "NL-TEST-***"
             </div>
             <div style="display: none;" id="wsCliBox">
               <span class="token-text" id="wsEnrollCmdText">nanoagent.exe -api-url https://monitor.nanolabs.com.ar -token NL-TEST-***</span>
@@ -1176,37 +1275,90 @@ export function getLandingHtml(data: {
       </div>
     </div>
 
-  </main>
-
-  <!-- DEVICE DETAIL DRAWER (F7) -->
-  <div class="drawer-overlay" id="deviceDrawer" onclick="if(event.target === this) closeDrawer()">
-    <div class="drawer-card">
-      <div class="drawer-header">
-        <div>
-          <h3 id="drawerHostname">
-            <span>NANOPC</span>
-            <span class="status-pill status-online" id="drawerStatus">ONLINE</span>
-          </h3>
-          <p id="drawerSub" style="font-size: 12px; color: var(--text-secondary); margin-top: 2px;">
-            Cliente • Windows 11 Pro 64-bit
-          </p>
+    <!-- VIEW 6: DEDICATED WORKSTATION & HARDWARE WORKSPACE (Full Page, No Modals) -->
+    <div id="viewDeviceWorkspace" style="display: none; flex-direction: column; gap: 16px;">
+      
+      <!-- Top Action Bar & Quick Return -->
+      <div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 12px; background: var(--bg-surface); border: 1px solid var(--border-subtle); border-radius: 8px; padding: 12px 18px;">
+        <div style="display: flex; align-items: center; gap: 10px; font-size: 13px;">
+          <button class="btn btn-secondary btn-sm" id="btnBackToCustomer" onclick="backFromDeviceWorkspace()">
+            ← Volver a <span id="wsDevCustBackName">Organización</span>
+          </button>
+          <span style="color: var(--text-muted);">|</span>
+          <span style="color: var(--text-secondary);">Estación:</span>
+          <strong id="wsDevHostTitle" style="color: #fff; font-family: 'JetBrains Mono', monospace;">NANOPC</strong>
+          <span class="status-pill status-online" id="wsDevOnlinePill">● ONLINE</span>
         </div>
-        <button class="drawer-close" onclick="closeDrawer()">✕</button>
+
+        <div style="display: flex; align-items: center; gap: 8px;">
+          <button class="btn btn-secondary btn-sm" id="btnRefreshDevice" onclick="refreshCurrentDevice()" title="Consultar telemetría en tiempo real del agente">
+            <span id="devRefreshIcon">🔄</span> Actualizar Telemetría
+          </button>
+          <button class="btn btn-secondary btn-sm" onclick="copyDeviceDiagnostic()" title="Copiar reporte técnico completo">
+            📋 Copiar Diagnóstico
+          </button>
+        </div>
       </div>
 
-      <!-- 8 Specialized Tabs -->
-      <div class="drawer-nav-tabs">
-        <button class="drawer-tab-btn active" id="dTab1" onclick="switchDrawerTab('metrics')">Rendimiento</button>
-        <button class="drawer-tab-btn" id="dTab2" onclick="switchDrawerTab('specs')">Hardware & SO</button>
-        <button class="drawer-tab-btn" id="dTab3" onclick="switchDrawerTab('storage')">Discos & SMART</button>
-        <button class="drawer-tab-btn" id="dTab4" onclick="switchDrawerTab('network')">Red & Conectividad</button>
-        <button class="drawer-tab-btn" id="dTab5" onclick="switchDrawerTab('security')">Seguridad & Parches</button>
-        <button class="drawer-tab-btn" id="dTab6" onclick="switchDrawerTab('software')">Software Instalado</button>
-        <button class="drawer-tab-btn" id="dTab7" onclick="switchDrawerTab('events')">Eventos de Windows</button>
-        <button class="drawer-tab-btn" id="dTab8" onclick="switchDrawerTab('agent')">Diagnóstico & Soporte</button>
+      <!-- Main Workstation Hero Card -->
+      <div class="workstation-hero-card">
+        <div style="display: flex; justify-content: space-between; align-items: flex-start; flex-wrap: wrap; gap: 16px;">
+          <div style="display: flex; align-items: center; gap: 14px;">
+            <div style="font-size: 32px; background: #090d16; border: 1px solid var(--border-subtle); width: 56px; height: 56px; border-radius: 10px; display: flex; align-items: center; justify-content: center;">
+              💻
+            </div>
+            <div>
+              <div style="display: flex; align-items: center; gap: 10px; flex-wrap: wrap;">
+                <h2 id="wsDevMainHostname" style="font-size: 20px; font-weight: 700; color: #fff; font-family: 'JetBrains Mono', monospace;">NANOPC</h2>
+                <span class="status-pill status-online" id="wsDevHeroStatus">● ONLINE</span>
+                <span class="code-badge" id="wsDevAgentBadge">Agent v0.1.0</span>
+              </div>
+              <div style="font-size: 12px; color: var(--text-secondary); margin-top: 4px; display: flex; gap: 12px; flex-wrap: wrap;">
+                <span>🏢 Cliente: <strong id="wsDevCustomerName" style="color: #cbd5e1;">NanoLabs Infraestructura</strong></span>
+                <span>•</span>
+                <span>📍 Sede: <strong id="wsDevSiteName" style="color: #cbd5e1;">Casa Central</strong></span>
+                <span>•</span>
+                <span>🕒 Último Reporte: <span id="wsDevLastSeen" class="code-font" style="color: #38bdf8;">En tiempo real</span></span>
+              </div>
+            </div>
+          </div>
+
+          <!-- Quick Hardware Chips -->
+          <div style="display: flex; gap: 8px; flex-wrap: wrap;">
+            <div class="quick-chip">
+              <span class="quick-chip-label">SISTEMA</span>
+              <span class="quick-chip-val" id="wsDevOsChip">Windows 11 Pro</span>
+            </div>
+            <div class="quick-chip">
+              <span class="quick-chip-label">PROCESADOR</span>
+              <span class="quick-chip-val" id="wsDevCpuChip">Intel Core i5</span>
+            </div>
+            <div class="quick-chip">
+              <span class="quick-chip-label">MEMORIA</span>
+              <span class="quick-chip-val" id="wsDevRamChip">16 GB RAM</span>
+            </div>
+            <div class="quick-chip">
+              <span class="quick-chip-label">IP LOCAL</span>
+              <span class="quick-chip-val code-font" id="wsDevIpChip">192.168.0.65</span>
+            </div>
+          </div>
+        </div>
       </div>
 
-      <div class="drawer-body">
+      <!-- 8 Specialized Navigation Tabs -->
+      <div class="drawer-nav-tabs" style="border-radius: 8px; border: 1px solid var(--border-subtle); padding: 6px 10px;">
+        <button class="drawer-tab-btn active" id="dTab1" onclick="switchDrawerTab('metrics')">📊 Rendimiento &amp; Recursos</button>
+        <button class="drawer-tab-btn" id="dTab2" onclick="switchDrawerTab('specs')">⚙️ Hardware &amp; SO</button>
+        <button class="drawer-tab-btn" id="dTab3" onclick="switchDrawerTab('storage')">💾 Discos &amp; SMART</button>
+        <button class="drawer-tab-btn" id="dTab4" onclick="switchDrawerTab('network')">🌐 Red &amp; Conectividad</button>
+        <button class="drawer-tab-btn" id="dTab5" onclick="switchDrawerTab('security')">🛡️ Seguridad &amp; Parches</button>
+        <button class="drawer-tab-btn" id="dTab6" onclick="switchDrawerTab('software')">📦 Software Instalado</button>
+        <button class="drawer-tab-btn" id="dTab7" onclick="switchDrawerTab('events')">⚠️ Eventos de Windows</button>
+        <button class="drawer-tab-btn" id="dTab8" onclick="switchDrawerTab('agent')">🔧 Agente &amp; Reasignación</button>
+      </div>
+
+      <!-- Tab Content Panes Container (Full Page, Natural Scrolling) -->
+      <div style="background: var(--bg-surface); border: 1px solid var(--border-subtle); border-radius: 8px; padding: 20px; display: flex; flex-direction: column; gap: 16px;">
         
         <!-- Tab 1: Metrics -->
         <div id="dViewMetrics" style="display: flex; flex-direction: column; gap: 16px;">
@@ -1421,7 +1573,8 @@ export function getLandingHtml(data: {
 
       </div>
     </div>
-  </div>
+
+  </main>
 
   <!-- LOGIN MODAL -->
   <div class="drawer-overlay" id="loginModal" onclick="if(event.target === this) closeLoginModal()">
@@ -1683,12 +1836,18 @@ export function getLandingHtml(data: {
                   : '<span class="status-pill status-online">✓ 0 Alertas</span>') +
               '</div>' +
 
-              '<div class="folder-actions">' +
-                '<button class="btn btn-secondary btn-sm btn-toggle-accordion" data-customer-id="' + c.id + '">' +
-                  (isExpanded ? '▲ Ocultar Equipos' : '📂 Desplegar Equipos (' + custDevices.length + ')') +
+              '<div class="folder-actions" style="display: flex; gap: 6px; align-items: center; flex-wrap: wrap;">' +
+                '<button class="btn btn-primary btn-sm btn-open-workspace" data-customer-id="' + c.id + '" title="Abrir carpeta y estaciones del cliente">' +
+                  '📂 Entrar a Carpeta →' +
                 '</button>' +
-                '<button class="btn btn-primary btn-sm btn-open-workspace" data-customer-id="' + c.id + '">' +
-                  'Entrar a la Carpeta →' +
+                '<button class="btn btn-secondary btn-sm btn-copy-customer-ps1" data-customer-id="' + c.id + '" title="Copiar script PowerShell de instalación con token">' +
+                  '⚡ Copiar PowerShell' +
+                '</button>' +
+                '<a href="/downloads/NanoMonitor-Setup.exe" class="btn btn-secondary btn-sm" download style="text-decoration: none;" title="Descargar instalador ejecutable">' +
+                  '⬇️ Instalador' +
+                '</a>' +
+                '<button class="btn btn-secondary btn-sm btn-toggle-accordion" data-customer-id="' + c.id + '" title="Desplegar u ocultar lista rápida">' +
+                  (isExpanded ? '▲ Ocultar' : '▼ Equipos (' + custDevices.length + ')') +
                 '</button>' +
               '</div>' +
             '</div>' +
@@ -1715,6 +1874,8 @@ export function getLandingHtml(data: {
       if (!customer) return;
 
       currentActiveCustomerId = customerId;
+      currentActiveView = 'workspace';
+      selectedDeviceId = null;
 
       // Update Navigation
       const viewGen = document.getElementById('viewGeneralDirectory');
@@ -1722,11 +1883,13 @@ export function getLandingHtml(data: {
       const viewCust = document.getElementById('viewCustomers');
       const viewEnr = document.getElementById('viewEnroll');
       const viewClu = document.getElementById('viewCluster');
+      const viewDev = document.getElementById('viewDeviceWorkspace');
 
       if (viewGen) viewGen.style.display = 'none';
       if (viewCust) viewCust.style.display = 'none';
       if (viewEnr) viewEnr.style.display = 'none';
       if (viewClu) viewClu.style.display = 'none';
+      if (viewDev) viewDev.style.display = 'none';
       if (viewWs) viewWs.style.display = 'flex';
 
       // Update Breadcrumb
@@ -1901,16 +2064,16 @@ export function getLandingHtml(data: {
           '<td><span class="status-pill status-online">Defender Activo</span><div style="font-size: 11px; color: #f59e0b; margin-top: 2px;">Reinicio Pendiente</div></td>' +
           '<td>' + eventsBadge + '</td>' +
           '<td><span class="status-pill ' + statusClass + '">' + statusLabel + '</span></td>' +
-          '<td><button class="btn btn-primary btn-sm btn-device-detail" data-device-id="' + d.id + '">Ver Ficha (F7)</button></td>' +
+          '<td><button class="btn btn-primary btn-sm btn-device-detail" data-device-id="' + d.id + '">🔍 Inspeccionar →</button></td>' +
         '</tr>';
       }).join('');
     }
 
-    // Delegated click handler for "Ver Ficha", workspace, and accordion buttons
+    // Delegated click handler for workspace, device detail, accordion, and copy script buttons
     document.addEventListener('click', function(e) {
       const devBtn = e.target.closest('.btn-device-detail');
       if (devBtn && devBtn.dataset.deviceId) {
-        openDeviceDetail(devBtn.dataset.deviceId);
+        openDeviceWorkspace(devBtn.dataset.deviceId);
         return;
       }
       const wsBtn = e.target.closest('.btn-open-workspace');
@@ -1922,6 +2085,22 @@ export function getLandingHtml(data: {
       if (accBtn && accBtn.dataset.customerId) {
         toggleCustomerAccordion(accBtn.dataset.customerId);
         return;
+      }
+      const copyPs1Btn = e.target.closest('.btn-copy-customer-ps1');
+      if (copyPs1Btn && copyPs1Btn.dataset.customerId) {
+        copyCustomerPs1FromCard(copyPs1Btn.dataset.customerId);
+        return;
+      }
+    });
+
+    // Keyboard Shortcuts (Esc to navigate back)
+    document.addEventListener('keydown', function(e) {
+      if (e.key === 'Escape') {
+        if (currentActiveView === 'device') {
+          backFromDeviceWorkspace();
+        } else if (currentActiveCustomerId) {
+          backToGeneralDashboard();
+        }
       }
     });
 
@@ -1957,7 +2136,7 @@ export function getLandingHtml(data: {
           '</div>' +
           '<div style="display: flex; align-items: center; gap: 8px;">' +
             '<span class="code-font" style="font-size: 11px; color: var(--text-muted);">' + ts + '</span>' +
-            '<button class="btn btn-secondary btn-sm btn-device-detail" data-device-id="' + ev.deviceId + '">Ver Ficha</button>' +
+            '<button class="btn btn-secondary btn-sm btn-device-detail" data-device-id="' + ev.deviceId + '">🔍 Inspeccionar</button>' +
           '</div>' +
         '</div>';
       }).join('');
@@ -1981,6 +2160,15 @@ export function getLandingHtml(data: {
 
       const viewWs = document.getElementById('viewCustomerWorkspace');
       if (viewWs && tab !== 'workspace') viewWs.style.display = 'none';
+
+      const viewDev = document.getElementById('viewDeviceWorkspace');
+      if (viewDev && tab !== 'device') viewDev.style.display = 'none';
+
+      currentActiveView = tab;
+      if (tab !== 'workspace' && tab !== 'device') {
+        currentActiveCustomerId = null;
+        selectedDeviceId = null;
+      }
 
       for (const key in views) {
         const v = document.getElementById(views[key]);
@@ -2095,7 +2283,7 @@ export function getLandingHtml(data: {
       return minutes + 'm';
     }
 
-    async function openDeviceDetail(deviceId) {
+    async function openDeviceWorkspace(deviceId, isSilent) {
       try {
         let d = (currentDevices && currentDevices.find(function(item) { return item.id === deviceId; })) || (currentDevices && currentDevices[0]);
         let token = localStorage.getItem('nl_token');
@@ -2132,18 +2320,73 @@ export function getLandingHtml(data: {
 
         if (!d) return;
         selectedDevice = d;
+        selectedDeviceId = d.id;
 
-        // Header
+        // Header & Hero Card updates
+        setVal('wsDevHostTitle', d.hostname || 'Equipo');
+        setVal('wsDevMainHostname', d.hostname || 'Equipo');
         setVal('drawerHostname', d.hostname || 'Equipo');
+        const isOnline = d.status === 'ONLINE';
+        const onlinePill = document.getElementById('wsDevOnlinePill');
+        if (onlinePill) {
+          onlinePill.textContent = isOnline ? '● ONLINE' : '○ OFFLINE';
+          onlinePill.className = 'status-pill ' + (isOnline ? 'status-online' : 'status-offline');
+        }
+        const heroStatus = document.getElementById('wsDevHeroStatus');
+        if (heroStatus) {
+          heroStatus.textContent = isOnline ? '● ONLINE' : '○ OFFLINE';
+          heroStatus.className = 'status-pill ' + (isOnline ? 'status-online' : 'status-offline');
+        }
         const drawerStatusEl = document.getElementById('drawerStatus');
         if (drawerStatusEl) {
-          const isOnline = d.status === 'ONLINE';
           drawerStatusEl.textContent = isOnline ? 'ONLINE' : 'OFFLINE';
           drawerStatusEl.className = 'status-pill ' + (isOnline ? 'status-online' : 'status-offline');
         }
-        const customerName = (d.customer && d.customer.name) ? d.customer.name : 'NanoLabs Infraestructura';
+        setVal('wsDevAgentBadge', 'Agent ' + (d.agentVersion || 'v0.1.0'));
+        const customer = d.customer || currentCustomers.find(function(c) { return c.id === d.customerId; });
+        const customerName = customer ? customer.name : 'NanoLabs Infraestructura';
         const siteName = (d.site && d.site.name) ? d.site.name : 'Casa Central';
+        setVal('wsDevCustomerName', customerName);
+        setVal('wsDevSiteName', siteName);
+        setVal('wsDevLastSeen', d.lastSeen ? new Date(d.lastSeen).toLocaleTimeString('es-AR') : 'En tiempo real');
+        setVal('wsDevCustBackName', customer ? customer.name : 'Organización');
         setVal('drawerSub', customerName + ' • ' + siteName + ' • ' + (d.osEdition || 'Windows 11 Pro 64-bit'));
+
+        if (customer && !currentActiveCustomerId) {
+          currentActiveCustomerId = customer.id;
+        }
+
+        // Quick Chips
+        setVal('wsDevOsChip', d.osEdition ? (d.osEdition.length > 20 ? d.osEdition.substring(0, 20) + '...' : d.osEdition) : 'Windows 11 Pro');
+        const cpuShort = d.cpuName ? d.cpuName.split('@')[0].replace('11th Gen ', '').trim() : 'Intel Core i5';
+        setVal('wsDevCpuChip', cpuShort);
+        setVal('wsDevRamChip', (d.ramTotalMB ? Math.round(d.ramTotalMB / 1024) : 16) + ' GB RAM');
+        const firstIface = (d.inventories && d.inventories[0] && d.inventories[0].network && d.inventories[0].network.interfaces && d.inventories[0].network.interfaces[0]) ? d.inventories[0].network.interfaces[0] : null;
+        const localIp = (firstIface && firstIface.ipAddresses && firstIface.ipAddresses[0]) ? firstIface.ipAddresses[0] : '192.168.0.65';
+        setVal('wsDevIpChip', localIp);
+
+        // Update Views
+        currentActiveView = 'device';
+        const viewGen = document.getElementById('viewGeneralDirectory');
+        const viewWs = document.getElementById('viewCustomerWorkspace');
+        const viewCust = document.getElementById('viewCustomers');
+        const viewEnr = document.getElementById('viewEnroll');
+        const viewClu = document.getElementById('viewCluster');
+        const viewDev = document.getElementById('viewDeviceWorkspace');
+
+        if (viewGen) viewGen.style.display = 'none';
+        if (viewWs) viewWs.style.display = 'none';
+        if (viewCust) viewCust.style.display = 'none';
+        if (viewEnr) viewEnr.style.display = 'none';
+        if (viewClu) viewClu.style.display = 'none';
+        if (viewDev) viewDev.style.display = 'flex';
+
+        // Breadcrumbs
+        const custLink = customer ? '<span style="cursor:pointer;" onclick="openCustomerWorkspace(currentActiveCustomerId)">📁 ' + customer.name + '</span>' : '<span>Cliente</span>';
+        setHtml('breadcrumbCurrent', custLink + ' <span class="breadcrumb-separator">/</span> <strong style="color:#fff;">💻 ' + (d.hostname || 'Equipo') + '</strong>');
+
+        const btnBack = document.getElementById('btnBackGlobal');
+        if (btnBack) btnBack.style.display = 'inline-flex';
 
         const latestInv = (d.inventories && d.inventories[0]) ? d.inventories[0] : null;
         const latestMetric = (d.metrics && d.metrics[0]) ? d.metrics[0] : null;
@@ -2310,13 +2553,12 @@ export function getLandingHtml(data: {
         }
 
         switchDrawerTab('metrics');
-        const drawer = document.getElementById('deviceDrawer');
-        if (drawer) drawer.classList.add('active');
+        if (!isSilent) {
+          window.scrollTo({ top: 0, behavior: 'smooth' });
+        }
       } catch (err) {
         console.error('Failed to load device details:', err);
         switchDrawerTab('metrics');
-        const drawer = document.getElementById('deviceDrawer');
-        if (drawer) drawer.classList.add('active');
       }
     }
 
@@ -2351,9 +2593,145 @@ export function getLandingHtml(data: {
       });
     }
 
+    function backFromDeviceWorkspace() {
+      const viewDev = document.getElementById('viewDeviceWorkspace');
+      if (viewDev) viewDev.style.display = 'none';
+      if (currentActiveCustomerId) {
+        openCustomerWorkspace(currentActiveCustomerId);
+      } else {
+        backToGeneralDashboard();
+      }
+    }
+
     function closeDrawer() {
-      const drawer = document.getElementById('deviceDrawer');
-      if (drawer) drawer.classList.remove('active');
+      backFromDeviceWorkspace();
+    }
+
+    async function refreshCurrentDevice(silent) {
+      if (!selectedDeviceId && !selectedDevice) return;
+      const id = selectedDeviceId || selectedDevice.id;
+      const icon = document.getElementById('devRefreshIcon');
+      if (icon) icon.classList.add('spinning');
+      try {
+        await openDeviceWorkspace(id, true);
+        await fetchLiveDashboard(true);
+        if (!silent) showToast('✅ Telemetría en tiempo real actualizada');
+      } catch (err) {
+        console.error('Error refreshing device:', err);
+        if (!silent) showToast('Error al actualizar telemetría', 'error');
+      } finally {
+        setTimeout(function() {
+          if (icon) icon.classList.remove('spinning');
+        }, 600);
+      }
+    }
+
+    async function refreshCustomerWorkspace(silent) {
+      if (!currentActiveCustomerId) return;
+      const icon = document.getElementById('wsRefreshIcon');
+      if (icon) icon.classList.add('spinning');
+      try {
+        await fetchLiveDashboard(true);
+        openCustomerWorkspace(currentActiveCustomerId);
+        if (!silent) showToast('✅ Estado de la flota actualizado');
+      } catch (err) {
+        console.error('Error refreshing customer workspace:', err);
+        if (!silent) showToast('Error al refrescar flota', 'error');
+      } finally {
+        setTimeout(function() {
+          if (icon) icon.classList.remove('spinning');
+        }, 600);
+      }
+    }
+
+    async function handleGlobalRefresh() {
+      const icon = document.getElementById('globalRefreshIcon');
+      if (icon) icon.classList.add('spinning');
+      try {
+        if (currentActiveView === 'device' && (selectedDeviceId || selectedDevice)) {
+          await refreshCurrentDevice(false);
+        } else if (currentActiveCustomerId) {
+          await refreshCustomerWorkspace(false);
+        } else {
+          await fetchLiveDashboard(false);
+          showToast('✅ Consola NOC actualizada en tiempo real');
+        }
+      } finally {
+        setTimeout(function() {
+          if (icon) icon.classList.remove('spinning');
+        }, 600);
+      }
+    }
+
+    function handleGlobalBack() {
+      if (currentActiveView === 'device') {
+        backFromDeviceWorkspace();
+      } else if (currentActiveCustomerId) {
+        backToGeneralDashboard();
+      } else {
+        switchNavTab('directory');
+      }
+    }
+
+    function togglePs1ScriptPreview() {
+      const box = document.getElementById('wsPs1PreviewBox');
+      const btn = document.getElementById('btnTogglePs1Preview');
+      if (!box) return;
+      const isHidden = box.style.display === 'none';
+      box.style.display = isHidden ? 'block' : 'none';
+      if (btn) btn.textContent = isHidden ? '🙈 Ocultar' : '👁️ Ver Script';
+    }
+
+    async function copyCustomerPs1FromCard(customerId) {
+      const customer = currentCustomers.find(function(c) { return c.id === customerId; });
+      if (!customer) return;
+      let token = (customer.enrollmentTokens && customer.enrollmentTokens[0] && customer.enrollmentTokens[0].token) ? customer.enrollmentTokens[0].token : '';
+      if (!token) {
+        try {
+          const res = await fetch('/api/v1/customers/' + customer.id + '/token');
+          const json = await res.json();
+          if (json && json.data && json.data.token) {
+            token = json.data.token;
+            if (!customer.enrollmentTokens) customer.enrollmentTokens = [];
+            customer.enrollmentTokens[0] = json.data;
+          }
+        } catch (err) {
+          console.error('Error fetching token for card:', err);
+        }
+      }
+
+      if (!token) {
+        alert('No se pudo obtener el token para ' + customer.name);
+        return;
+      }
+
+      const scriptCmd = '& ([scriptblock]::Create((irm https://monitor.nanolabs.com.ar/downloads/install.ps1))) -Token "' + token + '"';
+      if (navigator.clipboard) {
+        navigator.clipboard.writeText(scriptCmd).then(function() {
+          showToast('✅ Script PowerShell copiado para ' + customer.name);
+        });
+      } else {
+        prompt('Script PowerShell para ' + customer.name + ':', scriptCmd);
+      }
+    }
+
+    function showToast(msg, type) {
+      let toast = document.getElementById('nlToast');
+      if (!toast) {
+        toast = document.createElement('div');
+        toast.id = 'nlToast';
+        toast.style.cssText = 'position:fixed;bottom:24px;right:24px;background:#0f172a;color:#f8fafc;border:1px solid #3b82f6;border-radius:8px;padding:12px 18px;font-size:13px;font-weight:600;z-index:9999;box-shadow:0 10px 30px rgba(0,0,0,0.7);display:flex;align-items:center;gap:8px;transition:opacity 0.25s ease, transform 0.25s ease;transform:translateY(10px);opacity:0;pointer-events:none;';
+        document.body.appendChild(toast);
+      }
+      toast.innerHTML = (type === 'error' ? '❌ ' : '⚡ ') + msg;
+      toast.style.borderColor = (type === 'error' ? '#ef4444' : '#10b981');
+      toast.style.opacity = '1';
+      toast.style.transform = 'translateY(0)';
+      clearTimeout(toast._timer);
+      toast._timer = setTimeout(function() {
+        toast.style.opacity = '0';
+        toast.style.transform = 'translateY(10px)';
+      }, 3200);
     }
 
     function renderMetricsChart(metrics) {
@@ -2907,12 +3285,21 @@ export function getLandingHtml(data: {
     }
 
     // Window Global Bindings
-    window.openDeviceDetail = openDeviceDetail;
+    window.openDeviceWorkspace = openDeviceWorkspace;
+    window.openDeviceDetail = openDeviceWorkspace; // legacy alias
+    window.backFromDeviceWorkspace = backFromDeviceWorkspace;
     window.switchNavTab = switchNavTab;
     window.switchDrawerTab = switchDrawerTab;
-    window.closeDrawer = closeDrawer;
+    window.closeDrawer = backFromDeviceWorkspace;
     window.openCustomerWorkspace = openCustomerWorkspace;
     window.backToGeneralDashboard = backToGeneralDashboard;
+    window.refreshCurrentDevice = refreshCurrentDevice;
+    window.refreshCustomerWorkspace = refreshCustomerWorkspace;
+    window.handleGlobalRefresh = handleGlobalRefresh;
+    window.handleGlobalBack = handleGlobalBack;
+    window.togglePs1ScriptPreview = togglePs1ScriptPreview;
+    window.copyCustomerPs1FromCard = copyCustomerPs1FromCard;
+    window.showToast = showToast;
     window.toggleCustomerAccordion = toggleCustomerAccordion;
     window.filterDirectory = filterDirectory;
     window.filterWorkspaceDevices = filterWorkspaceDevices;
