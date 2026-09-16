@@ -110,7 +110,7 @@ export const devicesRoutes: FastifyPluginAsync = async (fastify: FastifyInstance
           orderBy: { timestamp: 'desc' },
         },
         events: {
-          take: 10,
+          take: 50,
           orderBy: { timestamp: 'desc' },
         },
         alerts: {
@@ -125,6 +125,60 @@ export const devicesRoutes: FastifyPluginAsync = async (fastify: FastifyInstance
     }
 
     return reply.send({ statusCode: 200, data: device });
+  });
+
+  // GET /api/v1/devices/:id/events
+  fastify.get('/:id/events', async (request, reply) => {
+    const tenantId = getTenantId(request);
+    const { id } = request.params as { id: string };
+    const query = request.query as {
+      limit?: string;
+      offset?: string;
+      severity?: string;
+      category?: string;
+      search?: string;
+    };
+
+    const limitNum = Math.min(100, Math.max(1, parseInt(query.limit || '50', 10)));
+    const offsetNum = Math.max(0, parseInt(query.offset || '0', 10));
+
+    const where: any = {
+      tenantId,
+      deviceId: id,
+      ...(query.severity ? { severity: query.severity } : {}),
+      ...(query.category ? { category: query.category } : {}),
+      ...(query.search
+        ? {
+            OR: [
+              { title: { contains: query.search, mode: 'insensitive' } },
+              { description: { contains: query.search, mode: 'insensitive' } },
+              { dedupKey: { contains: query.search, mode: 'insensitive' } },
+            ],
+          }
+        : {}),
+    };
+
+    const [total, events] = await Promise.all([
+      db.deviceEvent.count({ where }),
+      db.deviceEvent.findMany({
+        where,
+        orderBy: { timestamp: 'desc' },
+        skip: offsetNum,
+        take: limitNum,
+      }),
+    ]);
+
+    return reply.send({
+      statusCode: 200,
+      data: {
+        events,
+        pagination: {
+          total,
+          limit: limitNum,
+          offset: offsetNum,
+        },
+      },
+    });
   });
 
   // PATCH /api/v1/devices/:id

@@ -4,9 +4,11 @@ import { FastifyInstance } from 'fastify';
 import { buildApp } from '../src/app.js';
 import { db } from '../src/lib/db.js';
 import { cacheService } from '../src/lib/redis.js';
+import { signUserAccessToken } from '../src/lib/crypto.js';
 
 describe('Agent Ingestion & End-to-End HMAC Flow', () => {
   let app: FastifyInstance;
+  let adminToken: string;
 
   const mockTenant = {
     id: 'a0000000-0000-0000-0000-000000000001',
@@ -62,6 +64,12 @@ describe('Agent Ingestion & End-to-End HMAC Flow', () => {
     process.env.NODE_ENV = 'test';
     app = await buildApp();
     await app.ready();
+    adminToken = signUserAccessToken({
+      userId: 'u0000000-0000-0000-0000-000000000001',
+      tenantId: mockTenant.id,
+      email: 'admin@nanolabs.test',
+      role: 'ADMIN',
+    });
   });
 
   afterAll(async () => {
@@ -402,5 +410,91 @@ describe('Agent Ingestion & End-to-End HMAC Flow', () => {
         },
       ],
     });
+  });
+
+  it('Agent Events deduplicates repeating events and increments occurrences count', async () => {
+    vi.spyOn(db.agent, 'findUnique').mockResolvedValue(mockAgent as any);
+    vi.spyOn(db.deviceEvent, 'findFirst').mockResolvedValue({
+      id: 'existing-event-uuid',
+      occurrences: 3,
+    } as any);
+    const updateSpy = vi.spyOn(db.deviceEvent, 'update').mockResolvedValue({} as any);
+
+    const payload = [
+      {
+        timestamp: new Date().toISOString(),
+        source: 'EventViewer',
+        category: 'NTFS',
+        severity: 'CRITICAL',
+        eventId: 55,
+        title: 'Corrupción en sistema de archivos NTFS',
+        dedupKey: 'EventViewer:System:NTFS:55',
+      },
+    ];
+
+    const rawBody = JSON.stringify(payload);
+    const headers = createHmacHeaders(mockAgent.id, mockAgentSecret, rawBody);
+
+    const response = await app.inject({
+      method: 'POST',
+      url: '/agent/events',
+      headers,
+      payload,
+    });
+
+    expect(response.statusCode).toBe(200);
+    const body = JSON.parse(response.body);
+    expect(body.status).toBe('ok');
+    expect(body.processed).toBe(1);
+    expect(updateSpy).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { id: 'existing-event-uuid' },
+        data: expect.objectContaining({
+          occurrences: { increment: 1 },
+        }),
+      })
+    );
+  });
+
+  it('GET /api/v1/devices/:id/events returns paginated device events', async () => {
+    vi.spyOn(db.user, 'findUnique').mockResolvedValue({
+      id: 'u0000000-0000-0000-0000-000000000001',
+      tenantId: mockTenant.id,
+      email: 'admin@nanolabs.test',
+      role: 'ADMIN',
+      status: 'ACTIVE',
+    } as any);
+    vi.spyOn(db.deviceEvent, 'count').mockResolvedValue(1);
+    vi.spyOn(db.deviceEvent, 'findMany').mockResolvedValue([
+      {
+        id: 'evt-1',
+        tenantId: mockTenant.id,
+        deviceId: mockDevice.id,
+        timestamp: new Date(),
+        source: 'EventViewer',
+        category: 'KernelPower',
+        severity: 'CRITICAL',
+        eventId: 41,
+        title: 'Reinicio inesperado o corte de energía',
+        description: 'Detalle del corte',
+        dedupKey: 'EventViewer:System:KernelPower:41',
+        occurrences: 2,
+      },
+    ] as any);
+
+    const response = await app.inject({
+      method: 'GET',
+      url: `/api/v1/devices/${mockDevice.id}/events?severity=CRITICAL`,
+      headers: {
+        authorization: `Bearer ${adminToken}`,
+      },
+    });
+
+    expect(response.statusCode).toBe(200);
+    const body = JSON.parse(response.body);
+    expect(body.data.events).toHaveLength(1);
+    expect(body.data.events[0].category).toBe('KernelPower');
+    expect(body.data.events[0].severity).toBe('CRITICAL');
+    expect(body.data.pagination.total).toBe(1);
   });
 });

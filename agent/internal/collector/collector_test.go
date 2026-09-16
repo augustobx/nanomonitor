@@ -1,6 +1,7 @@
 package collector
 
 import (
+	"strings"
 	"testing"
 )
 
@@ -273,6 +274,91 @@ func TestComputeSoftwareDelta(t *testing.T) {
 	sz, ok := changeMap["7-Zip"]
 	if !ok || sz.Action != "REMOVED" {
 		t.Errorf("unexpected 7-Zip change: %+v", sz)
+	}
+}
+
+func TestParseWindowsEventXML(t *testing.T) {
+	mockXML := []byte(`<Event xmlns='http://schemas.microsoft.com/win/2004/08/events/event'>
+<System>
+  <Provider Name='Microsoft-Windows-Kernel-Power' />
+  <EventID>41</EventID>
+  <Level>1</Level>
+  <TimeCreated SystemTime='2026-09-15T22:00:00.0000000Z' />
+  <EventRecordID>9999</EventRecordID>
+  <Channel>System</Channel>
+  <Computer>TESTPC</Computer>
+</System>
+<EventData>
+  <Data Name='BugcheckCode'>0</Data>
+</EventData>
+</Event>
+<Event xmlns='http://schemas.microsoft.com/win/2004/08/events/event'>
+<System>
+  <Provider Name='Application Error' />
+  <EventID>1000</EventID>
+  <Level>2</Level>
+  <TimeCreated SystemTime='2026-09-15T22:05:00.0000000Z' />
+  <EventRecordID>10000</EventRecordID>
+  <Channel>Application</Channel>
+  <Computer>TESTPC</Computer>
+</System>
+<EventData>
+  <Data Name='param1'>chrome.exe</Data>
+  <Data Name='param2'>120.0.0.0</Data>
+</EventData>
+</Event>`)
+
+	events, err := parseEventsXML(mockXML)
+	if err != nil {
+		t.Fatalf("parseEventsXML failed: %v", err)
+	}
+	if len(events) != 2 {
+		t.Fatalf("expected 2 events, got %d", len(events))
+	}
+
+	// 1. Check Kernel-Power (Event ID 41)
+	kp := classifyEvent(events[0])
+	if kp == nil {
+		t.Fatal("expected Kernel-Power event payload")
+	}
+	if kp.Category != "KernelPower" || kp.Severity != "CRITICAL" {
+		t.Errorf("expected KernelPower/CRITICAL, got %s/%s", kp.Category, kp.Severity)
+	}
+	if !strings.Contains(kp.Title, "corte de energía") && !strings.Contains(kp.Title, "Reinicio inesperado") {
+		t.Errorf("unexpected title: %s", kp.Title)
+	}
+	if !strings.HasPrefix(kp.DedupKey, "EventViewer:System:KernelPower:41") {
+		t.Errorf("unexpected dedupKey: %s", kp.DedupKey)
+	}
+
+	// 2. Check Application Error (Event ID 1000)
+	app := classifyEvent(events[1])
+	if app == nil {
+		t.Fatal("expected AppCrash event payload")
+	}
+	if app.Category != "AppCrash" || app.Severity != "HIGH" {
+		t.Errorf("expected AppCrash/HIGH, got %s/%s", app.Category, app.Severity)
+	}
+	if !strings.Contains(app.Title, "chrome.exe") {
+		t.Errorf("expected chrome.exe in title, got: %s", app.Title)
+	}
+}
+
+func TestCollectRecentEventsLive(t *testing.T) {
+	// Baseline: Get initial record IDs
+	initialIDs := GetInitialHighestRecordIDs()
+	t.Logf("Initial highest record IDs: %+v", initialIDs)
+
+	// Since we might not have fresh critical events right this second,
+	// test with baseline 0 to verify it reads and classifies without crashing
+	payloads, updatedIDs, err := CollectRecentEvents(map[string]uint64{})
+	if err != nil {
+		t.Fatalf("CollectRecentEvents failed: %v", err)
+	}
+
+	t.Logf("Collected %d recent events, updated IDs: %+v", len(payloads), updatedIDs)
+	for i := 0; i < len(payloads) && i < 3; i++ {
+		t.Logf("  Event %d: [%s] %s (%s) - %s", i+1, payloads[i].Severity, payloads[i].Category, payloads[i].DedupKey, payloads[i].Title)
 	}
 }
 

@@ -23,14 +23,16 @@ type Scheduler struct {
 	lastInventoryChecksum string
 	lastSoftwareChecksum  string
 	lastSoftwareItems     []collector.SoftwareItem
+	lastEventRecordIDs    map[string]uint64
 }
 
 // New creates a new Scheduler
 func New(cfg *config.Config, client *transport.Client, logger *slog.Logger) *Scheduler {
 	return &Scheduler{
-		cfg:    cfg,
-		client: client,
-		logger: logger,
+		cfg:                cfg,
+		client:             client,
+		logger:             logger,
+		lastEventRecordIDs: make(map[string]uint64),
 	}
 }
 
@@ -72,6 +74,16 @@ func (s *Scheduler) Run(ctx context.Context) error {
 			s.collectAndSendInventory(ctx)
 			s.collectAndSendSoftware(ctx)
 		})
+	}()
+
+	// Initialize baseline event record IDs and start event monitoring loop
+	s.lastEventRecordIDs = collector.GetInitialHighestRecordIDs()
+	s.logger.Info("events baseline established", "record_ids", s.lastEventRecordIDs)
+
+	s.wg.Add(1)
+	go func() {
+		defer s.wg.Done()
+		s.runLoop(ctx, "events", 60*time.Second, s.collectAndSendEvents)
 	}()
 
 	// Wait for all loops to finish
@@ -285,5 +297,39 @@ func (s *Scheduler) collectAndSendSoftware(ctx context.Context) {
 		s.lastSoftwareItems = sw.Items
 	} else {
 		log.Warn("software inventory rejected", "status", resp.StatusCode)
+	}
+}
+
+func (s *Scheduler) collectAndSendEvents(ctx context.Context) {
+	log := s.logger.With("task", "events")
+
+	events, updatedIDs, err := collector.CollectRecentEvents(s.lastEventRecordIDs)
+	if err != nil {
+		log.Warn("failed to collect recent events", "error", err)
+		return
+	}
+
+	// Update watermark IDs
+	s.lastEventRecordIDs = updatedIDs
+
+	if len(events) == 0 {
+		return
+	}
+
+	log.Info("sending windows events", "count", len(events))
+
+	resp, err := s.client.SendWithRetry(ctx, func(ctx context.Context) (*transport.Response, error) {
+		return s.client.SendEvents(ctx, events)
+	}, 2)
+
+	if err != nil {
+		log.Warn("failed to send events", "error", err)
+		return
+	}
+
+	if resp.StatusCode >= 200 && resp.StatusCode < 300 {
+		log.Info("events sent successfully", "count", len(events))
+	} else {
+		log.Warn("events rejected", "status", resp.StatusCode)
 	}
 }

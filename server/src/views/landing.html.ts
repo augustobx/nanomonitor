@@ -868,6 +868,7 @@ export function getLandingHtml(data: {
           <button class="tab-btn" id="dTab2" onclick="switchDrawerTab('storage')">Almacenamiento (F4)</button>
           <button class="tab-btn" id="dTab3" onclick="switchDrawerTab('security')">Seguridad & Parches (F4)</button>
           <button class="tab-btn" id="dTab4" onclick="switchDrawerTab('software')">Software Instalado (F4)</button>
+          <button class="tab-btn" id="dTab5" onclick="switchDrawerTab('events')">Eventos Críticos (F5)</button>
         </div>
 
         <!-- DView 1: Specs -->
@@ -966,6 +967,29 @@ export function getLandingHtml(data: {
                 </tr>
               </thead>
               <tbody id="dSoftwareTable"></tbody>
+            </table>
+          </div>
+        </div>
+
+        <!-- DView 5: Events (F5) -->
+        <div id="dViewEvents" style="display: none; flex-direction: column; gap: 16px;">
+          <div style="display: flex; justify-content: space-between; align-items: center; gap: 16px;">
+            <h4 style="font-size: 15px; color: var(--text-muted); text-transform: uppercase;">Registro de Eventos Críticos de Windows</h4>
+            <span id="eventsCountBadge" class="badge-status" style="white-space: nowrap;">0 Eventos</span>
+          </div>
+
+          <div class="table-container" style="max-height: 400px; overflow-y: auto;">
+            <table>
+              <thead>
+                <tr>
+                  <th>Severidad</th>
+                  <th>ID / Origen</th>
+                  <th>Incidente / Título</th>
+                  <th>Fecha / Hora</th>
+                  <th>Ocurrencias</th>
+                </tr>
+              </thead>
+              <tbody id="dEventsTable"></tbody>
             </table>
           </div>
         </div>
@@ -1301,6 +1325,10 @@ export function getLandingHtml(data: {
         cachedSoftwareList = Array.isArray(softwareItems) ? softwareItems : [];
         renderSoftwareTable(cachedSoftwareList);
 
+        // Events (F5)
+        const eventsList = (d.events && Array.isArray(d.events)) ? d.events : [];
+        renderEventsTable(eventsList);
+
         // Open Drawer
         switchDrawerTab('specs');
         const drawer = document.getElementById('deviceDrawer');
@@ -1356,19 +1384,60 @@ export function getLandingHtml(data: {
       const t2 = document.getElementById('dTab2');
       const t3 = document.getElementById('dTab3');
       const t4 = document.getElementById('dTab4');
+      const t5 = document.getElementById('dTab5');
       if (t1) t1.classList.toggle('active', tab === 'specs');
       if (t2) t2.classList.toggle('active', tab === 'storage');
       if (t3) t3.classList.toggle('active', tab === 'security');
       if (t4) t4.classList.toggle('active', tab === 'software');
+      if (t5) t5.classList.toggle('active', tab === 'events');
 
       const v1 = document.getElementById('dViewSpecs');
       const v2 = document.getElementById('dViewStorage');
       const v3 = document.getElementById('dViewSecurity');
       const v4 = document.getElementById('dViewSoftware');
+      const v5 = document.getElementById('dViewEvents');
       if (v1) v1.style.display = tab === 'specs' ? 'grid' : 'none';
       if (v2) v2.style.display = tab === 'storage' ? 'flex' : 'none';
       if (v3) v3.style.display = tab === 'security' ? 'flex' : 'none';
       if (v4) v4.style.display = tab === 'software' ? 'flex' : 'none';
+      if (v5) v5.style.display = tab === 'events' ? 'flex' : 'none';
+    }
+
+    function renderEventsTable(events) {
+      setVal('eventsCountBadge', events.length + ' Eventos');
+      const tbody = document.getElementById('dEventsTable');
+      if (!tbody) return;
+      if (!events || events.length === 0) {
+        tbody.innerHTML = '<tr><td colspan="5" style="text-align: center; color: var(--text-muted); padding: 20px;">No se registraron incidentes críticos en los eventos de Windows.</td></tr>';
+        return;
+      }
+
+      tbody.innerHTML = events.map(function(ev) {
+        var sevColor = '#38bdf8';
+        var sevBg = 'rgba(56, 189, 248, 0.15)';
+        if (ev.severity === 'CRITICAL') {
+          sevColor = '#ef4444';
+          sevBg = 'rgba(239, 68, 68, 0.2)';
+        } else if (ev.severity === 'HIGH') {
+          sevColor = '#f97316';
+          sevBg = 'rgba(249, 115, 22, 0.2)';
+        } else if (ev.severity === 'WARNING') {
+          sevColor = '#f59e0b';
+          sevBg = 'rgba(245, 158, 11, 0.2)';
+        }
+
+        var ts = ev.timestamp ? new Date(ev.timestamp).toLocaleString('es-AR') : '-';
+        var evtId = ev.eventId ? ev.eventId : '-';
+        var desc = ev.description ? ('<div style="font-size: 11px; color: var(--text-muted); margin-top: 3px;">' + ev.description + '</div>') : '';
+
+        return '<tr>' +
+          '<td><span class="badge-status" style="background: ' + sevBg + '; color: ' + sevColor + '; border: 1px solid ' + sevColor + '; font-weight: 700;">' + ev.severity + '</span></td>' +
+          '<td><strong class="code-font" style="color: #cbd5e1;">' + (ev.category || 'System') + '</strong><div style="font-size: 11px; color: var(--text-muted);">ID: ' + evtId + '</div></td>' +
+          '<td><strong style="color: #fff;">' + (ev.title || 'Evento') + '</strong>' + desc + '</td>' +
+          '<td><span class="code-font" style="font-size: 11px; color: #94a3b8;">' + ts + '</span></td>' +
+          '<td><span class="kpi-badge-ok" style="font-size: 11px;">x' + (ev.occurrences || 1) + '</span></td>' +
+        '</tr>';
+      }).join('');
     }
 
     function switchTab(tab) {
@@ -1407,6 +1476,8 @@ export function getLandingHtml(data: {
     window.handleLogin = handleLogin;
     window.quickLoginDemo = quickLoginDemo;
     window.logout = logout;
+    window.renderSoftwareTable = renderSoftwareTable;
+    window.renderEventsTable = renderEventsTable;
     window.loadDevices = loadDevices;
   </script>
 </body>
