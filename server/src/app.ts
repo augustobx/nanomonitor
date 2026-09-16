@@ -11,6 +11,7 @@ import { tenantsRoutes } from './modules/tenants/tenants.routes.js';
 import { customersRoutes } from './modules/customers/customers.routes.js';
 import { sitesRoutes } from './modules/sites/sites.routes.js';
 import { devicesRoutes } from './modules/devices/devices.routes.js';
+import { db } from './lib/db.js';
 import { getLandingHtml } from './views/landing.html.js';
 
 export async function buildApp(): Promise<FastifyInstance> {
@@ -65,11 +66,28 @@ export async function buildApp(): Promise<FastifyInstance> {
   app.get('/', async (request, reply) => {
     const accept = request.headers.accept || '';
     if (accept.includes('text/html')) {
+      let devices: any[] = [];
+      try {
+        devices = await db.device.findMany({
+          include: {
+            customer: { select: { id: true, name: true, code: true } },
+            site: { select: { id: true, name: true } },
+            inventories: { take: 1, orderBy: { collectedAt: 'desc' } },
+            softwareInventories: { take: 1, orderBy: { collectedAt: 'desc' } },
+            metrics: { take: 1, orderBy: { timestamp: 'desc' } },
+          },
+          orderBy: { lastSeenAt: 'desc' },
+        });
+      } catch (err) {
+        request.log.error(err, 'Failed to fetch devices for landing');
+      }
+
       const html = getLandingHtml({
         uptimeSeconds: Math.floor(process.uptime()),
         serverTime: new Date().toISOString(),
         version: '0.1.0',
         env: config.NODE_ENV,
+        devices,
       });
       return reply.type('text/html; charset=utf-8').send(html);
     }

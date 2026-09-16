@@ -3,6 +3,7 @@ export function getLandingHtml(data: {
   serverTime: string;
   version: string;
   env: string;
+  devices?: any[];
 }): string {
   const uptimeMinutes = Math.floor(data.uptimeSeconds / 60);
   const uptimeHours = (data.uptimeSeconds / 3600).toFixed(1);
@@ -958,18 +959,21 @@ export function getLandingHtml(data: {
   </footer>
 
   <script>
-    let currentDevices = [];
+    let currentDevices = ${JSON.stringify(data.devices || [])};
     let selectedDevice = null;
     let cachedSoftwareList = [];
 
     // Check Auth on page load
     window.addEventListener('DOMContentLoaded', () => {
+      // Immediate SSR rendering
+      renderDevicesTable(currentDevices);
+      updateKpis(currentDevices);
+
       const token = localStorage.getItem('nl_token');
       if (token) {
         setLoggedInUI();
         loadDevices();
       } else {
-        // Automatically attempt demo login or load public data
         quickLoginDemo();
       }
     });
@@ -1129,21 +1133,26 @@ export function getLandingHtml(data: {
 
     // Open Device Detail Drawer
     async function openDeviceDetail(deviceId) {
+      let d = currentDevices.find(item => item.id === deviceId);
       const token = localStorage.getItem('nl_token');
-      if (!token) return;
+      if (token) {
+        try {
+          const res = await fetch('/api/v1/devices/' + deviceId, {
+            headers: { 'Authorization': 'Bearer ' + token }
+          });
+          const json = await res.json();
+          if (json.data) d = json.data;
+        } catch (err) {
+          console.error(err);
+        }
+      }
 
-      try {
-        const res = await fetch('/api/v1/devices/' + deviceId, {
-          headers: { 'Authorization': 'Bearer ' + token }
-        });
-        const json = await res.json();
-        const d = json.data;
-        if (!d) return;
+      if (!d) return;
 
-        selectedDevice = d;
-        document.getElementById('drawerHostname').textContent = d.hostname;
-        document.getElementById('drawerSub').textContent = 
-          (d.customer ? d.customer.name : 'Cliente Demo SA') + ' • ' + (d.osEdition || 'Windows 11 Pro 64-bit');
+      selectedDevice = d;
+      document.getElementById('drawerHostname').textContent = d.hostname;
+      document.getElementById('drawerSub').textContent = 
+        (d.customer ? d.customer.name : 'Cliente Demo SA') + ' • ' + (d.osEdition || 'Windows 11 Pro 64-bit');
         
         // Specs tab
         document.getElementById('dCpuName').textContent = d.cpuName || '11th Gen Intel(R) Core(TM) i5-11400 @ 2.60GHz';
