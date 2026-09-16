@@ -148,46 +148,61 @@ export const PREDEFINED_RULES: PredefinedRule[] = [
   },
 ];
 
+let seedingPromise: Promise<number> | null = null;
+
 /**
  * Ensures all default predefined rules exist for every active tenant in the database.
+ * Thread-safe: prevents duplicate runs if invoked concurrently.
  */
 export async function ensureDefaultAlertRules(targetTenantId?: string): Promise<number> {
-  const tenants = targetTenantId
-    ? [{ id: targetTenantId }]
-    : await db.tenant.findMany({ select: { id: true } });
+  if (seedingPromise) {
+    return seedingPromise;
+  }
 
-  let rulesCreated = 0;
+  seedingPromise = (async () => {
+    try {
+      const tenants = targetTenantId
+        ? [{ id: targetTenantId }]
+        : await db.tenant.findMany({ select: { id: true } });
 
-  for (const tenant of tenants) {
-    for (const rule of PREDEFINED_RULES) {
-      const existing = await db.alertRule.findFirst({
-        where: {
-          tenantId: tenant.id,
-          name: rule.name,
-        },
-      });
+      let rulesCreated = 0;
 
-      if (!existing) {
-        await db.alertRule.create({
-          data: {
-            tenantId: tenant.id,
-            name: rule.name,
-            description: rule.description,
-            category: rule.category,
-            severity: rule.severity,
-            cooldownMin: rule.cooldownMin,
-            condition: rule.condition as any,
-            enabled: true,
-          },
-        });
-        rulesCreated++;
+      for (const tenant of tenants) {
+        for (const rule of PREDEFINED_RULES) {
+          const existing = await db.alertRule.findFirst({
+            where: {
+              tenantId: tenant.id,
+              name: rule.name,
+            },
+          });
+
+          if (!existing) {
+            await db.alertRule.create({
+              data: {
+                tenantId: tenant.id,
+                name: rule.name,
+                description: rule.description,
+                category: rule.category,
+                severity: rule.severity,
+                cooldownMin: rule.cooldownMin,
+                condition: rule.condition as any,
+                enabled: true,
+              },
+            });
+            rulesCreated++;
+          }
+        }
       }
+
+      if (rulesCreated > 0) {
+        logger.info({ rulesCreated }, `🛡️ Initialized ${rulesCreated} default alert rules`);
+      }
+
+      return rulesCreated;
+    } finally {
+      seedingPromise = null;
     }
-  }
+  })();
 
-  if (rulesCreated > 0) {
-    logger.info({ rulesCreated }, `🛡️ Initialized ${rulesCreated} default alert rules`);
-  }
-
-  return rulesCreated;
+  return seedingPromise;
 }

@@ -46,13 +46,22 @@ export async function evaluateDeviceAlerts(
   // Ensure default rules exist for this tenant
   await ensureDefaultAlertRules(tenantId);
 
-  // Fetch active alert rules for this tenant
-  const rules = await db.alertRule.findMany({
+  // Fetch active alert rules for this tenant and deduplicate by name
+  const rawRules = await db.alertRule.findMany({
     where: {
       tenantId,
       enabled: true,
     },
+    orderBy: { createdAt: 'asc' },
   });
+
+  const ruleMapByName = new Map<string, typeof rawRules[0]>();
+  for (const r of rawRules) {
+    if (!ruleMapByName.has(r.name)) {
+      ruleMapByName.set(r.name, r);
+    }
+  }
+  const rules = Array.from(ruleMapByName.values());
 
   if (rules.length === 0) return result;
 
@@ -85,12 +94,16 @@ export async function evaluateDeviceAlerts(
       deviceId,
       status: { in: [AlertStatus.OPEN, AlertStatus.ACKNOWLEDGED] },
     },
+    orderBy: { firstSeenAt: 'asc' },
   });
 
   const activeAlertMap = new Map<string, typeof activeAlerts[0]>();
   for (const a of activeAlerts) {
     if (a.ruleId) {
       activeAlertMap.set(a.ruleId, a);
+    }
+    if (a.title) {
+      activeAlertMap.set(a.title, a);
     }
   }
 
@@ -314,7 +327,7 @@ export async function evaluateDeviceAlerts(
         break;
     }
 
-    const existingAlert = activeAlertMap.get(rule.id);
+    const existingAlert = activeAlertMap.get(rule.id) || activeAlertMap.get(rule.name);
 
     if (isTriggered) {
       if (existingAlert) {
