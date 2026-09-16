@@ -155,8 +155,9 @@ export function getClientRuntimeScript(): string {
           body: JSON.stringify({ email: email, password: password })
         });
         const json = await res.json();
-        if (res.ok && json.data && json.data.token) {
-          localStorage.setItem('nl_token', json.data.token);
+        const token = json.data && (json.data.accessToken || json.data.token);
+        if (res.ok && token) {
+          localStorage.setItem('nl_token', token);
           if (json.data.user) localStorage.setItem('nl_user', JSON.stringify(json.data.user));
           setLoggedInUI();
           closeLoginModal();
@@ -181,15 +182,15 @@ export function getClientRuntimeScript(): string {
         const res = await fetch('/api/v1/auth/login', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ email: 'admin@nanolabs.com.ar', password: 'NanoAdmin2026!' })
+          body: JSON.stringify({ email: 'admin@nanolabs.com.ar', password: 'NanoLabs2026!MonitorAdmin' })
         });
         const json = await res.json();
-        if (res.ok && json.data && json.data.token) {
-          localStorage.setItem('nl_token', json.data.token);
+        const token = json.data && (json.data.accessToken || json.data.token);
+        if (res.ok && token) {
+          localStorage.setItem('nl_token', token);
           if (json.data.user) localStorage.setItem('nl_user', JSON.stringify(json.data.user));
           setLoggedInUI();
-          closeLoginModal();
-          return json.data.token;
+          return token;
         }
       } catch (err) {
         console.warn('Quick login demo fallback failed:', err);
@@ -1046,7 +1047,7 @@ export function getClientRuntimeScript(): string {
       let hsSum = 0;
       let hsCount = 0;
       devList.forEach(function(d) {
-        const s = (d.healthScores && d.healthScores.length > 0) ? d.healthScores[0].score : null;
+        const s = getDeviceHealthScore(d);
         if (s !== null && s !== undefined) {
           hsSum += s;
           hsCount++;
@@ -1537,14 +1538,14 @@ export function getClientRuntimeScript(): string {
       setVal('dIpText', ip);
 
       // OS
-      setVal('dOsText', formatOsName(d.osVersion || (inv ? inv.osVersion : null)));
+      setVal('dOsText', d.osEdition || formatOsName(d.osVersion || (inv ? inv.osVersion : null)));
 
       // CPU Summary
-      const cpuSummary = cpuObj.name ? (cpuObj.name.split('@')[0] || cpuObj.name) : (d.cpuModel || (inv ? inv.cpuModel : '-'));
+      const cpuSummary = (cpuObj.name ? (cpuObj.name.split('@')[0] || cpuObj.name) : (d.cpuName || d.cpuModel || (inv ? inv.cpuModel : '-'))).trim();
       setVal('dCpuSummary', cpuSummary);
 
       // RAM Summary
-      const ramTotalGb = ramObj.totalMb ? Math.round(ramObj.totalMb / 1024) + ' GB' : (inv && inv.totalRamBytes ? Math.round(Number(inv.totalRamBytes) / (1024*1024*1024)) + ' GB' : (d.totalRamBytes ? Math.round(Number(d.totalRamBytes) / (1024*1024*1024)) + ' GB' : '-'));
+      const ramTotalGb = ramObj.totalMb ? Math.round(ramObj.totalMb / 1024) + ' GB' : (d.ramTotalMB ? Math.round(d.ramTotalMB / 1024) + ' GB' : (inv && inv.totalRamBytes ? Math.round(Number(inv.totalRamBytes) / (1024*1024*1024)) + ' GB' : '-'));
       setVal('dRamSummary', ramTotalGb);
 
       // Agent Version
@@ -1745,6 +1746,11 @@ export function getClientRuntimeScript(): string {
       if (!selectedDevice) return;
       let token = localStorage.getItem('nl_token');
       if (!token) token = await quickLoginDemo();
+      if (!token) {
+        showToast('Inicia sesión como administrador para recalcular la salud', 'warning');
+        openLoginModal();
+        return;
+      }
       try {
         const res = await fetch('/api/v1/devices/' + selectedDevice.id + '/health', {
           method: 'POST',
@@ -1775,6 +1781,11 @@ export function getClientRuntimeScript(): string {
       if (!selectedDevice) return;
       let token = localStorage.getItem('nl_token');
       if (!token) token = await quickLoginDemo();
+      if (!token) {
+        showToast('Inicia sesión como administrador para evaluar alertas', 'warning');
+        openLoginModal();
+        return;
+      }
       try {
         const res = await fetch('/api/v1/alerts/evaluate', {
           method: 'POST',
@@ -1880,10 +1891,10 @@ export function getClientRuntimeScript(): string {
       const cpuObj = hw.cpu || {};
       const ramObj = hw.ram || {};
 
-      const cpuName = cpuObj.name || inv.cpuModel || d.cpuModel || '-';
-      const cpuCores = cpuObj.cores ? (cpuObj.cores + ' Físicos / ' + (cpuObj.logicalCores || cpuObj.cores) + ' Lógicos') : (inv && inv.cpuCores ? inv.cpuCores + ' Núcleos' : '-');
-      const ramTotal = ramObj.totalMb ? Math.round(ramObj.totalMb / 1024) + ' GB' : (inv && inv.totalRamBytes ? Math.round(Number(inv.totalRamBytes) / (1024*1024*1024)) + ' GB' : '-');
-      const osName = formatOsName(d.osVersion || (inv ? inv.osVersion : null));
+      const cpuName = (cpuObj.name || d.cpuName || (inv ? inv.cpuModel : null) || d.cpuModel || '-').trim();
+      const cpuCores = cpuObj.cores ? (cpuObj.cores + ' Físicos / ' + (cpuObj.logicalCores || cpuObj.cores) + ' Lógicos') : (d.cpuCores ? d.cpuCores + ' Núcleos' : (inv && inv.cpuCores ? inv.cpuCores + ' Núcleos' : '-'));
+      const ramTotal = ramObj.totalMb ? Math.round(ramObj.totalMb / 1024) + ' GB' : (d.ramTotalMB ? Math.round(d.ramTotalMB / 1024) + ' GB' : (inv && inv.totalRamBytes ? Math.round(Number(inv.totalRamBytes) / (1024*1024*1024)) + ' GB' : '-'));
+      const osName = d.osEdition || formatOsName(d.osVersion || (inv ? inv.osVersion : null));
       const manufacturer = d.manufacturer || hw.manufacturer || (inv ? inv.manufacturer : 'Ensamblado / OEM');
       const model = d.model || hw.model || (inv ? inv.model : 'Genérico');
       const uptime = formatUptime(d.uptimeSeconds || (d.metrics && d.metrics[0] ? d.metrics[0].uptimeSeconds : null));
