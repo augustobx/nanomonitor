@@ -9,6 +9,7 @@ import (
 	"os/signal"
 	"path/filepath"
 	"syscall"
+	"time"
 
 	"golang.org/x/sys/windows/svc"
 
@@ -169,10 +170,35 @@ func main() {
 
 // runAgentLoop is the main agent lifecycle
 func runAgentLoop(ctx context.Context, cfg *config.Config, log *logger.Logger) error {
-	// Handle enrollment if needed
+	// Handle enrollment if needed (with retry for boot-time network delays)
 	if !cfg.IsEnrolled() {
-		if err := handleEnrollment(ctx, cfg, log.Logger); err != nil {
-			return fmt.Errorf("enrollment failed: %w", err)
+		const maxRetries = 10
+		var lastErr error
+		for attempt := 1; attempt <= maxRetries; attempt++ {
+			lastErr = handleEnrollment(ctx, cfg, log.Logger)
+			if lastErr == nil {
+				break
+			}
+			log.Warn("enrollment attempt failed, retrying",
+				"attempt", attempt,
+				"max_retries", maxRetries,
+				"error", lastErr,
+			)
+			if attempt < maxRetries {
+				// Exponential backoff: 5s, 10s, 20s, 40s ... capped at 60s
+				delay := time.Duration(5*(1<<(attempt-1))) * time.Second
+				if delay > 60*time.Second {
+					delay = 60 * time.Second
+				}
+				select {
+				case <-ctx.Done():
+					return ctx.Err()
+				case <-time.After(delay):
+				}
+			}
+		}
+		if lastErr != nil {
+			return fmt.Errorf("enrollment failed after %d attempts: %w", maxRetries, lastErr)
 		}
 	}
 

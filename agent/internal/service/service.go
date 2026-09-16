@@ -5,7 +5,9 @@ import (
 	"fmt"
 	"log/slog"
 	"time"
+	"unsafe"
 
+	"golang.org/x/sys/windows"
 	"golang.org/x/sys/windows/svc"
 	"golang.org/x/sys/windows/svc/mgr"
 )
@@ -109,25 +111,33 @@ func Install(execPath string) error {
 	}
 
 	s, err = m.CreateService(ServiceName, execPath, mgr.Config{
-		DisplayName:  ServiceDisplayName,
-		Description:  ServiceDescription,
-		StartType:    mgr.StartAutomatic,
-		ErrorControl: mgr.ErrorNormal,
+		DisplayName:      ServiceDisplayName,
+		Description:      ServiceDescription,
+		StartType:        mgr.StartAutomatic,
+		ErrorControl:     mgr.ErrorNormal,
+		ServiceStartName: "",
+		Dependencies:     []string{"Tcpip", "Dhcp", "Dnscache"},
 	})
 	if err != nil {
 		return fmt.Errorf("creating service: %w", err)
 	}
 	defer s.Close()
 
-	// Set recovery actions: restart after 1 min, 5 min, 30 min
+	// Enable delayed auto start so Windows waits for network/other services
+	setDelayedAutoStart(s)
+
+	// Set recovery actions: rapid restart (10s, 30s, 60s)
 	err = s.SetRecoveryActions([]mgr.RecoveryAction{
-		{Type: mgr.ServiceRestart, Delay: 1 * time.Minute},
-		{Type: mgr.ServiceRestart, Delay: 5 * time.Minute},
-		{Type: mgr.ServiceRestart, Delay: 30 * time.Minute},
+		{Type: mgr.ServiceRestart, Delay: 10 * time.Second},
+		{Type: mgr.ServiceRestart, Delay: 30 * time.Second},
+		{Type: mgr.ServiceRestart, Delay: 60 * time.Second},
 	}, 86400) // Reset failure count after 24 hours
 	if err != nil {
 		return fmt.Errorf("setting recovery actions: %w", err)
 	}
+
+	// Also recover on non-crash failures (e.g., exit code != 0)
+	setRecoveryOnNonCrash(s)
 
 	return nil
 }
@@ -178,4 +188,40 @@ func Start() error {
 	defer s.Close()
 
 	return s.Start()
+}
+
+// setDelayedAutoStart enables the SERVICE_CONFIG_DELAYED_AUTO_START_INFO flag
+// so Windows delays starting the service until after the boot phase completes.
+// This ensures network connectivity is available when the agent starts.
+func setDelayedAutoStart(s *mgr.Service) {
+	const SERVICE_CONFIG_DELAYED_AUTO_START_INFO = 3
+	type SERVICE_DELAYED_AUTO_START_INFO struct {
+		DelayedAutostart uint32
+	}
+	info := SERVICE_DELAYED_AUTO_START_INFO{DelayedAutostart: 1}
+	advapi32 := windows.NewLazySystemDLL("advapi32.dll")
+	changeServiceConfig2 := advapi32.NewProc("ChangeServiceConfig2W")
+	changeServiceConfig2.Call(
+		uintptr(s.Handle),
+		uintptr(SERVICE_CONFIG_DELAYED_AUTO_START_INFO),
+		uintptr(unsafe.Pointer(&info)),
+	)
+}
+
+// setRecoveryOnNonCrash sets SERVICE_CONFIG_FAILURE_ACTIONS_FLAG so that
+// recovery actions also apply when the service stops with a non-zero exit code
+// (not just on crash / unclean termination).
+func setRecoveryOnNonCrash(s *mgr.Service) {
+	const SERVICE_CONFIG_FAILURE_ACTIONS_FLAG = 4
+	type SERVICE_FAILURE_ACTIONS_FLAG struct {
+		FailureActionsOnNonCrashFailures uint32
+	}
+	info := SERVICE_FAILURE_ACTIONS_FLAG{FailureActionsOnNonCrashFailures: 1}
+	advapi32 := windows.NewLazySystemDLL("advapi32.dll")
+	changeServiceConfig2 := advapi32.NewProc("ChangeServiceConfig2W")
+	changeServiceConfig2.Call(
+		uintptr(s.Handle),
+		uintptr(SERVICE_CONFIG_FAILURE_ACTIONS_FLAG),
+		uintptr(unsafe.Pointer(&info)),
+	)
 }

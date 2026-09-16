@@ -3,6 +3,7 @@ import { aggregateDailyMetrics } from './daily-aggregator.js';
 import { runRetentionCleanup } from './retention-cleanup.js';
 import { ensurePartitionsExist } from './partition-creator.js';
 import { runHealthScoringJob } from './health-scorer.js';
+import { runDeviceStatusCheck } from './device-status-checker.js';
 import { logger } from '../lib/logger.js';
 import { db } from '../lib/db.js';
 import { cacheService } from '../lib/redis.js';
@@ -24,6 +25,20 @@ export class BackgroundJobScheduler {
     runHealthScoringJob().catch((err) => {
       logger.error({ err }, 'Initial health scoring job failed');
     });
+
+    runDeviceStatusCheck().catch((err) => {
+      logger.error({ err }, 'Initial device status check failed');
+    });
+
+    // Schedule device status checker (runs every 2 minutes)
+    const statusInterval = setInterval(async () => {
+      try {
+        await runDeviceStatusCheck();
+      } catch (err) {
+        logger.error({ err }, 'Scheduled device status check failed');
+      }
+    }, 2 * 60 * 1000);
+    this.intervals.push(statusInterval);
 
     // Schedule health scoring (runs every 10 minutes)
     const healthInterval = setInterval(async () => {
