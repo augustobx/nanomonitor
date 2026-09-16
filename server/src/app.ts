@@ -16,6 +16,14 @@ import { devicesRoutes } from './modules/devices/devices.routes.js';
 import { db } from './lib/db.js';
 import { getLandingHtml } from './views/landing.html.js';
 
+// Global BigInt JSON serialization polyfill
+if (!('toJSON' in BigInt.prototype)) {
+  (BigInt.prototype as any).toJSON = function () {
+    const n = Number(this);
+    return Number.isSafeInteger(n) ? n : this.toString();
+  };
+}
+
 export async function buildApp(): Promise<FastifyInstance> {
   const app = fastify({
     logger:
@@ -147,6 +155,63 @@ export async function buildApp(): Promise<FastifyInstance> {
       docs: 'https://monitor.nanolabs.com.ar',
       timestamp: new Date().toISOString(),
     });
+  });
+
+  // Public live data endpoint for real-time dashboard auto-refresh
+  app.get('/api/v1/public/live', async (request, reply) => {
+    let devices: any[] = [];
+    let customers: any[] = [];
+    let recentEvents: any[] = [];
+    try {
+      devices = await db.device.findMany({
+        include: {
+          customer: { select: { id: true, name: true, code: true } },
+          site: { select: { id: true, name: true } },
+          inventories: { take: 1, orderBy: { collectedAt: 'desc' } },
+          softwareInventories: { take: 1, orderBy: { collectedAt: 'desc' } },
+          metrics: { take: 1, orderBy: { timestamp: 'desc' } },
+          events: { take: 20, orderBy: { timestamp: 'desc' } },
+        },
+        orderBy: { lastSeenAt: 'desc' },
+      });
+
+      customers = await db.customer.findMany({
+        include: {
+          sites: { select: { id: true, name: true } },
+          enrollmentTokens: { select: { id: true, token: true, expiresAt: true }, take: 1 },
+          _count: {
+            select: {
+              devices: true,
+              sites: true,
+              alerts: { where: { status: 'OPEN' } },
+            },
+          },
+        },
+        orderBy: { name: 'asc' },
+      });
+
+      recentEvents = await db.deviceEvent.findMany({
+        take: 8,
+        orderBy: { timestamp: 'desc' },
+        include: {
+          device: { select: { id: true, hostname: true } },
+        },
+      });
+    } catch (err) {
+      request.log.error(err, 'Failed to fetch live dashboard telemetry');
+    }
+
+    return reply
+      .header('Cache-Control', 'no-cache, no-store, must-revalidate')
+      .header('Pragma', 'no-cache')
+      .header('Expires', '0')
+      .send({
+        status: 'ok',
+        devices,
+        customers,
+        recentEvents,
+        timestamp: new Date().toISOString(),
+      });
   });
 
   // Global Healthcheck

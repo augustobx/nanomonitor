@@ -1,3 +1,9 @@
+function safeJson(val: any): string {
+  return JSON.stringify(val ?? null, (_, v) =>
+    typeof v === 'bigint' ? (Number.isSafeInteger(Number(v)) ? Number(v) : v.toString()) : v
+  ).replace(/</g, '\\u003c').replace(/>/g, '\\u003e');
+}
+
 export function getLandingHtml(data: {
   uptimeSeconds: number;
   serverTime: string;
@@ -844,6 +850,9 @@ export function getLandingHtml(data: {
     </div>
 
     <div style="display: flex; align-items: center; gap: 8px;" id="breadcrumbActions">
+      <button class="btn btn-secondary btn-sm" id="btnLiveRefresh" onclick="fetchLiveDashboard(false)" title="Actualizar datos en tiempo real">
+        🔄 Actualizar (En Vivo)
+      </button>
       <button class="btn btn-secondary btn-sm" onclick="openCreateCustomerModal()">
         + Nuevo Cliente
       </button>
@@ -1467,9 +1476,9 @@ export function getLandingHtml(data: {
   </footer>
 
   <script>
-    let currentDevices = ${JSON.stringify(data.devices || [])};
-    let currentCustomers = ${JSON.stringify(data.customers || [])};
-    let currentRecentEvents = ${JSON.stringify(data.recentEvents || [])};
+    let currentDevices = ${safeJson(data.devices || [])};
+    let currentCustomers = ${safeJson(data.customers || [])};
+    let currentRecentEvents = ${safeJson(data.recentEvents || [])};
     let currentActiveCustomerId = null;
     let expandedCustomerIds = {};
     let selectedDevice = null;
@@ -1493,6 +1502,14 @@ export function getLandingHtml(data: {
           await loadCustomers();
         }
       }
+
+      // Initial live fetch to ensure freshest telemetry
+      await fetchLiveDashboard(true);
+
+      // Start live auto-polling every 8 seconds
+      setInterval(function() {
+        fetchLiveDashboard(true);
+      }, 8000);
     }
 
     if (document.readyState === 'loading') {
@@ -2740,7 +2757,7 @@ export function getLandingHtml(data: {
         if (res.ok) {
           const json = await res.json();
           if (json && json.data) {
-            currentDevices = json.data;
+            currentDevices = Array.isArray(json.data) ? json.data : (json.data.devices || []);
             renderGlobalKpis();
             renderCustomersDirectory();
             if (currentActiveCustomerId) {
@@ -2750,6 +2767,57 @@ export function getLandingHtml(data: {
         }
       } catch (err) {
         console.error('Failed to load devices:', err);
+      }
+    }
+
+    async function fetchLiveDashboard(silent) {
+      try {
+        const res = await fetch('/api/v1/public/live', {
+          headers: { 'Cache-Control': 'no-cache' }
+        });
+        if (res.ok) {
+          const json = await res.json();
+          if (json && Array.isArray(json.devices)) {
+            currentDevices = json.devices;
+            if (Array.isArray(json.customers)) currentCustomers = json.customers;
+            if (Array.isArray(json.recentEvents)) currentRecentEvents = json.recentEvents;
+
+            renderGlobalKpis();
+            const filterInput = document.getElementById('directorySearchInput');
+            renderCustomersDirectory(filterInput ? filterInput.value : '');
+            renderCustomersTable(currentCustomers);
+            renderRecentEventsFeed(currentRecentEvents);
+            populateEnrollCustomerSelect();
+
+            if (currentActiveCustomerId) {
+              const cust = currentCustomers.find(function(c) { return c.id === currentActiveCustomerId; });
+              if (cust) {
+                const custDevices = currentDevices.filter(function(d) {
+                  return (d.customer && d.customer.id === currentActiveCustomerId) || d.customerId === currentActiveCustomerId;
+                });
+                const onlineCount = custDevices.filter(function(d) { return d.status === 'ONLINE'; }).length;
+                const offlineCount = custDevices.length - onlineCount;
+                setVal('wsKpiTotal', custDevices.length);
+                setVal('wsKpiBreakdown', onlineCount + ' Online • ' + offlineCount + ' Offline');
+                renderWorkspaceDevicesTable(custDevices);
+              }
+            }
+
+            if (selectedDevice) {
+              const updated = currentDevices.find(function(d) { return d.id === selectedDevice.id; });
+              if (updated) {
+                const drawerStatusEl = document.getElementById('drawerStatus');
+                if (drawerStatusEl) {
+                  const isOnline = updated.status === 'ONLINE';
+                  drawerStatusEl.textContent = isOnline ? 'ONLINE' : 'OFFLINE';
+                  drawerStatusEl.className = 'status-pill ' + (isOnline ? 'status-online' : 'status-offline');
+                }
+              }
+            }
+          }
+        }
+      } catch (err) {
+        if (!silent) console.error('Failed to fetch live dashboard:', err);
       }
     }
 
@@ -2779,6 +2847,7 @@ export function getLandingHtml(data: {
     window.updateEnrollCommandForSelectedCustomer = updateEnrollCommandForSelectedCustomer;
     window.loadCustomers = loadCustomers;
     window.loadDevices = loadDevices;
+    window.fetchLiveDashboard = fetchLiveDashboard;
   </script>
 </body>
 </html>`;

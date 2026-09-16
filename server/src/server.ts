@@ -4,6 +4,14 @@ import { logger } from './lib/logger.js';
 import { cacheService } from './lib/redis.js';
 import { db } from './lib/db.js';
 
+// Global BigInt JSON serialization polyfill
+if (!('toJSON' in BigInt.prototype)) {
+  (BigInt.prototype as any).toJSON = function () {
+    const n = Number(this);
+    return Number.isSafeInteger(n) ? n : this.toString();
+  };
+}
+
 async function start() {
   try {
     const app = await buildApp();

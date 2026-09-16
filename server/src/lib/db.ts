@@ -1,6 +1,14 @@
 import { PrismaClient } from '@prisma/client';
 import { logger } from './logger.js';
 
+// Global BigInt JSON serialization polyfill for Prisma BigInt fields
+if (!('toJSON' in BigInt.prototype)) {
+  (BigInt.prototype as any).toJSON = function () {
+    const n = Number(this);
+    return Number.isSafeInteger(n) ? n : this.toString();
+  };
+}
+
 declare global {
   // eslint-disable-next-line no-var
   var prisma: PrismaClient | undefined;
