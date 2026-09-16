@@ -1189,19 +1189,20 @@ export function getLandingHtml(data: {
 
     // Open Device Detail Drawer
     async function openDeviceDetail(deviceId) {
-      let d = currentDevices.find(item => item.id === deviceId);
-      const token = localStorage.getItem('nl_token');
-      if (token) {
-        try {
-          const res = await fetch('/api/v1/devices/' + deviceId, {
-            headers: { 'Authorization': 'Bearer ' + token }
-          });
-          const json = await res.json();
-          if (json.data) d = json.data;
-        } catch (err) {
-          console.error(err);
+      try {
+        let d = currentDevices.find(item => item.id === deviceId);
+        const token = localStorage.getItem('nl_token');
+        if (token) {
+          try {
+            const res = await fetch('/api/v1/devices/' + deviceId, {
+              headers: { 'Authorization': 'Bearer ' + token }
+            });
+            const json = await res.json();
+            if (json.data) d = json.data;
+          } catch (err) {
+            console.error(err);
+          }
         }
-      }
 
       if (!d) return;
 
