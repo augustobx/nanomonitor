@@ -211,18 +211,113 @@ export const alertsRoutes: FastifyPluginAsync = async (fastify: FastifyInstance)
   // GET /api/v1/alerts/rules
   fastify.get('/rules', async (request, reply) => {
     const tenantId = getTenantId(request);
-    const rules = await db.alertRule.findMany({
-      where: { tenantId },
+    const { customerId } = request.query as { customerId?: string };
+
+    // Fetch base general rules (customerId: null)
+    const generalRules = await db.alertRule.findMany({
+      where: { tenantId, customerId: null },
       orderBy: [{ category: 'asc' }, { severity: 'asc' }],
     });
-    return reply.status(200).send({ data: rules });
+
+    if (!customerId || customerId === 'ALL' || customerId === 'GENERAL') {
+      return reply.status(200).send({
+        data: generalRules.map((r) => ({
+          ...r,
+          isCustomerOverride: false,
+          effectiveEnabled: r.enabled,
+        })),
+        isCustomerSpecific: false,
+      });
+    }
+
+    // Fetch customer overrides for this specific customer
+    const customerOverrides = await db.alertRule.findMany({
+      where: { tenantId, customerId },
+    });
+
+    const overrideMap = new Map<string, typeof customerOverrides[0]>();
+    for (const ov of customerOverrides) {
+      overrideMap.set(ov.name, ov);
+    }
+
+    // Merge: for each general rule, overlay customer-specific settings if present
+    const merged = generalRules.map((gr) => {
+      const ov = overrideMap.get(gr.name);
+      if (ov) {
+        return {
+          ...gr,
+          id: ov.id, // the override record id
+          baseRuleId: gr.id,
+          enabled: ov.enabled,
+          condition: ov.condition,
+          severity: ov.severity,
+          cooldownMin: ov.cooldownMin,
+          isCustomerOverride: true,
+          overrideId: ov.id,
+        };
+      }
+      return {
+        ...gr,
+        baseRuleId: gr.id,
+        isCustomerOverride: false,
+        overrideId: null,
+      };
+    });
+
+    return reply.status(200).send({
+      data: merged,
+      isCustomerSpecific: true,
+      customerId,
+    });
   });
 
   // PATCH /api/v1/alerts/rules/:id/toggle
   fastify.patch('/rules/:id/toggle', async (request, reply) => {
     const tenantId = getTenantId(request);
     const { id } = request.params as { id: string };
+    const { customerId } = request.query as { customerId?: string };
 
+    // If customerId is supplied, toggle/create customer override
+    if (customerId && customerId !== 'ALL' && customerId !== 'GENERAL') {
+      // Find base rule or current override
+      const baseRule = await db.alertRule.findFirst({
+        where: { id, tenantId },
+      });
+
+      if (!baseRule) {
+        return reply.status(404).send({ error: 'Not Found', message: 'Alert rule not found' });
+      }
+
+      const existingOverride = await db.alertRule.findFirst({
+        where: { tenantId, customerId, name: baseRule.name },
+      });
+
+      if (existingOverride) {
+        const updated = await db.alertRule.update({
+          where: { id: existingOverride.id },
+          data: { enabled: !existingOverride.enabled },
+        });
+        return reply.status(200).send({ data: updated, isOverride: true });
+      } else {
+        // Create new customer override with inverted enabled state
+        const created = await db.alertRule.create({
+          data: {
+            tenantId,
+            customerId,
+            name: baseRule.name,
+            description: baseRule.description,
+            category: baseRule.category,
+            severity: baseRule.severity,
+            cooldownMin: baseRule.cooldownMin,
+            condition: baseRule.condition as any,
+            enabled: !baseRule.enabled,
+          },
+        });
+        return reply.status(200).send({ data: created, isOverride: true });
+      }
+    }
+
+    // General rule toggle
     const rule = await db.alertRule.findFirst({
       where: { id, tenantId },
     });
@@ -236,7 +331,84 @@ export const alertsRoutes: FastifyPluginAsync = async (fastify: FastifyInstance)
       data: { enabled: !rule.enabled },
     });
 
-    return reply.status(200).send({ data: updated });
+    return reply.status(200).send({ data: updated, isOverride: false });
+  });
+
+  // POST /api/v1/alerts/rules/customer-override
+  fastify.post('/rules/customer-override', async (request, reply) => {
+    const tenantId = getTenantId(request);
+    const { baseRuleId, customerId, enabled, threshold } = (request.body || {}) as {
+      baseRuleId: string;
+      customerId: string;
+      enabled?: boolean;
+      threshold?: number;
+    };
+
+    if (!baseRuleId || !customerId) {
+      return reply.status(400).send({ error: 'Bad Request', message: 'baseRuleId and customerId are required' });
+    }
+
+    const baseRule = await db.alertRule.findFirst({
+      where: { id: baseRuleId, tenantId },
+    });
+
+    if (!baseRule) {
+      return reply.status(404).send({ error: 'Not Found', message: 'Base rule not found' });
+    }
+
+    const existingOverride = await db.alertRule.findFirst({
+      where: { tenantId, customerId, name: baseRule.name },
+    });
+
+    const cond = (baseRule.condition || {}) as any;
+    const newCondition = {
+      ...cond,
+      ...(threshold !== undefined ? { threshold: Number(threshold) } : {}),
+    };
+
+    let result;
+    if (existingOverride) {
+      result = await db.alertRule.update({
+        where: { id: existingOverride.id },
+        data: {
+          enabled: enabled !== undefined ? enabled : existingOverride.enabled,
+          condition: newCondition,
+        },
+      });
+    } else {
+      result = await db.alertRule.create({
+        data: {
+          tenantId,
+          customerId,
+          name: baseRule.name,
+          description: baseRule.description,
+          category: baseRule.category,
+          severity: baseRule.severity,
+          cooldownMin: baseRule.cooldownMin,
+          condition: newCondition,
+          enabled: enabled !== undefined ? enabled : baseRule.enabled,
+        },
+      });
+    }
+
+    return reply.status(200).send({ data: result, message: 'Regla particular para el cliente guardada' });
+  });
+
+  // DELETE /api/v1/alerts/rules/customer-override/:id
+  fastify.delete('/rules/customer-override/:id', async (request, reply) => {
+    const tenantId = getTenantId(request);
+    const { id } = request.params as { id: string };
+
+    const rule = await db.alertRule.findFirst({
+      where: { id, tenantId, customerId: { not: null } },
+    });
+
+    if (!rule) {
+      return reply.status(404).send({ error: 'Not Found', message: 'Customer rule override not found' });
+    }
+
+    await db.alertRule.delete({ where: { id } });
+    return reply.status(200).send({ status: 'ok', message: 'Regla restablecida al valor general de la flota' });
   });
 
   // POST /api/v1/alerts/evaluate

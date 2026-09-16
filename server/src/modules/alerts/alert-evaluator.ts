@@ -46,22 +46,54 @@ export async function evaluateDeviceAlerts(
   // Ensure default rules exist for this tenant
   await ensureDefaultAlertRules(tenantId);
 
-  // Fetch active alert rules for this tenant and deduplicate by name
-  const rawRules = await db.alertRule.findMany({
+  // Fetch general base rules for this tenant (customerId: null)
+  const generalRules = await db.alertRule.findMany({
     where: {
       tenantId,
+      customerId: null,
       enabled: true,
     },
     orderBy: { createdAt: 'asc' },
   });
 
-  const ruleMapByName = new Map<string, typeof rawRules[0]>();
-  for (const r of rawRules) {
-    if (!ruleMapByName.has(r.name)) {
-      ruleMapByName.set(r.name, r);
+  // Fetch customer-specific rules if device belongs to a customer
+  const customerOverrides = device.customerId
+    ? await db.alertRule.findMany({
+        where: {
+          tenantId,
+          customerId: device.customerId,
+        },
+      })
+    : [];
+
+  const overrideMap = new Map<string, typeof customerOverrides[0]>();
+  for (const ov of customerOverrides) {
+    overrideMap.set(ov.name, ov);
+  }
+
+  // Build effective rules:
+  // 1. For each general rule: apply customer override (or skip if customer disabled it)
+  const effectiveRules: typeof generalRules = [];
+  for (const gr of generalRules) {
+    const ov = overrideMap.get(gr.name);
+    if (ov) {
+      if (ov.enabled) {
+        effectiveRules.push(ov);
+      }
+      // If customer override has enabled: false, this rule is muted for this customer
+    } else {
+      effectiveRules.push(gr);
     }
   }
-  const rules = Array.from(ruleMapByName.values());
+
+  // 2. Include any customer-specific rules that aren't overrides of a general rule
+  for (const ov of customerOverrides) {
+    if (ov.enabled && !generalRules.some((gr) => gr.name === ov.name)) {
+      effectiveRules.push(ov);
+    }
+  }
+
+  const rules = effectiveRules;
 
   if (rules.length === 0) return result;
 

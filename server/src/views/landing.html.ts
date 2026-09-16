@@ -1939,6 +1939,7 @@ export function getLandingHtml(data: {
           <button type="submit" class="btn btn-primary">Registrar Cliente</button>
         </div>
       </form>
+    </div>
   </div>
 
   <!-- ALERT RULES MODAL -->
@@ -1956,7 +1957,20 @@ export function getLandingHtml(data: {
         <button class="drawer-close" onclick="closeAlertRulesModal()">✕</button>
       </div>
 
-      <div class="table-wrapper" style="max-height: 55vh; overflow-y: auto;">
+      <!-- Scope Selector (General vs. Specific Customer) -->
+      <div style="background: rgba(255, 255, 255, 0.03); border: 1px solid var(--border-subtle); border-radius: 6px; padding: 10px 14px; margin-bottom: 12px; display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 12px;">
+        <div style="display: flex; align-items: center; gap: 8px;">
+          <label style="font-size: 12px; font-weight: 600; color: #cbd5e1;">Ámbito de Configuración:</label>
+          <select id="modalRuleCustomerSelect" class="form-input" style="padding: 6px 10px; font-size: 12px; min-width: 280px;" onchange="handleModalRuleCustomerChange()">
+            <option value="GENERAL">🌐 Reglas Generales de Flota (Todos los Clientes)</option>
+          </select>
+        </div>
+        <div id="modalRuleScopeHelp" style="font-size: 11px; color: var(--text-muted);">
+          Estas reglas aplican por defecto a todas las estaciones de trabajo de tus clientes.
+        </div>
+      </div>
+
+      <div class="table-wrapper" style="max-height: 52vh; overflow-y: auto;">
         <table>
           <thead>
             <tr>
@@ -2514,7 +2528,22 @@ export function getLandingHtml(data: {
       }
       const toggleRuleBtn = e.target.closest('.btn-toggle-rule');
       if (toggleRuleBtn && toggleRuleBtn.dataset.ruleId) {
-        toggleAlertRule(toggleRuleBtn.dataset.ruleId);
+        toggleAlertRule(toggleRuleBtn.dataset.ruleId, toggleRuleBtn.dataset.customerId);
+        return;
+      }
+      const revertRuleBtn = e.target.closest('.btn-revert-rule');
+      if (revertRuleBtn && revertRuleBtn.dataset.overrideId) {
+        revertCustomerRuleOverride(revertRuleBtn.dataset.overrideId);
+        return;
+      }
+      const editThreshBtn = e.target.closest('.btn-edit-threshold');
+      if (editThreshBtn && editThreshBtn.dataset.baseRuleId) {
+        promptEditThreshold(
+          editThreshBtn.dataset.baseRuleId,
+          editThreshBtn.dataset.customerId,
+          editThreshBtn.dataset.currentThreshold,
+          editThreshBtn.dataset.ruleName
+        );
         return;
       }
     });
@@ -4336,10 +4365,11 @@ export function getLandingHtml(data: {
     window.resolveAlert = resolveAlert;
     window.triggerAlertEvaluation = triggerAlertEvaluation;
     window.triggerDeviceAlertEvaluation = triggerDeviceAlertEvaluation;
-    async function openAlertRulesModal() {
+    async function openAlertRulesModal(targetCustomerId) {
       const m = document.getElementById('alertRulesModal');
       if (m) m.classList.add('active');
-      await fetchAndRenderAlertRules();
+      populateModalRuleCustomerSelect(targetCustomerId);
+      await fetchAndRenderAlertRules(targetCustomerId || 'GENERAL');
     }
 
     function closeAlertRulesModal() {
@@ -4347,28 +4377,62 @@ export function getLandingHtml(data: {
       if (m) m.classList.remove('active');
     }
 
-    async function fetchAndRenderAlertRules() {
+    function populateModalRuleCustomerSelect(selectedCustId) {
+      const sel = document.getElementById('modalRuleCustomerSelect');
+      if (!sel) return;
+      let html = '<option value="GENERAL">🌐 Reglas Generales de Flota (Todos los Clientes)</option>';
+      (currentCustomers || []).forEach(function(c) {
+        html += '<option value="' + c.id + '"' + (selectedCustId === c.id ? ' selected' : '') + '>📁 Cliente: ' + c.name + ' (' + c.code + ')</option>';
+      });
+      sel.innerHTML = html;
+      if (selectedCustId) sel.value = selectedCustId;
+      updateModalRuleHelpText(sel.value);
+    }
+
+    function updateModalRuleHelpText(val) {
+      const help = document.getElementById('modalRuleScopeHelp');
+      if (!help) return;
+      if (!val || val === 'GENERAL') {
+        help.innerHTML = 'Estas reglas aplican por defecto a todas las estaciones de trabajo de todos tus clientes.';
+      } else {
+        const c = (currentCustomers || []).find(function(x) { return x.id === val; });
+        const cName = c ? c.name : 'este cliente';
+        help.innerHTML = '<span style="color: #38bdf8; font-weight: 600;">★ Políticas personalizadas para ' + cName + '.</span> Si no modificás una regla, hereda el valor general de la flota.';
+      }
+    }
+
+    async function handleModalRuleCustomerChange() {
+      const sel = document.getElementById('modalRuleCustomerSelect');
+      const custId = sel ? sel.value : 'GENERAL';
+      updateModalRuleHelpText(custId);
+      await fetchAndRenderAlertRules(custId);
+    }
+
+    async function fetchAndRenderAlertRules(custId) {
       const tbody = document.getElementById('alertRulesTableBody');
       if (!tbody) return;
+      tbody.innerHTML = '<tr><td colspan="7" style="text-align: center; color: var(--text-muted); padding: 24px;">Cargando reglas...</td></tr>';
       let token = localStorage.getItem('nl_token');
       if (!token) token = await quickLoginDemo();
+      
+      const query = (custId && custId !== 'GENERAL') ? '?customerId=' + custId : '';
       try {
-        const res = await fetch('/api/v1/alerts/rules', {
+        const res = await fetch('/api/v1/alerts/rules' + query, {
           headers: token ? { 'Authorization': 'Bearer ' + token } : {}
         });
         if (res.ok) {
           const json = await res.json();
           const rules = (json && json.data) || [];
-          renderAlertRulesTable(rules);
+          renderAlertRulesTable(rules, custId && custId !== 'GENERAL', custId);
         } else {
-          tbody.innerHTML = '<tr><td colspan="7" style="text-align: center; color: #ef4444; padding: 24px;">No se pudieron cargar las reglas de monitoreo</td></tr>';
+          tbody.innerHTML = '<tr><td colspan="7" style="text-align: center; color: #ef4444; padding: 24px;">No se pudieron cargar las reglas</td></tr>';
         }
       } catch (err) {
         tbody.innerHTML = '<tr><td colspan="7" style="text-align: center; color: #ef4444; padding: 24px;">Error de red al consultar reglas</td></tr>';
       }
     }
 
-    function renderAlertRulesTable(rules) {
+    function renderAlertRulesTable(rules, isCustomerSpecific, selectedCustomerId) {
       const tbody = document.getElementById('alertRulesTableBody');
       if (!tbody) return;
       if (!rules || rules.length === 0) {
@@ -4383,18 +4447,30 @@ export function getLandingHtml(data: {
         const sevLabel = isCrit ? '🔴 Crítica' : (isHigh ? '🟠 Alta' : (isWarn ? '🟡 Advertencia' : '🔵 Info'));
 
         const isEnabled = r.enabled !== false;
-        const statusBadge = isEnabled
+        let statusBadge = isEnabled
           ? '<span class="status-pill status-online">● Activa</span>'
           : '<span class="status-pill status-offline">○ Desactivada</span>';
 
-        const toggleBtn = isEnabled
-          ? '<button class="btn btn-secondary btn-sm btn-toggle-rule" data-rule-id="' + r.id + '" style="color: #ef4444;">Desactivar</button>'
-          : '<button class="btn btn-secondary btn-sm btn-toggle-rule" data-rule-id="' + r.id + '" style="color: #10b981;">Activar</button>';
+        if (isCustomerSpecific) {
+          if (r.isCustomerOverride) {
+            statusBadge += '<div style="font-size: 10px; color: #f59e0b; margin-top: 3px; font-weight: 600;">★ Personalizada</div>';
+          } else {
+            statusBadge += '<div style="font-size: 10px; color: var(--text-muted); margin-top: 3px;">Heredada de Flota</div>';
+          }
+        }
+
+        const targetCustIdAttr = isCustomerSpecific ? ' data-customer-id="' + selectedCustomerId + '"' : '';
+        const toggleBtnLabel = isEnabled ? 'Desactivar' : 'Activar';
+        const toggleBtnColor = isEnabled ? '#ef4444' : '#10b981';
+
+        let actionBtns = '<button class="btn btn-secondary btn-sm btn-toggle-rule" data-rule-id="' + r.id + '"' + targetCustIdAttr + ' style="color: ' + toggleBtnColor + ';">' + toggleBtnLabel + '</button>';
 
         let conditionStr = '';
+        let currentThresholdVal = null;
         if (r.condition && r.condition.type) {
           const t = r.condition.type;
           const th = r.condition.threshold;
+          currentThresholdVal = th !== undefined ? th : null;
           if (t === 'STORAGE') conditionStr = 'Espacio libre &lt; ' + th + '%';
           else if (t === 'SMART') conditionStr = 'Fallo físico SMART';
           else if (t === 'CPU') conditionStr = 'Uso sostenido &gt; ' + th + '%';
@@ -4408,6 +4484,15 @@ export function getLandingHtml(data: {
           else conditionStr = t;
         }
 
+        if (isCustomerSpecific) {
+          if (currentThresholdVal !== null) {
+            actionBtns += ' <button class="btn btn-secondary btn-sm btn-edit-threshold" data-base-rule-id="' + (r.baseRuleId || r.id) + '" data-customer-id="' + selectedCustomerId + '" data-current-threshold="' + currentThresholdVal + '" data-rule-name="' + (r.name || '') + '" title="Personalizar umbral numérico para este cliente">✏️ Umbral</button>';
+          }
+          if (r.isCustomerOverride && r.overrideId) {
+            actionBtns += ' <button class="btn btn-secondary btn-sm btn-revert-rule" data-override-id="' + r.overrideId + '" title="Restablecer regla al valor general heredado de la flota">🔄 Revertir</button>';
+          }
+        }
+
         return '<tr>' +
           '<td><strong style="color: #fff; font-size: 13px;">' + (r.name || 'Regla') + '</strong><div style="font-size: 11px; color: var(--text-muted); margin-top: 3px;">' + (r.description || '') + '</div></td>' +
           '<td><span class="code-badge">' + (r.category || 'general') + '</span></td>' +
@@ -4415,28 +4500,86 @@ export function getLandingHtml(data: {
           '<td><span class="code-font" style="font-size: 12px; color: #38bdf8;">' + conditionStr + '</span></td>' +
           '<td><span class="code-font" style="font-size: 11px; color: var(--text-muted);">' + (r.cooldownMin || 60) + 'm</span></td>' +
           '<td>' + statusBadge + '</td>' +
-          '<td style="text-align: right;">' + toggleBtn + '</td>' +
+          '<td style="text-align: right; white-space: nowrap;">' + actionBtns + '</td>' +
         '</tr>';
       }).join('');
     }
 
-    async function toggleAlertRule(ruleId) {
+    async function toggleAlertRule(ruleId, customerId) {
       let token = localStorage.getItem('nl_token');
       if (!token) token = await quickLoginDemo();
+      const query = (customerId && customerId !== 'GENERAL') ? '?customerId=' + customerId : '';
       try {
-        const res = await fetch('/api/v1/alerts/rules/' + ruleId + '/toggle', {
+        const res = await fetch('/api/v1/alerts/rules/' + ruleId + '/toggle' + query, {
           method: 'PATCH',
           headers: token ? { 'Authorization': 'Bearer ' + token } : {}
         });
         if (res.ok) {
           showToast('✅ Estado de la regla actualizado');
-          await fetchAndRenderAlertRules();
+          const sel = document.getElementById('modalRuleCustomerSelect');
+          await fetchAndRenderAlertRules(sel ? sel.value : 'GENERAL');
         } else {
           showToast('Error al modificar regla', 'error');
         }
       } catch (err) {
         console.error('Toggle rule error:', err);
         showToast('Error de conexión', 'error');
+      }
+    }
+
+    async function revertCustomerRuleOverride(overrideId) {
+      if (!confirm('¿Deseás restablecer esta regla al valor general de la flota para este cliente?')) return;
+      let token = localStorage.getItem('nl_token');
+      if (!token) token = await quickLoginDemo();
+      try {
+        const res = await fetch('/api/v1/alerts/rules/customer-override/' + overrideId, {
+          method: 'DELETE',
+          headers: token ? { 'Authorization': 'Bearer ' + token } : {}
+        });
+        if (res.ok) {
+          showToast('✅ Regla restablecida al valor general de la flota');
+          const sel = document.getElementById('modalRuleCustomerSelect');
+          await fetchAndRenderAlertRules(sel ? sel.value : 'GENERAL');
+        } else {
+          showToast('Error al restablecer regla', 'error');
+        }
+      } catch (err) {
+        showToast('Error de red al restablecer regla', 'error');
+      }
+    }
+
+    async function promptEditThreshold(baseRuleId, customerId, currentTh, ruleName) {
+      const input = prompt('Ingresá el nuevo umbral personalizado para "' + ruleName + '":', currentTh || '10');
+      if (input === null) return;
+      const num = parseFloat(input);
+      if (isNaN(num) || num < 0) {
+        alert('Por favor ingresá un número válido');
+        return;
+      }
+      let token = localStorage.getItem('nl_token');
+      if (!token) token = await quickLoginDemo();
+      try {
+        const res = await fetch('/api/v1/alerts/rules/customer-override', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': 'Bearer ' + token
+          },
+          body: JSON.stringify({
+            baseRuleId: baseRuleId,
+            customerId: customerId,
+            threshold: num
+          })
+        });
+        if (res.ok) {
+          showToast('✅ Umbral personalizado guardado para este cliente');
+          const sel = document.getElementById('modalRuleCustomerSelect');
+          await fetchAndRenderAlertRules(sel ? sel.value : 'GENERAL');
+        } else {
+          showToast('Error al guardar umbral', 'error');
+        }
+      } catch (err) {
+        showToast('Error de red al guardar umbral', 'error');
       }
     }
 
@@ -4452,9 +4595,12 @@ export function getLandingHtml(data: {
 
     window.openAlertRulesModal = openAlertRulesModal;
     window.closeAlertRulesModal = closeAlertRulesModal;
+    window.handleModalRuleCustomerChange = handleModalRuleCustomerChange;
     window.fetchAndRenderAlertRules = fetchAndRenderAlertRules;
     window.renderAlertRulesTable = renderAlertRulesTable;
     window.toggleAlertRule = toggleAlertRule;
+    window.revertCustomerRuleOverride = revertCustomerRuleOverride;
+    window.promptEditThreshold = promptEditThreshold;
     window.viewCustomerAlertsInNoc = viewCustomerAlertsInNoc;
     window.refreshAlerts = refreshAlerts;
     window.renderDeviceAlerts = renderDeviceAlerts;
