@@ -11,7 +11,7 @@
 | F4 | Inventario Avanzado | ✅ Completada |
 | F5 | Event Viewer | ✅ Completada |
 | F6 | Panel Web: Dashboard | ✅ Completada |
-| F7 | Ficha del Dispositivo | 🔄 En progreso |
+| F7 | Ficha del Dispositivo | ✅ Completada |
 | F8 | Health Score | ⏳ Pendiente |
 | F9 | Motor de Alertas | ⏳ Pendiente |
 | F14 | Offline Buffer | ⏳ Pendiente |
