@@ -11,11 +11,11 @@ import (
 
 const (
 	// DefaultConfigDir is the base directory for agent configuration
-	DefaultConfigDir = `C:\ProgramData\NanoLabs\Agent`
+	DefaultConfigDir = `C:\ProgramData\NanoLabs\NanoMonitor`
 	// DefaultConfigFile is the configuration filename
 	DefaultConfigFile = "config.yaml"
 	// DefaultLogDir is the directory for agent logs
-	DefaultLogDir = `C:\ProgramData\NanoLabs\Agent\logs`
+	DefaultLogDir = `C:\ProgramData\NanoLabs\NanoMonitor\logs`
 )
 
 // Config holds the agent's runtime configuration
@@ -23,7 +23,8 @@ type Config struct {
 	mu sync.RWMutex
 
 	// Server connection
-	APIUrl string `yaml:"apiUrl"`
+	APIUrl    string `yaml:"apiUrl"`
+	APIUrlAlt string `yaml:"api_url,omitempty"`
 
 	// Agent identity (set during enrollment)
 	AgentID  string `yaml:"agentId,omitempty"`
@@ -52,7 +53,7 @@ type Config struct {
 // DefaultConfig returns a Config with sensible defaults
 func DefaultConfig() *Config {
 	return &Config{
-		APIUrl:             "https://control-api.nanoapps.site/api",
+		APIUrl:             "https://monitor.nanolabs.com.ar",
 		HeartbeatInterval:  180,  // 3 minutes
 		MetricsInterval:    300,  // 5 minutes
 		InventoryInterval:  86400, // 24 hours
@@ -83,6 +84,10 @@ func LoadFromFile(path string) (*Config, error) {
 
 	if err := yaml.Unmarshal(data, cfg); err != nil {
 		return nil, fmt.Errorf("parsing config file: %w", err)
+	}
+
+	if cfg.APIUrlAlt != "" && (cfg.APIUrl == "" || cfg.APIUrl == "https://control-api.nanoapps.site/api") {
+		cfg.APIUrl = cfg.APIUrlAlt
 	}
 
 	return cfg, nil

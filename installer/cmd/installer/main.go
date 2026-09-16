@@ -207,18 +207,19 @@ func doInstall(token, apiURL string, silent bool) {
 		showError(fmt.Sprintf("Error creando directorio de datos:\n%v", err), silent)
 		os.Exit(1)
 	}
+	_ = os.MkdirAll(filepath.Join(DefaultDataDir, "logs"), 0755)
+
+	// Grant modify permissions to Users on data dir
+	_ = exec.Command("icacls", DefaultDataDir, "/grant", "*S-1-5-32-545:(OI)(CI)M", "/T").Run()
 
 	configYamlPath := filepath.Join(DefaultDataDir, "config.yaml")
-	// If config doesn't exist, write initial config
-	if _, err := os.Stat(configYamlPath); os.IsNotExist(err) {
-		initialConfig := fmt.Sprintf("api_url: %s\nlog_file: %s\\logs\\nanoagent.log\nlog_level: info\n", apiURL, DefaultDataDir)
-		_ = os.WriteFile(configYamlPath, []byte(initialConfig), 0644)
-	}
+	initialConfig := fmt.Sprintf("apiUrl: %s\nlogFile: %s\\logs\\nanoagent.log\nlogLevel: info\n", apiURL, DefaultDataDir)
+	_ = os.WriteFile(configYamlPath, []byte(initialConfig), 0666)
 
 	// If token was provided, write .enrollment-token
 	if token != "" {
 		tokenFile := filepath.Join(DefaultDataDir, ".enrollment-token")
-		_ = os.WriteFile(tokenFile, []byte(token), 0600)
+		_ = os.WriteFile(tokenFile, []byte(token), 0666)
 	}
 
 	// 6. Install Windows Service

@@ -60,9 +60,26 @@ try {
 
 # 4. Verify Windows Service
 Write-Host "[3/3] Verificando servicio de Windows..." -ForegroundColor Yellow
-Start-Sleep -Seconds 2
-$svc = Get-Service -Name "NanoLabsAgent" -ErrorAction SilentlyContinue
-if ($svc -and $svc.Status -eq 'Running') {
+$started = $false
+for ($i = 0; $i -lt 10; $i++) {
+    Start-Sleep -Seconds 1
+    $svc = Get-Service -Name "NanoLabsAgent" -ErrorAction SilentlyContinue
+    if ($svc -and $svc.Status -eq 'Running') {
+        $started = $true
+        break
+    }
+}
+
+if (-not $started) {
+    Start-Service -Name "NanoLabsAgent" -ErrorAction SilentlyContinue
+    Start-Sleep -Seconds 2
+    $svc = Get-Service -Name "NanoLabsAgent" -ErrorAction SilentlyContinue
+    if ($svc -and $svc.Status -eq 'Running') {
+        $started = $true
+    }
+}
+
+if ($started) {
     Write-Host "=====================================================" -ForegroundColor Green
     Write-Host "  [OK] NanoLabs Monitor instalado exitosamente!      " -ForegroundColor Green
     Write-Host "  Servicio: En ejecucion continua                    " -ForegroundColor Green
