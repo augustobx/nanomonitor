@@ -1115,6 +1115,9 @@ export function getLandingHtml(data: {
           </div>
 
           <div style="display: flex; gap: 8px; align-items: center; flex-wrap: wrap;">
+            <button class="btn btn-secondary btn-sm" id="btnCustomerAlerts" onclick="viewCustomerAlertsInNoc()" title="Ver alertas de este cliente en el Centro de Alertas">
+              🚨 Alertas del Cliente
+            </button>
             <button class="btn btn-secondary btn-sm" id="btnRefreshCustomerWs" onclick="refreshCustomerWorkspace()" title="Actualizar estado de todos los equipos del cliente">
               <span id="wsRefreshIcon">🔄</span> Actualizar Flota
             </button>
@@ -1327,6 +1330,9 @@ export function getLandingHtml(data: {
         </div>
 
         <div style="display: flex; gap: 8px; align-items: center; flex-wrap: wrap;">
+          <button class="btn btn-secondary btn-sm" onclick="openAlertRulesModal()" title="Ver y activar/desactivar reglas de monitoreo globales">
+            ⚙️ Reglas de Monitoreo
+          </button>
           <button class="btn btn-secondary btn-sm" onclick="refreshAlerts(false)" title="Consultar las alertas más recientes">
             <span id="acRefreshIcon">🔄</span> Actualizar Alertas
           </button>
@@ -1933,6 +1939,48 @@ export function getLandingHtml(data: {
           <button type="submit" class="btn btn-primary">Registrar Cliente</button>
         </div>
       </form>
+  </div>
+
+  <!-- ALERT RULES MODAL -->
+  <div class="drawer-overlay" id="alertRulesModal" onclick="if(event.target === this) closeAlertRulesModal()">
+    <div class="modal-box" style="max-width: 900px; max-height: 85vh; display: flex; flex-direction: column;">
+      <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px;">
+        <div>
+          <h3 style="font-size: 16px; font-weight: 700; color: #fff; display: flex; align-items: center; gap: 8px;">
+            ⚙️ Reglas de Monitoreo &amp; Detección de Anomalías
+          </h3>
+          <p style="font-size: 12px; color: var(--text-secondary); margin-top: 2px;">
+            Políticas del motor de alertas aplicadas automáticamente a todas las organizaciones y estaciones de trabajo.
+          </p>
+        </div>
+        <button class="drawer-close" onclick="closeAlertRulesModal()">✕</button>
+      </div>
+
+      <div class="table-wrapper" style="max-height: 55vh; overflow-y: auto;">
+        <table>
+          <thead>
+            <tr>
+              <th>Regla</th>
+              <th>Categoría</th>
+              <th>Severidad</th>
+              <th>Condición / Umbral</th>
+              <th>Cooldown</th>
+              <th>Estado</th>
+              <th style="text-align: right;">Acción</th>
+            </tr>
+          </thead>
+          <tbody id="alertRulesTableBody">
+            <tr><td colspan="7" style="text-align: center; color: var(--text-muted); padding: 24px;">Cargando reglas de monitoreo...</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <div style="display: flex; justify-content: space-between; align-items: center; margin-top: 14px; border-top: 1px solid var(--border-subtle); padding-top: 10px;">
+        <span style="font-size: 11px; color: var(--text-muted);">
+          💡 Las reglas activas son evaluadas cada 2 minutos en segundo plano y ante cada evento crítico reportado.
+        </span>
+        <button class="btn btn-secondary btn-sm" onclick="closeAlertRulesModal()">Cerrar</button>
+      </div>
     </div>
   </div>
 
@@ -2464,6 +2512,11 @@ export function getLandingHtml(data: {
         resolveAlert(resBtn.dataset.alertId);
         return;
       }
+      const toggleRuleBtn = e.target.closest('.btn-toggle-rule');
+      if (toggleRuleBtn && toggleRuleBtn.dataset.ruleId) {
+        toggleAlertRule(toggleRuleBtn.dataset.ruleId);
+        return;
+      }
     });
 
     // Keyboard Shortcuts (Esc to navigate back)
@@ -2935,8 +2988,9 @@ export function getLandingHtml(data: {
         // Render Health Diagnostics (Phase 8 Health Score)
         renderDeviceHealthDiagnostic(d);
         if (!d.healthScores || d.healthScores.length === 0) {
+          const curToken = localStorage.getItem('nl_token');
           fetch('/api/v1/devices/' + d.id + '/health', {
-            headers: authToken ? { 'Authorization': 'Bearer ' + authToken } : {}
+            headers: curToken ? { 'Authorization': 'Bearer ' + curToken } : {}
           }).then(function(r) { return r.json(); }).then(function(res) {
             if (res && res.data && res.data.current) {
               d.healthScores = [res.data.current];
@@ -3164,8 +3218,10 @@ export function getLandingHtml(data: {
       const btn = document.getElementById('btnRecalcHealth');
       if (btn) btn.innerHTML = '🔄 Recalculando...';
       try {
+        let token = localStorage.getItem('nl_token');
+        if (!token) token = await quickLoginDemo();
         let headers = {};
-        if (authToken) headers['Authorization'] = 'Bearer ' + authToken;
+        if (token) headers['Authorization'] = 'Bearer ' + token;
         const res = await fetch('/api/v1/devices/' + deviceId + '/health', { headers: headers });
         if (res.ok) {
           const json = await res.json();
@@ -4280,6 +4336,126 @@ export function getLandingHtml(data: {
     window.resolveAlert = resolveAlert;
     window.triggerAlertEvaluation = triggerAlertEvaluation;
     window.triggerDeviceAlertEvaluation = triggerDeviceAlertEvaluation;
+    async function openAlertRulesModal() {
+      const m = document.getElementById('alertRulesModal');
+      if (m) m.classList.add('active');
+      await fetchAndRenderAlertRules();
+    }
+
+    function closeAlertRulesModal() {
+      const m = document.getElementById('alertRulesModal');
+      if (m) m.classList.remove('active');
+    }
+
+    async function fetchAndRenderAlertRules() {
+      const tbody = document.getElementById('alertRulesTableBody');
+      if (!tbody) return;
+      let token = localStorage.getItem('nl_token');
+      if (!token) token = await quickLoginDemo();
+      try {
+        const res = await fetch('/api/v1/alerts/rules', {
+          headers: token ? { 'Authorization': 'Bearer ' + token } : {}
+        });
+        if (res.ok) {
+          const json = await res.json();
+          const rules = (json && json.data) || [];
+          renderAlertRulesTable(rules);
+        } else {
+          tbody.innerHTML = '<tr><td colspan="7" style="text-align: center; color: #ef4444; padding: 24px;">No se pudieron cargar las reglas de monitoreo</td></tr>';
+        }
+      } catch (err) {
+        tbody.innerHTML = '<tr><td colspan="7" style="text-align: center; color: #ef4444; padding: 24px;">Error de red al consultar reglas</td></tr>';
+      }
+    }
+
+    function renderAlertRulesTable(rules) {
+      const tbody = document.getElementById('alertRulesTableBody');
+      if (!tbody) return;
+      if (!rules || rules.length === 0) {
+        tbody.innerHTML = '<tr><td colspan="7" style="text-align: center; color: var(--text-muted); padding: 24px;">No hay reglas de monitoreo registradas</td></tr>';
+        return;
+      }
+      tbody.innerHTML = rules.map(function(r) {
+        const isCrit = r.severity === 'CRITICAL';
+        const isHigh = r.severity === 'HIGH';
+        const isWarn = r.severity === 'WARNING';
+        const sevClass = isCrit ? 'status-danger' : (isHigh ? 'status-warning' : (isWarn ? 'status-info' : 'status-online'));
+        const sevLabel = isCrit ? '🔴 Crítica' : (isHigh ? '🟠 Alta' : (isWarn ? '🟡 Advertencia' : '🔵 Info'));
+
+        const isEnabled = r.enabled !== false;
+        const statusBadge = isEnabled
+          ? '<span class="status-pill status-online">● Activa</span>'
+          : '<span class="status-pill status-offline">○ Desactivada</span>';
+
+        const toggleBtn = isEnabled
+          ? '<button class="btn btn-secondary btn-sm btn-toggle-rule" data-rule-id="' + r.id + '" style="color: #ef4444;">Desactivar</button>'
+          : '<button class="btn btn-secondary btn-sm btn-toggle-rule" data-rule-id="' + r.id + '" style="color: #10b981;">Activar</button>';
+
+        let conditionStr = '';
+        if (r.condition && r.condition.type) {
+          const t = r.condition.type;
+          const th = r.condition.threshold;
+          if (t === 'STORAGE') conditionStr = 'Espacio libre &lt; ' + th + '%';
+          else if (t === 'SMART') conditionStr = 'Fallo físico SMART';
+          else if (t === 'CPU') conditionStr = 'Uso sostenido &gt; ' + th + '%';
+          else if (t === 'RAM') conditionStr = 'Memoria libre &lt; ' + th + '%';
+          else if (t === 'OFFLINE') conditionStr = 'Sin latidos &gt; ' + th + ' min';
+          else if (t === 'DEFENDER') conditionStr = 'Protección AV apagada';
+          else if (t === 'FIREWALL') conditionStr = 'Cortafuegos apagado';
+          else if (t === 'KERNEL_EVENT') conditionStr = 'BSOD / Kernel-Power 41';
+          else if (t === 'DISK_EVENT') conditionStr = 'Error E/S o NTFS corrupto';
+          else if (t === 'APP_CRASH') conditionStr = '&ge; 3 cierres en 24h';
+          else conditionStr = t;
+        }
+
+        return '<tr>' +
+          '<td><strong style="color: #fff; font-size: 13px;">' + (r.name || 'Regla') + '</strong><div style="font-size: 11px; color: var(--text-muted); margin-top: 3px;">' + (r.description || '') + '</div></td>' +
+          '<td><span class="code-badge">' + (r.category || 'general') + '</span></td>' +
+          '<td><span class="status-pill ' + sevClass + '">' + sevLabel + '</span></td>' +
+          '<td><span class="code-font" style="font-size: 12px; color: #38bdf8;">' + conditionStr + '</span></td>' +
+          '<td><span class="code-font" style="font-size: 11px; color: var(--text-muted);">' + (r.cooldownMin || 60) + 'm</span></td>' +
+          '<td>' + statusBadge + '</td>' +
+          '<td style="text-align: right;">' + toggleBtn + '</td>' +
+        '</tr>';
+      }).join('');
+    }
+
+    async function toggleAlertRule(ruleId) {
+      let token = localStorage.getItem('nl_token');
+      if (!token) token = await quickLoginDemo();
+      try {
+        const res = await fetch('/api/v1/alerts/rules/' + ruleId + '/toggle', {
+          method: 'PATCH',
+          headers: token ? { 'Authorization': 'Bearer ' + token } : {}
+        });
+        if (res.ok) {
+          showToast('✅ Estado de la regla actualizado');
+          await fetchAndRenderAlertRules();
+        } else {
+          showToast('Error al modificar regla', 'error');
+        }
+      } catch (err) {
+        console.error('Toggle rule error:', err);
+        showToast('Error de conexión', 'error');
+      }
+    }
+
+    function viewCustomerAlertsInNoc() {
+      if (!currentActiveCustomerId) return;
+      switchNavTab('alerts');
+      const custSelect = document.getElementById('acFilterCustomer');
+      if (custSelect) {
+        custSelect.value = currentActiveCustomerId;
+        filterAlertCenter();
+      }
+    }
+
+    window.openAlertRulesModal = openAlertRulesModal;
+    window.closeAlertRulesModal = closeAlertRulesModal;
+    window.fetchAndRenderAlertRules = fetchAndRenderAlertRules;
+    window.renderAlertRulesTable = renderAlertRulesTable;
+    window.toggleAlertRule = toggleAlertRule;
+    window.viewCustomerAlertsInNoc = viewCustomerAlertsInNoc;
     window.refreshAlerts = refreshAlerts;
     window.renderDeviceAlerts = renderDeviceAlerts;
   </script>
