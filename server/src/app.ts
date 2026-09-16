@@ -102,7 +102,12 @@ export async function buildApp(): Promise<FastifyInstance> {
         env: config.NODE_ENV,
         devices,
       });
-      return reply.type('text/html; charset=utf-8').send(html);
+      return reply
+        .header('Cache-Control', 'no-cache, no-store, must-revalidate')
+        .header('Pragma', 'no-cache')
+        .header('Expires', '0')
+        .type('text/html; charset=utf-8')
+        .send(html);
     }
 
     return reply.send({
