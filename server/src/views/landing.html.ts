@@ -998,9 +998,11 @@ export function getLandingHtml(data: {
           })
         });
         const data = await res.json();
-        if (data.accessToken) {
-          localStorage.setItem('nl_token', data.accessToken);
-          localStorage.setItem('nl_user', JSON.stringify(data.user));
+        const token = (data.data && data.data.accessToken) || data.accessToken;
+        const user = (data.data && data.data.user) || data.user;
+        if (token) {
+          localStorage.setItem('nl_token', token);
+          if (user) localStorage.setItem('nl_user', JSON.stringify(user));
           setLoggedInUI();
           closeLoginModal();
           loadDevices();
@@ -1022,9 +1024,11 @@ export function getLandingHtml(data: {
           body: JSON.stringify({ email, password })
         });
         const data = await res.json();
-        if (data.accessToken) {
-          localStorage.setItem('nl_token', data.accessToken);
-          localStorage.setItem('nl_user', JSON.stringify(data.user));
+        const token = (data.data && data.data.accessToken) || data.accessToken;
+        const user = (data.data && data.data.user) || data.user;
+        if (token) {
+          localStorage.setItem('nl_token', token);
+          if (user) localStorage.setItem('nl_user', JSON.stringify(user));
           setLoggedInUI();
           closeLoginModal();
           loadDevices();
@@ -1052,11 +1056,10 @@ export function getLandingHtml(data: {
           headers: { 'Authorization': 'Bearer ' + token }
         });
         const json = await res.json();
-        if (json.data && json.data.devices) {
-          currentDevices = json.data.devices;
-          renderDevicesTable(currentDevices);
-          updateKpis(currentDevices);
-        }
+        const devices = (json.data && json.data.devices) || [];
+        currentDevices = devices;
+        renderDevicesTable(currentDevices);
+        updateKpis(currentDevices);
       } catch (err) {
         console.error('Failed to load devices:', err);
       }
