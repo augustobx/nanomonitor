@@ -79,6 +79,8 @@ export async function buildApp(): Promise<FastifyInstance> {
     const accept = request.headers.accept || '';
     if (accept.includes('text/html')) {
       let devices: any[] = [];
+      let customers: any[] = [];
+      let recentEvents: any[] = [];
       try {
         devices = await db.device.findMany({
           include: {
@@ -91,8 +93,30 @@ export async function buildApp(): Promise<FastifyInstance> {
           },
           orderBy: { lastSeenAt: 'desc' },
         });
+
+        customers = await db.customer.findMany({
+          include: {
+            sites: { select: { id: true, name: true } },
+            _count: {
+              select: {
+                devices: true,
+                sites: true,
+                alerts: { where: { status: 'OPEN' } },
+              },
+            },
+          },
+          orderBy: { name: 'asc' },
+        });
+
+        recentEvents = await db.deviceEvent.findMany({
+          take: 8,
+          orderBy: { timestamp: 'desc' },
+          include: {
+            device: { select: { id: true, hostname: true } },
+          },
+        });
       } catch (err) {
-        request.log.error(err, 'Failed to fetch devices for landing');
+        request.log.error(err, 'Failed to fetch dashboard data for landing');
       }
 
       const html = getLandingHtml({
@@ -101,6 +125,8 @@ export async function buildApp(): Promise<FastifyInstance> {
         version: '0.1.0',
         env: config.NODE_ENV,
         devices,
+        customers,
+        recentEvents,
       });
       return reply
         .header('Cache-Control', 'no-cache, no-store, must-revalidate')
