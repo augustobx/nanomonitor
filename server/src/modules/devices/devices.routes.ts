@@ -174,6 +174,37 @@ export const devicesRoutes: FastifyPluginAsync = async (fastify: FastifyInstance
     });
   });
 
+  // POST /api/v1/devices/:id/health (Recalculate health score)
+  fastify.post('/:id/health', async (request, reply) => {
+    const tenantId = getTenantId(request);
+    const { id } = request.params as { id: string };
+
+    const device = await db.device.findFirst({
+      where: { id, tenantId },
+      select: { id: true, tenantId: true },
+    });
+
+    if (!device) {
+      return reply.status(404).send({ statusCode: 404, message: 'Device not found' });
+    }
+
+    const computed = await calculateAndPersistDeviceHealthScore(id);
+    let latest = computed ? await db.healthScore.findUnique({ where: { id: computed.id } }) : null;
+    if (!latest) {
+      latest = await db.healthScore.findFirst({
+        where: { deviceId: id, tenantId },
+        orderBy: { calculatedAt: 'desc' },
+      });
+    }
+
+    return reply.send({
+      statusCode: 200,
+      data: {
+        current: latest,
+      },
+    });
+  });
+
   // GET /api/v1/devices/:id/metrics
   fastify.get('/:id/metrics', async (request, reply) => {
     const tenantId = getTenantId(request);

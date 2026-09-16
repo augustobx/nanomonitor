@@ -1527,7 +1527,7 @@ export function getClientRuntimeScript(): string {
           const pct = Math.round((Number(mainVol.freeBytes) / Number(mainVol.totalBytes)) * 100);
           if (pct < 10) issues.push('💾 Poco espacio libre en disco (' + pct + '% restante)');
         }
-        critAlerts > 0 && issues.push('🚨 ' + critCount + ' Alertas críticas activas');
+        if (critCount > 0) issues.push('🚨 ' + critCount + ' Alertas críticas activas');
 
         if (issues.length > 0) {
           attBox.style.display = 'flex';
@@ -1554,6 +1554,38 @@ export function getClientRuntimeScript(): string {
       renderDeviceAgentSubtab(d);
 
       switchDeviceSubTab('resumen');
+
+      // 6. Asynchronous Deep Fetch (Full metrics history, full inventories, software & events)
+      try {
+        let token = localStorage.getItem('nl_token');
+        if (!token) token = await quickLoginDemo();
+        fetch('/api/v1/devices/' + deviceId, {
+          headers: token ? { 'Authorization': 'Bearer ' + token } : {}
+        }).then(function(res) {
+          if (!res.ok) return null;
+          return res.json();
+        }).then(function(json) {
+          if (json && json.data && selectedDeviceId === deviceId) {
+            selectedDevice = json.data;
+            const idx = (currentDevices || []).findIndex(function(x) { return x.id === deviceId; });
+            if (idx >= 0) currentDevices[idx] = json.data;
+            renderDeviceHealthDiagnostic(json.data);
+            renderDevicePerformanceSubtab(json.data);
+            renderDeviceHardwareSubtab(json.data);
+            renderDeviceStorageSubtab(json.data);
+            renderDeviceNetworkSubtab(json.data);
+            renderDeviceSecuritySubtab(json.data);
+            renderDeviceSoftwareSubtab(json.data);
+            renderDeviceEventsSubtab(json.data);
+            renderDeviceAlertsSubtab(json.data);
+            renderDeviceAgentSubtab(json.data);
+          }
+        }).catch(function(e) {
+          console.warn('Deep telemetry fetch:', e);
+        });
+      } catch (e) {
+        // silent fallback
+      }
     }
 
     function switchDeviceSubTab(tab) {
@@ -1645,16 +1677,53 @@ export function getClientRuntimeScript(): string {
       try {
         const res = await fetch('/api/v1/devices/' + selectedDevice.id + '/health', {
           method: 'POST',
-          headers: { 'Authorization': 'Bearer ' + token }
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': 'Bearer ' + token
+          }
         });
         if (res.ok) {
-          showToast('Salud recalculada');
+          const json = await res.json();
+          const newScore = json.data && json.data.current;
+          if (newScore) {
+            if (!selectedDevice.healthScores) selectedDevice.healthScores = [];
+            selectedDevice.healthScores[0] = newScore;
+            renderDeviceHealthDiagnostic(selectedDevice);
+          }
+          showToast('🛡️ Salud recalculada exitosamente');
           await fetchLiveDashboard(true);
         } else {
           showToast('No se pudo recalcular la salud', 'error');
         }
       } catch (err) {
-        showToast('Error de red', 'error');
+        showToast('Error de red al recalcular salud', 'error');
+      }
+    }
+
+    async function triggerDeviceAlertEvaluation() {
+      if (!selectedDevice) return;
+      let token = localStorage.getItem('nl_token');
+      if (!token) token = await quickLoginDemo();
+      try {
+        const res = await fetch('/api/v1/alerts/evaluate', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': 'Bearer ' + token
+          },
+          body: JSON.stringify({ deviceId: selectedDevice.id })
+        });
+        if (res.ok) {
+          const json = await res.json();
+          const d = json.data || {};
+          showToast('⚡ Reglas evaluadas: +' + (d.created || 0) + ' nuevas, -' + (d.resolved || 0) + ' resueltas');
+          await fetchLiveDashboard(true);
+          if (selectedDeviceId) openDeviceWorkspace(selectedDeviceId);
+        } else {
+          showToast('Error al evaluar reglas del equipo', 'error');
+        }
+      } catch (err) {
+        showToast('Error de conexión', 'error');
       }
     }
 
@@ -1668,28 +1737,51 @@ export function getClientRuntimeScript(): string {
         return;
       }
 
-      // Simple SVG Polyline Chart
-      const cpuPoints = metrics.slice(0, 15).reverse().map(function(m, idx) {
-        const x = (idx / 14) * 500;
-        const y = 100 - (m.cpuUsage || 0);
-        return x + ',' + y;
-      }).join(' ');
+      const list = metrics.slice(0, 30).reverse();
+      let cpuPoints = '';
+      let ramPoints = '';
 
-      const ramPoints = metrics.slice(0, 15).reverse().map(function(m, idx) {
-        const x = (idx / 14) * 500;
-        const y = 100 - (m.ramUsage || 0);
-        return x + ',' + y;
-      }).join(' ');
+      if (list.length === 1) {
+        const cpuY = Math.max(5, Math.min(95, 100 - (list[0].cpuUsage || 0)));
+        const ramY = Math.max(5, Math.min(95, 100 - (list[0].ramUsage || 0)));
+        cpuPoints = '0,' + cpuY + ' 500,' + cpuY;
+        ramPoints = '0,' + ramY + ' 500,' + ramY;
+      } else {
+        const maxIdx = list.length - 1;
+        cpuPoints = list.map(function(m, idx) {
+          const x = Math.round((idx / maxIdx) * 500);
+          const y = Math.max(5, Math.min(95, 100 - (m.cpuUsage || 0)));
+          return x + ',' + y;
+        }).join(' ');
+
+        ramPoints = list.map(function(m, idx) {
+          const x = Math.round((idx / maxIdx) * 500);
+          const y = Math.max(5, Math.min(95, 100 - (m.ramUsage || 0)));
+          return x + ',' + y;
+        }).join(' ');
+      }
+
+      const latest = list[list.length - 1];
+      const latestCpu = Math.round(latest.cpuUsage || 0);
+      const latestRam = Math.round(latest.ramUsage || 0);
 
       c.innerHTML = 
-        '<div style="display: flex; gap: 16px; margin-bottom: 8px; font-size: 11px;">' +
-          '<span style="color: #60a5fa;">● CPU (%)</span>' +
-          '<span style="color: #34d399;">● RAM (%)</span>' +
+        '<div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px; font-size: 12px;">' +
+          '<div style="display: flex; gap: 20px;">' +
+            '<span style="color: #60a5fa; font-weight: 600;">● CPU: ' + latestCpu + '%</span>' +
+            '<span style="color: #34d399; font-weight: 600;">● RAM: ' + latestRam + '%</span>' +
+          '</div>' +
+          '<span style="color: var(--text-muted); font-size: 11px;">Muestras recientes: ' + list.length + ' puntos</span>' +
         '</div>' +
-        '<svg viewBox="0 0 500 120" style="width: 100%; height: 140px; background: var(--bg-surface-subtle); border-radius: var(--radius-md);">' +
-          '<polyline fill="none" stroke="#60a5fa" stroke-width="2" points="' + cpuPoints + '" />' +
-          '<polyline fill="none" stroke="#34d399" stroke-width="2" points="' + ramPoints + '" />' +
-        '</svg>';
+        '<div style="position: relative; width: 100%; height: 160px; background: rgba(0,0,0,0.25); border-radius: var(--radius-md); border: 1px solid var(--border-subtle); padding: 10px; box-sizing: border-box;">' +
+          '<svg viewBox="0 0 500 100" preserveAspectRatio="none" style="width: 100%; height: 100%; overflow: visible;">' +
+            '<line x1="0" y1="20" x2="500" y2="20" stroke="rgba(255,255,255,0.06)" stroke-dasharray="4" />' +
+            '<line x1="0" y1="50" x2="500" y2="50" stroke="rgba(255,255,255,0.06)" stroke-dasharray="4" />' +
+            '<line x1="0" y1="80" x2="500" y2="80" stroke="rgba(255,255,255,0.06)" stroke-dasharray="4" />' +
+            '<polyline fill="none" stroke="#60a5fa" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" points="' + cpuPoints + '" />' +
+            '<polyline fill="none" stroke="#34d399" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" points="' + ramPoints + '" />' +
+          '</svg>' +
+        '</div>';
     }
 
     function renderDeviceHardwareSubtab(d) {
@@ -2592,6 +2684,7 @@ export function getClientRuntimeScript(): string {
     window.backFromDeviceWorkspace = backFromDeviceWorkspace;
     window.togglePenaltiesDetails = togglePenaltiesDetails;
     window.recalculateCurrentDeviceHealth = recalculateCurrentDeviceHealth;
+    window.triggerDeviceAlertEvaluation = triggerDeviceAlertEvaluation;
     window.filterSoftwareTable = filterSoftwareTable;
     window.handleMoveDevice = handleMoveDevice;
     window.copyDeviceDiagnostic = copyDeviceDiagnostic;
