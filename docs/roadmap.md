@@ -14,7 +14,7 @@
 | F7 | Ficha del Dispositivo | ✅ Completada |
 | F8 | Health Score | ✅ Completada |
 | F9 | Motor de Alertas | ✅ Completada |
-| F14 | Offline Buffer | ⏳ Pendiente |
+| F14 | Offline Buffer | ✅ Completada |
 | F17 | Docker y Producción | ✅ Completada |
 
 ## Post-MVP

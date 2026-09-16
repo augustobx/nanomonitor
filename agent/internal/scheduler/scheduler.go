@@ -566,6 +566,7 @@ func (s *Scheduler) flushOfflineBuffer(ctx context.Context) {
 
 	s.logger.Info("flushing offline priority buffer", "items_queued", len(items), "size_bytes", s.buffer.SizeBytes())
 
+	flushedCount := 0
 	for _, item := range items {
 		var err error
 		var resp *transport.Response
@@ -573,7 +574,15 @@ func (s *Scheduler) flushOfflineBuffer(ctx context.Context) {
 		switch item.Endpoint {
 		case "/agent/events":
 			var payloads []collector.DeviceEventPayload
-			if err = json.Unmarshal(item.Payload, &payloads); err == nil {
+			if err = json.Unmarshal(item.Payload, &payloads); err != nil {
+				// Fallback: try single payload
+				var single collector.DeviceEventPayload
+				if errSingle := json.Unmarshal(item.Payload, &single); errSingle == nil {
+					payloads = []collector.DeviceEventPayload{single}
+					err = nil
+				}
+			}
+			if err == nil {
 				resp, err = s.client.SendEvents(ctx, payloads)
 			}
 		case "/agent/heartbeat":
@@ -596,16 +605,35 @@ func (s *Scheduler) flushOfflineBuffer(ctx context.Context) {
 			if err = json.Unmarshal(item.Payload, &payload); err == nil {
 				resp, err = s.client.SendSoftware(ctx, payload)
 			}
+		default:
+			s.logger.Warn("unknown offline buffer endpoint, dropping item", "endpoint", item.Endpoint)
+			_ = s.buffer.Remove(item.ID)
+			continue
 		}
 
-		if err != nil || (resp != nil && resp.StatusCode >= 400) {
-			s.logger.Warn("offline buffer delivery failed, stopping drain until next tick", "endpoint", item.Endpoint, "error", err)
+		// Check for transient network error or server 5xx/429
+		if err != nil || (resp != nil && (resp.StatusCode >= 500 || resp.StatusCode == 429)) {
+			s.logger.Warn("offline buffer delivery failed (network/server busy), pausing drain until next tick",
+				"endpoint", item.Endpoint,
+				"error", err,
+			)
 			return
+		}
+
+		// Check for permanent rejection (4xx client error, e.g. invalid payload format or unprocessable entity)
+		if resp != nil && resp.StatusCode >= 400 && resp.StatusCode < 500 {
+			s.logger.Error("buffered item permanently rejected by server (4xx), removing from buffer to prevent stall",
+				"endpoint", item.Endpoint,
+				"status", resp.StatusCode,
+			)
+			_ = s.buffer.Remove(item.ID)
+			continue
 		}
 
 		// Item delivered successfully, remove from buffer
 		_ = s.buffer.Remove(item.ID)
+		flushedCount++
 	}
 
-	s.logger.Info("offline buffer drain completed successfully")
+	s.logger.Info("offline buffer drain completed", "items_flushed", flushedCount, "remaining", s.buffer.Len())
 }
