@@ -12,6 +12,7 @@ import (
 
 	"golang.org/x/sys/windows/svc"
 
+	"github.com/nanolabs/nanomonitor/agent/internal/collector"
 	"github.com/nanolabs/nanomonitor/agent/internal/config"
 	"github.com/nanolabs/nanomonitor/agent/internal/logger"
 	"github.com/nanolabs/nanomonitor/agent/internal/scheduler"
@@ -203,12 +204,32 @@ func handleEnrollment(ctx context.Context, cfg *config.Config, log *slog.Logger)
 	client := transport.NewClient(cfg.APIUrl, "", "", log)
 
 	// Collect identity for enrollment
-	// Import the collector package for identity collection
 	hostname, _ := os.Hostname()
+	ident, _ := collector.CollectIdentity()
+	var osInfo map[string]interface{}
+	var hardwareID string
+	if ident != nil {
+		hardwareID = ident.MachineGUID
+		osInfo = map[string]interface{}{
+			"caption":        ident.OSEdition,
+			"version":        ident.OSVersion,
+			"buildNumber":    ident.OSBuild,
+			"osArchitecture": ident.Architecture,
+			"serialNumber":   ident.SerialNumber,
+			"manufacturer":   ident.Manufacturer,
+			"model":          ident.Model,
+		}
+	} else {
+		osInfo = map[string]interface{}{
+			"caption": "Windows",
+		}
+	}
 
 	enrollReq := &transport.EnrollRequest{
-		Token:    token,
-		Hostname: hostname,
+		Token:      token,
+		Hostname:   hostname,
+		HardwareID: hardwareID,
+		OSInfo:     osInfo,
 	}
 
 	resp, err := client.Enroll(ctx, enrollReq)

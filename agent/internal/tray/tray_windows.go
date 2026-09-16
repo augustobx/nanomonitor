@@ -2,8 +2,8 @@ package tray
 
 import (
 	"fmt"
+	"math"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"runtime"
 	"syscall"
@@ -28,6 +28,7 @@ var (
 	destroyWindow    = user32.NewProc("DestroyWindow")
 	loadIcon         = user32.NewProc("LoadIconW")
 	loadImage        = user32.NewProc("LoadImageW")
+	createIcon       = user32.NewProc("CreateIcon")
 	createPopupMenu  = user32.NewProc("CreatePopupMenu")
 	appendMenu       = user32.NewProc("AppendMenuW")
 	trackPopupMenuEx = user32.NewProc("TrackPopupMenuEx")
@@ -88,6 +89,7 @@ const (
 	GMEM_MOVEABLE   = 0x0002
 
 	SW_SHOWNORMAL   = 1
+	SW_HIDE         = 0
 	MB_OK           = 0x00000000
 	MB_ICONINFO     = 0x00000040
 )
@@ -159,6 +161,8 @@ type TrayApp struct {
 	hostname    string
 	serviceName string
 	hIcon       windows.Handle
+	greenIcon   windows.Handle
+	redIcon     windows.Handle
 }
 
 var instance *TrayApp
@@ -190,18 +194,14 @@ func (app *TrayApp) Run() error {
 	className, _ := windows.UTF16PtrFromString("NanoLabsTrayClass")
 	windowTitle, _ := windows.UTF16PtrFromString("NanoLabs Monitor Tray")
 
-	// Try loading custom icon, fallback to default IDI_APPLICATION
-	exePath, _ := os.Executable()
-	exeDir := filepath.Dir(exePath)
-	iconPath := filepath.Join(exeDir, "icon.ico")
-	if _, err := os.Stat(iconPath); err == nil {
-		pIconPath, _ := windows.UTF16PtrFromString(iconPath)
-		r, _, _ := loadImage.Call(0, uintptr(unsafe.Pointer(pIconPath)), IMAGE_ICON, 0, 0, LR_LOADFROMFILE|LR_DEFAULTSIZE)
-		app.hIcon = windows.Handle(r)
-	}
-	if app.hIcon == 0 {
-		r, _, _ := loadIcon.Call(0, uintptr(IDI_APPLICATION))
-		app.hIcon = windows.Handle(r)
+	// Create dynamic colored circle icons
+	app.greenIcon = createCircleIcon(16, 185, 129) // Emerald Green #10b981
+	app.redIcon = createCircleIcon(239, 68, 68)    // Crimson Red #ef4444
+
+	if app.isServiceRunning() {
+		app.hIcon = app.greenIcon
+	} else {
+		app.hIcon = app.redIcon
 	}
 
 	wndProcCallback := syscall.NewCallback(wndProc)
@@ -281,8 +281,10 @@ func (app *TrayApp) updateTooltip() {
 	var statusText string
 	if isRunning {
 		statusText = "🟢 Conectado al NOC"
+		app.nid.HIcon = app.greenIcon
 	} else {
 		statusText = "🔴 Servicio Detenido"
+		app.nid.HIcon = app.redIcon
 	}
 
 	tip := fmt.Sprintf("NanoLabs: %s (%s)", app.hostname, statusText)
@@ -290,7 +292,7 @@ func (app *TrayApp) updateTooltip() {
 		tip = tip[:120]
 	}
 	copy(app.nid.SzTip[:], windows.StringToUTF16(tip))
-	app.nid.UFlags = NIF_TIP
+	app.nid.UFlags = NIF_TIP | NIF_ICON
 	shellNotifyIcon.Call(NIM_MODIFY, uintptr(unsafe.Pointer(&app.nid)))
 }
 
@@ -446,17 +448,93 @@ func (app *TrayApp) handleOpenLogs() {
 
 func (app *TrayApp) handleRestartService() {
 	go func() {
-		_ = exec.Command("net", "stop", app.serviceName).Run()
-		time.Sleep(1 * time.Second)
-		_ = exec.Command("net", "start", app.serviceName).Run()
-		time.Sleep(2 * time.Second)
-		app.updateTooltip()
-		if app.isServiceRunning() {
-			app.ShowNotification("Servicio de Monitoreo", "El servicio se ha reiniciado correctamente.")
-		} else {
-			app.ShowNotification("Servicio de Monitoreo", "No se pudo reiniciar. Requiere permisos de Administrador.")
+		pVerb, _ := windows.UTF16PtrFromString("runas")
+		pCmd, _ := windows.UTF16PtrFromString("cmd.exe")
+		pArgs, _ := windows.UTF16PtrFromString("/c net stop " + app.serviceName + " & net start " + app.serviceName)
+
+		shellExecute.Call(
+			0,
+			uintptr(unsafe.Pointer(pVerb)),
+			uintptr(unsafe.Pointer(pCmd)),
+			uintptr(unsafe.Pointer(pArgs)),
+			0,
+			SW_HIDE,
+		)
+
+		for i := 0; i < 6; i++ {
+			time.Sleep(1 * time.Second)
+			app.updateTooltip()
+			if app.isServiceRunning() {
+				app.ShowNotification("Servicio de Monitoreo", "El servicio se ha iniciado correctamente.")
+				return
+			}
 		}
+		app.ShowNotification("Servicio de Monitoreo", "Comando enviado. Verificando estado...")
 	}()
+}
+
+func createCircleIcon(r, g, b byte) windows.Handle {
+	const size = 16
+	andMask := make([]byte, (size*size)/8)
+	xorPixels := make([]byte, size*size*4)
+
+	radius := 6.5
+	center := 7.5
+
+	for y := 0; y < size; y++ {
+		for x := 0; x < size; x++ {
+			pixelIdx := (y*size + x) * 4
+			maskByteIdx := (y*size + x) / 8
+			maskBitIdx := 7 - ((y*size + x) % 8)
+
+			dx := float64(x) - center
+			dy := float64(y) - center
+			dist := math.Sqrt(dx*dx + dy*dy)
+
+			if dist <= radius {
+				if dist > radius-1.0 {
+					xorPixels[pixelIdx+0] = byte(float64(b) * 0.7)
+					xorPixels[pixelIdx+1] = byte(float64(g) * 0.7)
+					xorPixels[pixelIdx+2] = byte(float64(r) * 0.7)
+					xorPixels[pixelIdx+3] = 255
+				} else if dist < 2.5 {
+					xorPixels[pixelIdx+0] = minByte(b+40, 255)
+					xorPixels[pixelIdx+1] = minByte(g+40, 255)
+					xorPixels[pixelIdx+2] = minByte(r+40, 255)
+					xorPixels[pixelIdx+3] = 255
+				} else {
+					xorPixels[pixelIdx+0] = b
+					xorPixels[pixelIdx+1] = g
+					xorPixels[pixelIdx+2] = r
+					xorPixels[pixelIdx+3] = 255
+				}
+			} else {
+				andMask[maskByteIdx] |= (1 << maskBitIdx)
+				xorPixels[pixelIdx+0] = 0
+				xorPixels[pixelIdx+1] = 0
+				xorPixels[pixelIdx+2] = 0
+				xorPixels[pixelIdx+3] = 0
+			}
+		}
+	}
+
+	hIcon, _, _ := createIcon.Call(
+		0,
+		uintptr(size),
+		uintptr(size),
+		1,
+		32,
+		uintptr(unsafe.Pointer(&andMask[0])),
+		uintptr(unsafe.Pointer(&xorPixels[0])),
+	)
+	return windows.Handle(hIcon)
+}
+
+func minByte(a byte, b int) byte {
+	if int(a) > b {
+		return byte(b)
+	}
+	return a
 }
 
 func copyToClipboard(text string) {

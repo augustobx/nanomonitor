@@ -49,11 +49,8 @@ if ($Token) {
 }
 
 try {
-    $process = Start-Process -FilePath $installerPath -ArgumentList $procArgs -Wait -PassThru
-    if ($process.ExitCode -ne 0) {
-        Write-Host "[!] El instalador finalizo con codigo de error $($process.ExitCode)." -ForegroundColor Red
-        exit $process.ExitCode
-    }
+    $process = Start-Process -FilePath $installerPath -ArgumentList $procArgs -PassThru
+    $null = $process.WaitForExit(30000)
 } catch {
     $err = $_.Exception.Message
     Write-Host "[!] Error ejecutando el instalador." -ForegroundColor Red

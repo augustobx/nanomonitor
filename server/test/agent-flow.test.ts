@@ -101,7 +101,7 @@ describe('Agent Ingestion & End-to-End HMAC Flow', () => {
     vi.spyOn(db.device, 'count').mockResolvedValue(1);
     vi.spyOn(db.device, 'findFirst').mockResolvedValue(null);
     vi.spyOn(db.device, 'create').mockResolvedValue(mockDevice as any);
-    vi.spyOn(db.agent, 'updateMany').mockResolvedValue({ count: 0 });
+    vi.spyOn(db.agent, 'upsert').mockResolvedValue(mockAgent as any);
     vi.spyOn(db.agent, 'create').mockResolvedValue(mockAgent as any);
     vi.spyOn(db.enrollmentToken, 'update').mockResolvedValue({ ...mockToken, usedCount: 1 } as any);
     vi.spyOn(db.auditLog, 'create').mockResolvedValue({} as any);

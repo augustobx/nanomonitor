@@ -241,7 +241,7 @@ func doInstall(token, apiURL string, silent bool) {
 	}
 
 	// 8. Start Windows Service
-	_ = exec.Command("net", "start", ServiceName).Run()
+	_ = exec.Command("sc.exe", "start", ServiceName).Run()
 
 	// 9. Launch nanotray.exe in current user session
 	pTray, _ := windows.UTF16PtrFromString(trayDest)
@@ -258,6 +258,7 @@ func doInstall(token, apiURL string, silent bool) {
 				"• El equipo comenzará a reportar telemetría al NOC.",
 			MB_OK|MB_ICONINFORMATION)
 	}
+	os.Exit(0)
 }
 
 func doUninstall(silent bool) {

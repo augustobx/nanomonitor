@@ -10,18 +10,10 @@ export const createTokenSchema = z.object({
 export const registerAgentSchema = z.object({
   token: z.string().min(5),
   hostname: z.string().min(1).max(255),
-  hardwareId: z.string().optional(),
+  hardwareId: z.string().nullable().optional(),
   osInfo: z
-    .object({
-      caption: z.string().optional(),
-      version: z.string().optional(),
-      buildNumber: z.string().optional(),
-      osArchitecture: z.string().optional(),
-      serialNumber: z.string().optional(),
-      manufacturer: z.string().optional(),
-      model: z.string().optional(),
-    })
-    .passthrough()
+    .record(z.any())
+    .nullable()
     .optional(),
 });
 

@@ -283,19 +283,20 @@ export const enrollmentRoutes: FastifyPluginAsync = async (fastify: FastifyInsta
     // Generate agent credentials
     const agentSecret = generateAgentSecret();
 
-    // Revoke any previous agent for this device if re-enrolling
-    await db.agent.updateMany({
-      where: { deviceId: device.id, status: 'ACTIVE' },
-      data: { status: 'REVOKED', revokedAt: new Date() },
-    });
-
-    const agent = await db.agent.create({
-      data: {
+    const agent = await db.agent.upsert({
+      where: { deviceId: device.id },
+      create: {
         tenantId: tokenRecord.tenantId,
         deviceId: device.id,
         agentVersion: '0.1.0',
         secretHash: agentSecret, // Direct secret for HMAC-SHA256 signature verification
         status: 'ACTIVE',
+      },
+      update: {
+        agentVersion: '0.1.0',
+        secretHash: agentSecret,
+        status: 'ACTIVE',
+        revokedAt: null,
       },
     });
 

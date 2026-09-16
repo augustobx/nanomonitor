@@ -59,10 +59,10 @@ type Response struct {
 
 // EnrollRequest is sent during device enrollment
 type EnrollRequest struct {
-	Token    string      `json:"token"`
-	Hostname string      `json:"hostname"`
-	HardwareID string   `json:"hardwareId,omitempty"`
-	OSInfo   interface{} `json:"osInfo"`
+	Token      string      `json:"token"`
+	Hostname   string      `json:"hostname"`
+	HardwareID string      `json:"hardwareId,omitempty"`
+	OSInfo     interface{} `json:"osInfo,omitempty"`
 }
 
 // EnrollResponse is returned after successful enrollment
