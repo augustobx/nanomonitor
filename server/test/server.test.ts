@@ -30,7 +30,7 @@ describe('Server & Endpoints Lifecycle', () => {
     expect(response.headers['content-type']).toContain('text/html');
     expect(response.body).toContain('NanoLabs');
     expect(response.body).toContain('Control Center');
-    expect(response.body).toContain('Servicios Operativos');
+    expect(response.body).toContain('CONSOLA EN LÍNEA');
   });
 
   it('GET / should return JSON status when requested by API clients', async () => {
