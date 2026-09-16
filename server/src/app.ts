@@ -13,6 +13,8 @@ import { tenantsRoutes } from './modules/tenants/tenants.routes.js';
 import { customersRoutes } from './modules/customers/customers.routes.js';
 import { sitesRoutes } from './modules/sites/sites.routes.js';
 import { devicesRoutes } from './modules/devices/devices.routes.js';
+import { alertsRoutes } from './modules/alerts/alerts.routes.js';
+import { ensureDefaultAlertRules } from './modules/alerts/alert-rules.seed.js';
 import { db } from './lib/db.js';
 import { getLandingHtml } from './views/landing.html.js';
 import { generateRandomString } from './lib/crypto.js';
@@ -42,6 +44,11 @@ export async function buildApp(): Promise<FastifyInstance> {
               },
             }
           : true,
+  });
+
+  // Ensure default alert rules exist for all active tenants
+  ensureDefaultAlertRules().catch((err) => {
+    app.log.error({ err }, 'Failed to seed default alert rules');
   });
 
   // Security plugins — CSP must allow inline scripts/styles for the SSR landing console
@@ -92,6 +99,7 @@ export async function buildApp(): Promise<FastifyInstance> {
       let devices: any[] = [];
       let customers: any[] = [];
       let recentEvents: any[] = [];
+      let activeAlerts: any[] = [];
       try {
         devices = await db.device.findMany({
           include: {
@@ -152,6 +160,21 @@ export async function buildApp(): Promise<FastifyInstance> {
             device: { select: { id: true, hostname: true } },
           },
         });
+
+        activeAlerts = await db.alert.findMany({
+          where: { status: { in: ['OPEN', 'ACKNOWLEDGED'] } },
+          include: {
+            device: { select: { id: true, hostname: true, displayName: true } },
+            customer: { select: { id: true, name: true, code: true } },
+            rule: { select: { id: true, name: true, category: true } },
+            acknowledger: { select: { id: true, name: true, email: true } },
+          },
+          orderBy: [
+            { severity: 'asc' },
+            { lastSeenAt: 'desc' },
+          ],
+          take: 100,
+        });
       } catch (err) {
         request.log.error(err, 'Failed to fetch dashboard data for landing');
       }
@@ -164,6 +187,7 @@ export async function buildApp(): Promise<FastifyInstance> {
         devices,
         customers,
         recentEvents,
+        alerts: activeAlerts,
       });
       return reply
         .header('Cache-Control', 'no-cache, no-store, must-revalidate')
@@ -188,6 +212,7 @@ export async function buildApp(): Promise<FastifyInstance> {
     let devices: any[] = [];
     let customers: any[] = [];
     let recentEvents: any[] = [];
+    let activeAlerts: any[] = [];
     try {
       devices = await db.device.findMany({
         include: {
@@ -248,6 +273,21 @@ export async function buildApp(): Promise<FastifyInstance> {
           device: { select: { id: true, hostname: true } },
         },
       });
+
+      activeAlerts = await db.alert.findMany({
+        where: { status: { in: ['OPEN', 'ACKNOWLEDGED'] } },
+        include: {
+          device: { select: { id: true, hostname: true, displayName: true } },
+          customer: { select: { id: true, name: true, code: true } },
+          rule: { select: { id: true, name: true, category: true } },
+          acknowledger: { select: { id: true, name: true, email: true } },
+        },
+        orderBy: [
+          { severity: 'asc' },
+          { lastSeenAt: 'desc' },
+        ],
+        take: 100,
+      });
     } catch (err) {
       request.log.error(err, 'Failed to fetch live dashboard telemetry');
     }
@@ -261,6 +301,7 @@ export async function buildApp(): Promise<FastifyInstance> {
         devices,
         customers,
         recentEvents,
+        alerts: activeAlerts,
         timestamp: new Date().toISOString(),
       });
   });
@@ -371,6 +412,7 @@ export async function buildApp(): Promise<FastifyInstance> {
   await app.register(customersRoutes, { prefix: '/api/v1/customers' });
   await app.register(sitesRoutes, { prefix: '/api/v1/sites' });
   await app.register(devicesRoutes, { prefix: '/api/v1/devices' });
+  await app.register(alertsRoutes, { prefix: '/api/v1/alerts' });
 
   // Centralized Error Handler
   app.setErrorHandler((error: any, request, reply) => {

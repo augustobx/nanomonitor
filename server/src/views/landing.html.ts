@@ -12,6 +12,7 @@ export function getLandingHtml(data: {
   devices?: any[];
   customers?: any[];
   recentEvents?: any[];
+  alerts?: any[];
 }): string {
   const uptimeMinutes = Math.floor(data.uptimeSeconds / 60);
   const uptimeHours = (data.uptimeSeconds / 3600).toFixed(1);
@@ -990,6 +991,9 @@ export function getLandingHtml(data: {
       <button class="nav-tab-btn active" id="navTabDirectory" onclick="switchNavTab('directory')">
         📁 Directorio de Clientes
       </button>
+      <button class="nav-tab-btn" id="navTabAlerts" onclick="switchNavTab('alerts')">
+        🚨 Centro de Alertas <span class="badge-alert-pill" id="navAlertsPill" style="display:none; background:#ef4444; color:#fff; font-size:10px; padding:1px 6px; border-radius:10px; font-weight:700;">0</span>
+      </button>
       <button class="nav-tab-btn" id="navTabCustomers" onclick="switchNavTab('customers')">
         🏢 Gestión de Empresas & Sedes
       </button>
@@ -1307,6 +1311,120 @@ export function getLandingHtml(data: {
       </div>
     </div>
 
+    <!-- VIEW: CENTRO DE ALERTAS NOC (Alert Center) -->
+    <div id="viewAlertCenter" style="display: none; flex-direction: column; gap: 16px;">
+      <!-- Alert Center Banner -->
+      <div style="background: var(--bg-surface); border: 1px solid var(--border-subtle); border-radius: 8px; padding: 16px 20px; display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 16px;">
+        <div>
+          <div style="display: flex; align-items: center; gap: 10px;">
+            <span style="font-size: 24px;">🚨</span>
+            <h2 style="font-size: 18px; font-weight: 700; color: #fff;">Centro de Alertas &amp; Monitoreo Proactivo (NOC)</h2>
+            <span class="status-pill status-danger" id="acTotalActivePill">0 Alertas Activas</span>
+          </div>
+          <p style="font-size: 12px; color: var(--text-secondary); margin-top: 4px;">
+            Detección continua de anomalías en almacenamiento, hardware SMART, CPU/RAM, desconexiones y eventos de Windows con de-duplicación y auto-resolución.
+          </p>
+        </div>
+
+        <div style="display: flex; gap: 8px; align-items: center; flex-wrap: wrap;">
+          <button class="btn btn-secondary btn-sm" onclick="refreshAlerts(false)" title="Consultar las alertas más recientes">
+            <span id="acRefreshIcon">🔄</span> Actualizar Alertas
+          </button>
+          <button class="btn btn-primary btn-sm" onclick="triggerAlertEvaluation()" title="Ejecutar motor de evaluación contra todos los equipos en este momento">
+            ⚡ Evaluar Reglas Ahora
+          </button>
+        </div>
+      </div>
+
+      <!-- Alert KPIs Strip -->
+      <div class="kpi-row">
+        <div class="kpi-box" style="border-left: 3px solid #ef4444;">
+          <div class="kpi-header"><span>Críticas Activas</span><span>🔴</span></div>
+          <div class="kpi-val" id="acKpiCritical" style="color: #ef4444;">0</div>
+          <div class="kpi-detail">Intervención técnica urgente</div>
+        </div>
+
+        <div class="kpi-box" style="border-left: 3px solid #f97316;">
+          <div class="kpi-header"><span>Altas Activas</span><span>🟠</span></div>
+          <div class="kpi-val" id="acKpiHigh" style="color: #f97316;">0</div>
+          <div class="kpi-detail">Rendimiento o Disponibilidad</div>
+        </div>
+
+        <div class="kpi-box" style="border-left: 3px solid #f59e0b;">
+          <div class="kpi-header"><span>Advertencias</span><span>🟡</span></div>
+          <div class="kpi-val" id="acKpiWarning" style="color: #f59e0b;">0</div>
+          <div class="kpi-detail">Atención preventiva recomendada</div>
+        </div>
+
+        <div class="kpi-box" style="border-left: 3px solid #10b981;">
+          <div class="kpi-header"><span>Resueltas Hoy</span><span>🟢</span></div>
+          <div class="kpi-val" id="acKpiResolvedToday" style="color: #10b981;">0</div>
+          <div class="kpi-detail" id="acKpiResolvedDetail">Auto-sanadas o cerradas</div>
+        </div>
+      </div>
+
+      <!-- Filter Bar -->
+      <div style="background: var(--bg-surface); border: 1px solid var(--border-subtle); border-radius: 8px; padding: 12px 16px; display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 12px;">
+        <div style="display: flex; gap: 12px; align-items: center; flex-wrap: wrap;">
+          <div style="display: flex; align-items: center; gap: 6px;">
+            <label style="font-size: 11px; font-weight: 600; color: var(--text-muted); text-transform: uppercase;">Estado:</label>
+            <select id="acFilterStatus" class="form-input" style="padding: 5px 8px; font-size: 12px; width: auto;" onchange="filterAlertCenter()">
+              <option value="ACTIVE" selected>Activas (Abiertas + Reconocidas)</option>
+              <option value="OPEN">Sólo Nuevas / Abiertas</option>
+              <option value="ACKNOWLEDGED">Reconocidas</option>
+              <option value="RESOLVED">Resueltas / Histórico</option>
+              <option value="ALL">Todas las Alertas</option>
+            </select>
+          </div>
+
+          <div style="display: flex; align-items: center; gap: 6px;">
+            <label style="font-size: 11px; font-weight: 600; color: var(--text-muted); text-transform: uppercase;">Severidad:</label>
+            <select id="acFilterSeverity" class="form-input" style="padding: 5px 8px; font-size: 12px; width: auto;" onchange="filterAlertCenter()">
+              <option value="ALL" selected>Todas las Severidades</option>
+              <option value="CRITICAL">🔴 Crítica</option>
+              <option value="HIGH">🟠 Alta</option>
+              <option value="WARNING">🟡 Advertencia</option>
+              <option value="INFO">🔵 Informativa</option>
+            </select>
+          </div>
+
+          <div style="display: flex; align-items: center; gap: 6px;">
+            <label style="font-size: 11px; font-weight: 600; color: var(--text-muted); text-transform: uppercase;">Cliente:</label>
+            <select id="acFilterCustomer" class="form-input" style="padding: 5px 8px; font-size: 12px; width: auto;" onchange="filterAlertCenter()">
+              <option value="ALL" selected>Todos los Clientes</option>
+            </select>
+          </div>
+        </div>
+
+        <div class="search-box" style="width: 280px;">
+          <span class="search-icon">🔍</span>
+          <input type="text" id="acSearchInput" class="search-input" placeholder="Buscar por alerta, equipo..." oninput="filterAlertCenter()">
+        </div>
+      </div>
+
+      <!-- Alerts Feed Table -->
+      <div class="table-wrapper">
+        <table>
+          <thead>
+            <tr>
+              <th>Severidad</th>
+              <th>Estación de Trabajo</th>
+              <th>Organización</th>
+              <th>Alerta &amp; Diagnóstico</th>
+              <th>Repeticiones</th>
+              <th>Primer Reporte</th>
+              <th>Última Ocurrencia</th>
+              <th>Estado</th>
+              <th style="text-align: right;">Acciones</th>
+            </tr>
+          </thead>
+          <tbody id="acAlertsTableBody">
+            <!-- Rendered via JS -->
+          </tbody>
+        </table>
+      </div>
+    </div>
+
     <!-- VIEW 6: DEDICATED WORKSTATION & HARDWARE WORKSPACE (Full Page, No Modals) -->
     <div id="viewDeviceWorkspace" style="display: none; flex-direction: column; gap: 16px;">
       
@@ -1382,7 +1500,7 @@ export function getLandingHtml(data: {
         </div>
       </div>
 
-      <!-- 8 Specialized Navigation Tabs -->
+      <!-- 9 Specialized Navigation Tabs -->
       <div class="drawer-nav-tabs" style="border-radius: 8px; border: 1px solid var(--border-subtle); padding: 6px 10px;">
         <button class="drawer-tab-btn active" id="dTab1" onclick="switchDrawerTab('metrics')">📊 Rendimiento &amp; Recursos</button>
         <button class="drawer-tab-btn" id="dTab2" onclick="switchDrawerTab('specs')">⚙️ Hardware &amp; SO</button>
@@ -1392,6 +1510,7 @@ export function getLandingHtml(data: {
         <button class="drawer-tab-btn" id="dTab6" onclick="switchDrawerTab('software')">📦 Software Instalado</button>
         <button class="drawer-tab-btn" id="dTab7" onclick="switchDrawerTab('events')">⚠️ Eventos de Windows</button>
         <button class="drawer-tab-btn" id="dTab8" onclick="switchDrawerTab('agent')">🔧 Agente &amp; Reasignación</button>
+        <button class="drawer-tab-btn" id="dTab9" onclick="switchDrawerTab('alerts')">🚨 Alertas <span id="wsDevAlertsBadge" style="display:none; background:#ef4444; color:#fff; font-size:10px; padding:1px 6px; border-radius:10px; font-weight:700;">0</span></button>
       </div>
 
       <!-- Tab Content Panes Container (Full Page, Natural Scrolling) -->
@@ -1720,6 +1839,38 @@ export function getLandingHtml(data: {
           </div>
         </div>
 
+        <!-- Tab 9: Device Active & Resolved Alerts Pane -->
+        <div id="dViewAlerts" style="display: none; flex-direction: column; gap: 14px;">
+          <div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 12px;">
+            <div>
+              <h4 style="font-size: 14px; font-weight: 700; color: #fff;">Alertas Registradas para este Dispositivo</h4>
+              <p style="font-size: 11px; color: var(--text-muted); margin-top: 2px;">Condiciones activas detectadas por el motor de reglas y registro histórico.</p>
+            </div>
+            <button class="btn btn-secondary btn-sm" onclick="triggerDeviceAlertEvaluation()" title="Reevaluar reglas para este equipo ahora">
+              ⚡ Evaluar Alertas del Equipo
+            </button>
+          </div>
+
+          <div class="table-wrapper">
+            <table>
+              <thead>
+                <tr>
+                  <th>Severidad</th>
+                  <th>Alerta &amp; Diagnóstico</th>
+                  <th>Repeticiones</th>
+                  <th>Primer Reporte</th>
+                  <th>Última Ocurrencia</th>
+                  <th>Estado</th>
+                  <th style="text-align: right;">Acciones</th>
+                </tr>
+              </thead>
+              <tbody id="dAlertsTableBody">
+                <!-- Rendered via JS -->
+              </tbody>
+            </table>
+          </div>
+        </div>
+
       </div>
     </div>
 
@@ -1794,6 +1945,7 @@ export function getLandingHtml(data: {
     let currentDevices = ${safeJson(data.devices || [])};
     let currentCustomers = ${safeJson(data.customers || [])};
     let currentRecentEvents = ${safeJson(data.recentEvents || [])};
+    let currentAlerts = ${safeJson(data.alerts || [])};
     let currentActiveCustomerId = null;
     let expandedCustomerIds = {};
     let selectedDevice = null;
@@ -1804,6 +1956,9 @@ export function getLandingHtml(data: {
       renderCustomersDirectory();
       renderCustomersTable(currentCustomers);
       renderRecentEventsFeed(currentRecentEvents);
+      renderAlertCenter(currentAlerts);
+      updateNavAlertsPill();
+      populateAlertCustomerFilter();
       populateEnrollCustomerSelect();
 
       const token = localStorage.getItem('nl_token');
@@ -1811,10 +1966,12 @@ export function getLandingHtml(data: {
         setLoggedInUI();
         await loadDevices();
         await loadCustomers();
+        await refreshAlerts(true);
       } else {
         const freshToken = await quickLoginDemo();
         if (freshToken) {
           await loadCustomers();
+          await refreshAlerts(true);
         }
       }
 
@@ -2352,6 +2509,7 @@ export function getLandingHtml(data: {
     function switchNavTab(tab) {
       const views = {
         directory: 'viewGeneralDirectory',
+        alerts: 'viewAlertCenter',
         customers: 'viewCustomers',
         enroll: 'viewEnroll',
         cluster: 'viewCluster'
@@ -2359,6 +2517,7 @@ export function getLandingHtml(data: {
 
       const btns = {
         directory: 'navTabDirectory',
+        alerts: 'navTabAlerts',
         customers: 'navTabCustomers',
         enroll: 'navTabEnroll',
         cluster: 'navTabCluster'
@@ -2387,6 +2546,11 @@ export function getLandingHtml(data: {
         setHtml('breadcrumbCurrent', 'Directorio de Clientes & Flota');
         const btnBack = document.getElementById('btnBackGlobal');
         if (btnBack) btnBack.style.display = 'none';
+      } else if (tab === 'alerts') {
+        setHtml('breadcrumbCurrent', 'Centro de Alertas & Monitoreo Proactivo (NOC)');
+        const btnBack = document.getElementById('btnBackGlobal');
+        if (btnBack) btnBack.style.display = 'none';
+        renderAlertCenter(currentAlerts);
       } else if (tab === 'customers') {
         setHtml('breadcrumbCurrent', 'Gestión de Empresas & Sedes');
       } else if (tab === 'enroll') {
@@ -2773,6 +2937,9 @@ export function getLandingHtml(data: {
           }).catch(function(e) { console.warn('Health score fetch error:', e); });
         }
 
+        // Render Device Alerts
+        renderDeviceAlerts(d.id);
+
         switchDrawerTab('metrics');
         if (!isSilent) {
           window.scrollTo({ top: 0, behavior: 'smooth' });
@@ -2784,7 +2951,7 @@ export function getLandingHtml(data: {
     }
 
     function switchDrawerTab(tab) {
-      const tabs = ['metrics', 'specs', 'storage', 'network', 'security', 'software', 'events', 'agent'];
+      const tabs = ['metrics', 'specs', 'storage', 'network', 'security', 'software', 'events', 'agent', 'alerts'];
       const tabBtnMap = {
         metrics: 'dTab1',
         specs: 'dTab2',
@@ -2793,7 +2960,8 @@ export function getLandingHtml(data: {
         security: 'dTab5',
         software: 'dTab6',
         events: 'dTab7',
-        agent: 'dTab8'
+        agent: 'dTab8',
+        alerts: 'dTab9'
       };
       const viewMap = {
         metrics: 'dViewMetrics',
@@ -2803,7 +2971,8 @@ export function getLandingHtml(data: {
         security: 'dViewSecurity',
         software: 'dViewSoftware',
         events: 'dViewEvents',
-        agent: 'dViewAgent'
+        agent: 'dViewAgent',
+        alerts: 'dViewAlerts'
       };
 
       tabs.forEach(function(t) {
@@ -3630,6 +3799,11 @@ export function getLandingHtml(data: {
             currentDevices = json.devices;
             if (Array.isArray(json.customers)) currentCustomers = json.customers;
             if (Array.isArray(json.recentEvents)) currentRecentEvents = json.recentEvents;
+            if (Array.isArray(json.alerts)) {
+              currentAlerts = json.alerts;
+              renderAlertCenter(currentAlerts);
+              updateNavAlertsPill();
+            }
 
             renderGlobalKpis();
             const filterInput = document.getElementById('directorySearchInput');
@@ -3662,6 +3836,7 @@ export function getLandingHtml(data: {
                   drawerStatusEl.className = 'status-pill ' + (isOnline ? 'status-online' : 'status-offline');
                 }
               }
+              renderDeviceAlerts(selectedDevice.id);
             }
           }
         }
@@ -3703,6 +3878,353 @@ export function getLandingHtml(data: {
       }
     }
 
+    // ==========================================
+    // ALERT CENTER NOC FUNCTIONS (PHASE 9)
+    // ==========================================
+
+    function renderAlertCenter(alerts) {
+      alerts = Array.isArray(alerts) ? alerts : (currentAlerts || []);
+      const tbody = document.getElementById('acAlertsTableBody');
+      if (!tbody) return;
+
+      // Update KPI strip
+      const activeAlerts = alerts.filter(function(a) { return a.status === 'OPEN' || a.status === 'ACKNOWLEDGED'; });
+      const critCount = activeAlerts.filter(function(a) { return a.severity === 'CRITICAL'; }).length;
+      const highCount = activeAlerts.filter(function(a) { return a.severity === 'HIGH'; }).length;
+      const warnCount = activeAlerts.filter(function(a) { return a.severity === 'WARNING'; }).length;
+      const resolvedCount = alerts.filter(function(a) { return a.status === 'RESOLVED'; }).length;
+
+      const actPill = document.getElementById('acTotalActivePill');
+      if (actPill) {
+        actPill.className = 'status-pill ' + (critCount > 0 ? 'status-danger' : (highCount > 0 ? 'status-warning' : (activeAlerts.length > 0 ? 'status-info' : 'status-online')));
+        actPill.textContent = activeAlerts.length + (activeAlerts.length === 1 ? ' Alerta Activa' : ' Alertas Activas');
+      }
+
+      setVal('acKpiCritical', critCount);
+      setVal('acKpiHigh', highCount);
+      setVal('acKpiWarning', warnCount);
+      setVal('acKpiResolvedToday', resolvedCount);
+
+      filterAlertCenter();
+    }
+
+    function filterAlertCenter() {
+      const tbody = document.getElementById('acAlertsTableBody');
+      if (!tbody) return;
+
+      const statusFilter = (document.getElementById('acFilterStatus') ? document.getElementById('acFilterStatus').value : 'ACTIVE');
+      const sevFilter = (document.getElementById('acFilterSeverity') ? document.getElementById('acFilterSeverity').value : 'ALL');
+      const custFilter = (document.getElementById('acFilterCustomer') ? document.getElementById('acFilterCustomer').value : 'ALL');
+      const query = (document.getElementById('acSearchInput') ? document.getElementById('acSearchInput').value.toLowerCase().trim() : '');
+
+      let list = currentAlerts || [];
+
+      if (statusFilter === 'ACTIVE') {
+        list = list.filter(function(a) { return a.status === 'OPEN' || a.status === 'ACKNOWLEDGED'; });
+      } else if (statusFilter !== 'ALL') {
+        list = list.filter(function(a) { return a.status === statusFilter; });
+      }
+
+      if (sevFilter !== 'ALL') {
+        list = list.filter(function(a) { return a.severity === sevFilter; });
+      }
+
+      if (custFilter !== 'ALL') {
+        list = list.filter(function(a) {
+          return (a.customer && a.customer.id === custFilter) || a.customerId === custFilter;
+        });
+      }
+
+      if (query) {
+        list = list.filter(function(a) {
+          const title = (a.title || '').toLowerCase();
+          const desc = (a.description || '').toLowerCase();
+          const host = (a.device ? a.device.hostname : '').toLowerCase();
+          const cust = (a.customer ? a.customer.name : '').toLowerCase();
+          return title.includes(query) || desc.includes(query) || host.includes(query) || cust.includes(query);
+        });
+      }
+
+      if (list.length === 0) {
+        tbody.innerHTML = '<tr><td colspan="9" style="text-align: center; color: var(--text-muted); padding: 32px;">' +
+          'No se encontraron alertas para los filtros seleccionados. Todas las estaciones operan normalmente.' +
+        '</td></tr>';
+        return;
+      }
+
+      tbody.innerHTML = list.map(function(a) {
+        const isCrit = a.severity === 'CRITICAL';
+        const isHigh = a.severity === 'HIGH';
+        const isWarn = a.severity === 'WARNING';
+        const sevClass = isCrit ? 'status-danger' : (isHigh ? 'status-warning' : (isWarn ? 'status-info' : 'status-online'));
+        const sevLabel = isCrit ? '🔴 Crítica' : (isHigh ? '🟠 Alta' : (isWarn ? '🟡 Advertencia' : '🔵 Info'));
+
+        const host = a.device ? a.device.hostname : 'Dispositivo';
+        const custName = a.customer ? a.customer.name : 'NanoLabs';
+        const custCode = a.customer ? a.customer.code : 'NL';
+
+        let statusBadge = '<span class="status-pill status-danger">Abierta</span>';
+        if (a.status === 'ACKNOWLEDGED') {
+          const ackUser = a.acknowledger ? (a.acknowledger.name || a.acknowledger.email) : 'Técnico';
+          statusBadge = '<span class="status-pill status-warning" title="Reconocida por ' + ackUser + '">👁️ Reconocida</span>';
+        } else if (a.status === 'RESOLVED') {
+          statusBadge = '<span class="status-pill status-online">✓ Resuelta</span>';
+        } else if (a.status === 'IGNORED') {
+          statusBadge = '<span class="status-pill status-offline">Ignorada</span>';
+        }
+
+        const firstSeen = a.firstSeenAt ? new Date(a.firstSeenAt).toLocaleString('es-AR') : '-';
+        const lastSeen = a.lastSeenAt ? new Date(a.lastSeenAt).toLocaleString('es-AR') : '-';
+
+        let actionBtns = '';
+        if (a.status === 'OPEN') {
+          actionBtns += '<button class="btn btn-secondary btn-sm" onclick="acknowledgeAlert(\'' + a.id + '\')" title="Marcar como atendida/en investigación">👁️ Reconocer</button> ';
+        }
+        if (a.status !== 'RESOLVED') {
+          actionBtns += '<button class="btn btn-secondary btn-sm" onclick="resolveAlert(\'' + a.id + '\')" title="Marcar alerta como solucionada">✅ Resolver</button> ';
+        }
+        if (a.deviceId) {
+          actionBtns += '<button class="btn btn-primary btn-sm btn-device-detail" data-device-id="' + a.deviceId + '" title="Abrir ficha del equipo">💻 Ver Ficha</button>';
+        }
+
+        return '<tr>' +
+          '<td><span class="status-pill ' + sevClass + '">' + sevLabel + '</span></td>' +
+          '<td><strong class="code-font" style="color: #fff; font-size: 13px;">' + host + '</strong></td>' +
+          '<td><span style="font-size: 12px; color: var(--text-secondary);">' + custName + '</span> <span class="code-badge">' + custCode + '</span></td>' +
+          '<td><strong style="color: #fff; font-size: 13px;">' + (a.title || 'Alerta') + '</strong><div style="font-size: 11px; color: var(--text-muted); margin-top: 3px; max-width: 380px;">' + (a.description || '') + '</div></td>' +
+          '<td><span class="code-badge">x' + (a.occurrences || 1) + '</span></td>' +
+          '<td><span class="code-font" style="font-size: 11px; color: var(--text-muted);">' + firstSeen + '</span></td>' +
+          '<td><span class="code-font" style="font-size: 11px; color: #38bdf8;">' + lastSeen + '</span></td>' +
+          '<td>' + statusBadge + '</td>' +
+          '<td style="text-align: right; white-space: nowrap;">' + actionBtns + '</td>' +
+        '</tr>';
+      }).join('');
+    }
+
+    function updateNavAlertsPill() {
+      const activeAlerts = (currentAlerts || []).filter(function(a) {
+        return a.status === 'OPEN' || a.status === 'ACKNOWLEDGED';
+      });
+      const pill = document.getElementById('navAlertsPill');
+      if (pill) {
+        if (activeAlerts.length > 0) {
+          pill.style.display = 'inline-block';
+          pill.textContent = activeAlerts.length;
+        } else {
+          pill.style.display = 'none';
+        }
+      }
+    }
+
+    function populateAlertCustomerFilter() {
+      const sel = document.getElementById('acFilterCustomer');
+      if (!sel) return;
+      const currentVal = sel.value;
+      let html = '<option value="ALL">Todos los Clientes</option>';
+      (currentCustomers || []).forEach(function(c) {
+        html += '<option value="' + c.id + '"' + (currentVal === c.id ? ' selected' : '') + '>' + c.name + ' (' + c.code + ')</option>';
+      });
+      sel.innerHTML = html;
+    }
+
+    async function acknowledgeAlert(alertId) {
+      let token = localStorage.getItem('nl_token');
+      if (!token) token = await quickLoginDemo();
+      try {
+        const res = await fetch('/api/v1/alerts/' + alertId + '/ack', {
+          method: 'PATCH',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': 'Bearer ' + token
+          }
+        });
+        if (res.ok) {
+          showToast('✅ Alerta reconocida por el técnico');
+          await refreshAlerts(true);
+          if (selectedDeviceId) renderDeviceAlerts(selectedDeviceId);
+        } else {
+          showToast('No se pudo reconocer la alerta', 'error');
+        }
+      } catch (err) {
+        console.error('Acknowledge alert error:', err);
+        showToast('Error de red al reconocer alerta', 'error');
+      }
+    }
+
+    async function resolveAlert(alertId) {
+      let token = localStorage.getItem('nl_token');
+      if (!token) token = await quickLoginDemo();
+      try {
+        const res = await fetch('/api/v1/alerts/' + alertId + '/resolve', {
+          method: 'PATCH',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': 'Bearer ' + token
+          },
+          body: JSON.stringify({ note: 'Resuelto manualmente desde el Centro de Alertas NOC' })
+        });
+        if (res.ok) {
+          showToast('✅ Alerta resuelta con éxito');
+          await refreshAlerts(true);
+          if (selectedDeviceId) renderDeviceAlerts(selectedDeviceId);
+        } else {
+          showToast('No se pudo resolver la alerta', 'error');
+        }
+      } catch (err) {
+        console.error('Resolve alert error:', err);
+        showToast('Error de red al resolver alerta', 'error');
+      }
+    }
+
+    async function triggerAlertEvaluation() {
+      const icon = document.getElementById('acRefreshIcon');
+      if (icon) icon.classList.add('spinning');
+      let token = localStorage.getItem('nl_token');
+      if (!token) token = await quickLoginDemo();
+      try {
+        const res = await fetch('/api/v1/alerts/evaluate', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': 'Bearer ' + token
+          }
+        });
+        if (res.ok) {
+          const json = await res.json();
+          const d = json.data || {};
+          showToast('⚡ Evaluación completada: +' + (d.totalCreated || 0) + ' nuevas, ~' + (d.totalUpdated || 0) + ' actualizadas, -' + (d.totalResolved || 0) + ' resueltas');
+          await refreshAlerts(true);
+        } else {
+          showToast('Error al evaluar reglas', 'error');
+        }
+      } catch (err) {
+        console.error('Evaluation error:', err);
+        showToast('Error al conectar con el motor de alertas', 'error');
+      } finally {
+        setTimeout(function() {
+          if (icon) icon.classList.remove('spinning');
+        }, 600);
+      }
+    }
+
+    async function triggerDeviceAlertEvaluation() {
+      if (!selectedDeviceId && !selectedDevice) return;
+      const id = selectedDeviceId || selectedDevice.id;
+      let token = localStorage.getItem('nl_token');
+      if (!token) token = await quickLoginDemo();
+      try {
+        const res = await fetch('/api/v1/alerts/evaluate', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': 'Bearer ' + token
+          },
+          body: JSON.stringify({ deviceId: id })
+        });
+        if (res.ok) {
+          showToast('⚡ Reglas de este equipo evaluadas');
+          await refreshAlerts(true);
+          renderDeviceAlerts(id);
+        }
+      } catch (err) {
+        console.error('Device alert eval error:', err);
+      }
+    }
+
+    async function refreshAlerts(silent) {
+      const icon = document.getElementById('acRefreshIcon');
+      if (icon) icon.classList.add('spinning');
+      let token = localStorage.getItem('nl_token');
+      if (!token) token = await quickLoginDemo();
+      try {
+        const res = await fetch('/api/v1/alerts?limit=100', {
+          headers: { 'Authorization': 'Bearer ' + token }
+        });
+        if (res.ok) {
+          const json = await res.json();
+          if (json && Array.isArray(json.data)) {
+            currentAlerts = json.data;
+            renderAlertCenter(currentAlerts);
+            updateNavAlertsPill();
+            if (!silent) showToast('✅ Centro de alertas actualizado');
+          }
+        }
+      } catch (err) {
+        console.error('Refresh alerts error:', err);
+        if (!silent) showToast('Error al refrescar alertas', 'error');
+      } finally {
+        setTimeout(function() {
+          if (icon) icon.classList.remove('spinning');
+        }, 600);
+      }
+    }
+
+    function renderDeviceAlerts(deviceId) {
+      const tbody = document.getElementById('dAlertsTableBody');
+      const badge = document.getElementById('wsDevAlertsBadge');
+      if (!tbody) return;
+
+      const devAlerts = (currentAlerts || []).filter(function(a) {
+        return a.deviceId === deviceId || (a.device && a.device.id === deviceId);
+      });
+
+      const activeDevAlerts = devAlerts.filter(function(a) {
+        return a.status === 'OPEN' || a.status === 'ACKNOWLEDGED';
+      });
+
+      if (badge) {
+        if (activeDevAlerts.length > 0) {
+          badge.style.display = 'inline-block';
+          badge.textContent = activeDevAlerts.length;
+        } else {
+          badge.style.display = 'none';
+        }
+      }
+
+      if (devAlerts.length === 0) {
+        tbody.innerHTML = '<tr><td colspan="7" style="text-align: center; color: var(--text-muted); padding: 24px;">' +
+          'No se registran alertas activas ni históricas para esta estación de trabajo. El equipo opera en condiciones normales.' +
+        '</td></tr>';
+        return;
+      }
+
+      tbody.innerHTML = devAlerts.map(function(a) {
+        const isCrit = a.severity === 'CRITICAL';
+        const isHigh = a.severity === 'HIGH';
+        const isWarn = a.severity === 'WARNING';
+        const sevClass = isCrit ? 'status-danger' : (isHigh ? 'status-warning' : (isWarn ? 'status-info' : 'status-online'));
+        const sevLabel = isCrit ? '🔴 Crítica' : (isHigh ? '🟠 Alta' : (isWarn ? '🟡 Advertencia' : '🔵 Info'));
+
+        let statusBadge = '<span class="status-pill status-danger">Abierta</span>';
+        if (a.status === 'ACKNOWLEDGED') {
+          statusBadge = '<span class="status-pill status-warning">👁️ Reconocida</span>';
+        } else if (a.status === 'RESOLVED') {
+          statusBadge = '<span class="status-pill status-online">✓ Resuelta</span>';
+        }
+
+        const firstSeen = a.firstSeenAt ? new Date(a.firstSeenAt).toLocaleString('es-AR') : '-';
+        const lastSeen = a.lastSeenAt ? new Date(a.lastSeenAt).toLocaleString('es-AR') : '-';
+
+        let actionBtns = '';
+        if (a.status === 'OPEN') {
+          actionBtns += '<button class="btn btn-secondary btn-sm" onclick="acknowledgeAlert(\'' + a.id + '\')">👁️ Reconocer</button> ';
+        }
+        if (a.status !== 'RESOLVED') {
+          actionBtns += '<button class="btn btn-secondary btn-sm" onclick="resolveAlert(\'' + a.id + '\')">✅ Resolver</button>';
+        }
+
+        return '<tr>' +
+          '<td><span class="status-pill ' + sevClass + '">' + sevLabel + '</span></td>' +
+          '<td><strong style="color: #fff; font-size: 13px;">' + (a.title || 'Alerta') + '</strong><div style="font-size: 11px; color: var(--text-muted); margin-top: 2px;">' + (a.description || '') + '</div></td>' +
+          '<td><span class="code-badge">x' + (a.occurrences || 1) + '</span></td>' +
+          '<td><span class="code-font" style="font-size: 11px; color: var(--text-muted);">' + firstSeen + '</span></td>' +
+          '<td><span class="code-font" style="font-size: 11px; color: #38bdf8;">' + lastSeen + '</span></td>' +
+          '<td>' + statusBadge + '</td>' +
+          '<td style="text-align: right;">' + actionBtns + '</td>' +
+        '</tr>';
+      }).join('');
+    }
+
     // Window Global Bindings
     window.openDeviceWorkspace = openDeviceWorkspace;
     window.openDeviceDetail = openDeviceWorkspace; // legacy alias
@@ -3742,6 +4264,14 @@ export function getLandingHtml(data: {
     window.handleMoveDevice = handleMoveDevice;
     window.recalculateCurrentDeviceHealth = recalculateCurrentDeviceHealth;
     window.renderDeviceHealthDiagnostic = renderDeviceHealthDiagnostic;
+    window.renderAlertCenter = renderAlertCenter;
+    window.filterAlertCenter = filterAlertCenter;
+    window.acknowledgeAlert = acknowledgeAlert;
+    window.resolveAlert = resolveAlert;
+    window.triggerAlertEvaluation = triggerAlertEvaluation;
+    window.triggerDeviceAlertEvaluation = triggerDeviceAlertEvaluation;
+    window.refreshAlerts = refreshAlerts;
+    window.renderDeviceAlerts = renderDeviceAlerts;
   </script>
 </body>
 </html>`;

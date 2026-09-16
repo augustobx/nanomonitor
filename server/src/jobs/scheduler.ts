@@ -4,6 +4,7 @@ import { runRetentionCleanup } from './retention-cleanup.js';
 import { ensurePartitionsExist } from './partition-creator.js';
 import { runHealthScoringJob } from './health-scorer.js';
 import { runDeviceStatusCheck } from './device-status-checker.js';
+import { runAlertEvaluationJob } from './alert-evaluator.js';
 import { logger } from '../lib/logger.js';
 import { db } from '../lib/db.js';
 import { cacheService } from '../lib/redis.js';
@@ -17,7 +18,7 @@ export class BackgroundJobScheduler {
     this.isRunning = true;
     logger.info('🚀 Background Job Scheduler started');
 
-    // Run partition check and initial health scoring immediately on startup
+    // Run partition check, health scoring, device status and alert evaluation immediately on startup
     ensurePartitionsExist(2).catch((err) => {
       logger.error({ err }, 'Initial partition check failed');
     });
@@ -30,6 +31,10 @@ export class BackgroundJobScheduler {
       logger.error({ err }, 'Initial device status check failed');
     });
 
+    runAlertEvaluationJob().catch((err) => {
+      logger.error({ err }, 'Initial alert evaluation job failed');
+    });
+
     // Schedule device status checker (runs every 2 minutes)
     const statusInterval = setInterval(async () => {
       try {
@@ -39,6 +44,16 @@ export class BackgroundJobScheduler {
       }
     }, 2 * 60 * 1000);
     this.intervals.push(statusInterval);
+
+    // Schedule alert evaluator (runs every 2 minutes)
+    const alertInterval = setInterval(async () => {
+      try {
+        await runAlertEvaluationJob();
+      } catch (err) {
+        logger.error({ err }, 'Scheduled alert evaluation failed');
+      }
+    }, 2 * 60 * 1000);
+    this.intervals.push(alertInterval);
 
     // Schedule health scoring (runs every 10 minutes)
     const healthInterval = setInterval(async () => {

@@ -2,6 +2,7 @@ import { FastifyInstance, FastifyPluginAsync } from 'fastify';
 import crypto from 'crypto';
 import { db } from '../../lib/db.js';
 import { authenticateAgent } from '../../middleware/agent-auth.js';
+import { evaluateDeviceAlerts } from '../alerts/alert-evaluator.js';
 import {
   agentEventsSchema,
   agentHeartbeatSchema,
@@ -287,6 +288,9 @@ export const agentRoutes: FastifyPluginAsync = async (fastify: FastifyInstance) 
 
       processedCount++;
     }
+
+    // Trigger alert evaluation asynchronously for this device
+    evaluateDeviceAlerts(deviceId, tenantId).catch(() => {});
 
     return reply.status(200).send({ status: 'ok', processed: processedCount });
   });
