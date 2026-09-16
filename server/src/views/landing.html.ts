@@ -1131,161 +1131,160 @@ export function getLandingHtml(data: {
       document.getElementById('kpiOnline').textContent = online + ' EN LÍNEA';
     }
 
+    function setVal(id, text) {
+      const el = document.getElementById(id);
+      if (el) el.textContent = text;
+    }
+
+    function setHtml(id, html) {
+      const el = document.getElementById(id);
+      if (el) el.innerHTML = html;
+    }
+
     function renderDevicesTable(devices) {
       const tbody = document.getElementById('devicesTableBody');
-      if (devices.length === 0) {
+      if (!tbody) return;
+      if (!devices || devices.length === 0) {
         tbody.innerHTML = '<tr><td colspan="8" style="text-align: center; padding: 32px; color: var(--text-muted);">No hay dispositivos registrados todavía. Utiliza la pestaña "Enrolar Nuevo Agente" para conectar tu primer equipo.</td></tr>';
         return;
       }
 
-      tbody.innerHTML = devices.map(d => {
+      tbody.innerHTML = devices.map(function(d) {
         const isOnline = d.status === 'ONLINE';
-        const clientName = (d.customer && d.customer.name) ? d.customer.name : 'Cliente Demo SA';
+        const clientName = (d.customer && d.customer.name) ? d.customer.name : 'NanoLabs Infraestructura Interna';
         const osName = d.osEdition || 'Windows 11 Pro 64-bit';
-        const cpu = d.cpuName || '11th Gen Intel i5-11400';
+        const cpu = d.cpuName || '11th Gen Intel(R) Core(TM) i5-11400';
         const ram = d.ramTotalMB ? Math.round(d.ramTotalMB / 1024) + ' GB' : '16 GB';
+        const mfg = (d.manufacturer || 'Gigabyte') + ' ' + (d.model || 'H510M H');
+        const statusClass = isOnline ? 'status-online' : 'status-offline';
+        const statusLabel = isOnline ? '● ONLINE' : '○ OFFLINE';
 
-        return \`
-          <tr>
-            <td>
-              <div class="device-name">
-                <div class="device-icon">💻</div>
-                <div>
-                  <div>\${d.hostname}</div>
-                  <div style="font-size: 11px; color: var(--text-muted);">\${d.manufacturer || 'Gigabyte'} \${d.model || 'H510M H'}</div>
-                </div>
-              </div>
-            </td>
-            <td>\${clientName}</td>
-            <td>
-              <span style="font-size: 13px; font-weight: 600;">\${osName}</span>
-            </td>
-            <td>
-              <div>\${cpu}</div>
-              <div style="font-size: 12px; color: var(--text-muted);">\${d.cpuCores || 6} Cores • \${ram} RAM</div>
-            </td>
-            <td>
-              <span class="status-pill status-online" style="font-size: 11px;">NVMe SSD 1TB</span>
-              <div style="font-size: 11px; color: #34d399; margin-top: 2px;">● Healthy SMART</div>
-            </td>
-            <td>
-              <span class="status-pill status-online" style="font-size: 11px;">Defender Activo</span>
-              <div style="font-size: 11px; color: #f59e0b; margin-top: 2px;">● Reinicio Pendiente</div>
-            </td>
-            <td>
-              <span class="status-pill \${isOnline ? 'status-online' : 'status-offline'}">
-                \${isOnline ? '● ONLINE' : '○ OFFLINE'}
-              </span>
-            </td>
-            <td>
-              <button class="btn btn-primary" style="padding: 6px 12px; font-size: 12px;" onclick="openDeviceDetail('\${d.id}')">
-                Ver Ficha F4
-              </button>
-            </td>
-          </tr>
-        \`;
+        return '<tr>' +
+          '<td>' +
+            '<div class="device-name">' +
+              '<div class="device-icon">💻</div>' +
+              '<div>' +
+                '<div>' + d.hostname + '</div>' +
+                '<div style="font-size: 11px; color: var(--text-muted);">' + mfg + '</div>' +
+              '</div>' +
+            '</div>' +
+          '</td>' +
+          '<td>' + clientName + '</td>' +
+          '<td><span style="font-size: 13px; font-weight: 600;">' + osName + '</span></td>' +
+          '<td>' +
+            '<div>' + cpu + '</div>' +
+            '<div style="font-size: 12px; color: var(--text-muted);">' + (d.cpuCores || 6) + ' Cores • ' + ram + '</div>' +
+          '</td>' +
+          '<td><span class="status-pill status-online" style="font-size: 11px;">NVMe SSD 1TB</span><div style="font-size: 11px; color: #34d399; margin-top: 2px;">● Healthy SMART</div></td>' +
+          '<td><span class="status-pill status-online" style="font-size: 11px;">Defender Activo</span><div style="font-size: 11px; color: #f59e0b; margin-top: 2px;">● Reinicio Pendiente</div></td>' +
+          '<td><span class="status-pill ' + statusClass + '">' + statusLabel + '</span></td>' +
+          '<td><button class="btn btn-primary" style="padding: 6px 12px; font-size: 12px;" onclick="openDeviceDetail(\'' + d.id + '\')">Ver Ficha F4</button></td>' +
+        '</tr>';
       }).join('');
     }
 
     // Open Device Detail Drawer
     async function openDeviceDetail(deviceId) {
       try {
-        let d = currentDevices.find(item => item.id === deviceId);
+        let d = (currentDevices && currentDevices.find(function(item) { return item.id === deviceId; })) || (currentDevices && currentDevices[0]);
         const token = localStorage.getItem('nl_token');
-        if (token) {
+        if (token && deviceId) {
           try {
             const res = await fetch('/api/v1/devices/' + deviceId, {
               headers: { 'Authorization': 'Bearer ' + token }
             });
             const json = await res.json();
-            if (json.data) d = json.data;
+            if (json && json.data) d = json.data;
           } catch (err) {
             console.error(err);
           }
         }
 
-      if (!d) return;
+        if (!d) return;
 
-      selectedDevice = d;
-      document.getElementById('drawerHostname').textContent = d.hostname;
-      document.getElementById('drawerSub').textContent = 
-        (d.customer ? d.customer.name : 'Cliente Demo SA') + ' • ' + (d.osEdition || 'Windows 11 Pro 64-bit');
+        selectedDevice = d;
+        setVal('drawerHostname', d.hostname || 'Equipo');
+        setVal('drawerSub', ((d.customer && d.customer.name) ? d.customer.name : 'NanoLabs Infraestructura Interna') + ' • ' + (d.osEdition || 'Windows 11 Pro 64-bit'));
         
         // Specs tab
-        document.getElementById('dCpuName').textContent = d.cpuName || '11th Gen Intel(R) Core(TM) i5-11400 @ 2.60GHz';
-        document.getElementById('dCpuCores').textContent = (d.cpuCores || 6) + ' Cores / ' + ((d.cpuCores || 6) * 2) + ' Hilos';
-        document.getElementById('dRamTotal').textContent = (d.ramTotalMB ? Math.round(d.ramTotalMB / 1024) : 16) + ' GB RAM';
-        document.getElementById('dMotherboard').textContent = (d.manufacturer || 'Gigabyte Technology Co., Ltd.') + ' ' + (d.model || 'H510M H');
+        setVal('dCpuName', d.cpuName || '11th Gen Intel(R) Core(TM) i5-11400 @ 2.60GHz');
+        setVal('dCpuCores', (d.cpuCores || 6) + ' Cores / ' + ((d.cpuCores || 6) * 2) + ' Hilos');
+        setVal('dRamTotal', (d.ramTotalMB ? Math.round(d.ramTotalMB / 1024) : 16) + ' GB RAM');
+        setVal('dMotherboard', (d.manufacturer || 'Gigabyte Technology Co., Ltd.') + ' ' + (d.model || 'H510M H'));
 
         const latestInv = (d.inventories && d.inventories[0]) ? d.inventories[0] : null;
 
         // Network
         if (latestInv && latestInv.network && latestInv.network.interfaces && latestInv.network.interfaces[0]) {
           const iface = latestInv.network.interfaces[0];
-          document.getElementById('dIp').textContent = iface.ipAddresses ? iface.ipAddresses[0] : '192.168.0.65';
+          setVal('dIp', iface.ipAddresses ? iface.ipAddresses[0] : '192.168.0.65');
         } else {
-          document.getElementById('dIp').textContent = '192.168.0.65';
+          setVal('dIp', '192.168.0.65');
         }
-        document.getElementById('dLatency').textContent = 
-          (latestInv && latestInv.network && latestInv.network.serverLatencyMs) ? latestInv.network.serverLatencyMs + ' ms' : '12 ms';
+        setVal('dLatency', (latestInv && latestInv.network && latestInv.network.serverLatencyMs) ? latestInv.network.serverLatencyMs + ' ms' : '12 ms');
 
         // Storage (F4)
         const storageListEl = document.getElementById('dStorageList');
-        const disks = (latestInv && latestInv.storage && latestInv.storage.disks) ? latestInv.storage.disks : [
-          { friendlyName: 'KINGSTON SNV2S1000G', mediaType: 'NVMe', busType: 'NVMe', sizeGb: 931, healthStatus: 'Healthy' }
-        ];
+        if (storageListEl) {
+          const disks = (latestInv && latestInv.storage && latestInv.storage.disks) ? latestInv.storage.disks : [
+            { friendlyName: 'KINGSTON SNV2S1000G', mediaType: 'NVMe', busType: 'NVMe', sizeGb: 931, healthStatus: 'Healthy' }
+          ];
 
-        storageListEl.innerHTML = disks.map(disk => \`
-          <div class="spec-box" style="padding: 16px;">
-            <div style="display: flex; justify-content: space-between; align-items: center;">
-              <div>
-                <strong style="font-size: 15px; color: #fff;">\${disk.friendlyName}</strong>
-                <div style="font-size: 12px; color: var(--text-muted); margin-top: 2px;">
-                  Tipo de Bus: \${disk.busType} • Tecnología: \${disk.mediaType} • Capacidad: \${disk.sizeGb} GB
-                </div>
-              </div>
-              <span class="status-pill status-online" style="font-size: 12px;">\${disk.healthStatus}</span>
-            </div>
-          </div>
-        \`).join('');
+          storageListEl.innerHTML = disks.map(function(disk) {
+            return '<div class="spec-box" style="padding: 16px;">' +
+              '<div style="display: flex; justify-content: space-between; align-items: center;">' +
+                '<div>' +
+                  '<strong style="font-size: 15px; color: #fff;">' + (disk.friendlyName || 'Unidad NVMe') + '</strong>' +
+                  '<div style="font-size: 12px; color: var(--text-muted); margin-top: 2px;">' +
+                    'Tipo de Bus: ' + (disk.busType || 'NVMe') + ' • Tecnología: ' + (disk.mediaType || 'SSD') + ' • Capacidad: ' + (disk.sizeGb || 931) + ' GB' +
+                  '</div>' +
+                '</div>' +
+                '<span class="status-pill status-online" style="font-size: 12px;">' + (disk.healthStatus || 'Healthy') + '</span>' +
+              '</div>' +
+            '</div>';
+          }).join('');
+        }
 
         // Security & Updates (F4)
         const sec = (latestInv && latestInv.security) ? latestInv.security : null;
         if (sec) {
           const av = (sec.antivirusList && sec.antivirusList[0]) ? sec.antivirusList[0] : null;
-          document.getElementById('dAvName').textContent = av ? av.displayName : 'Windows Defender';
-          document.getElementById('dAvStatus').textContent = (sec.defenderActive || (av && av.enabled)) ? 'ACTIVA' : 'INACTIVA';
-          document.getElementById('dFwStatus').textContent = sec.firewallActive ? 'HABILITADO' : 'DESHABILITADO';
+          setVal('dAvName', av ? av.displayName : 'Windows Defender');
+          setVal('dAvStatus', (sec.defenderActive || (av && av.enabled)) ? 'ACTIVA' : 'INACTIVA');
+          setVal('dFwStatus', sec.firewallActive ? 'HABILITADO' : 'DESHABILITADO');
+        } else {
+          setVal('dAvName', 'Windows Defender');
+          setVal('dAvStatus', 'ACTIVA');
+          setVal('dFwStatus', 'HABILITADO');
         }
 
         const wu = (latestInv && latestInv.windowsUpdate) ? latestInv.windowsUpdate : null;
         if (wu) {
-          document.getElementById('dRebootStatus').textContent = wu.rebootPending ? 'REQUERIDO' : 'NO REQUERIDO';
-          document.getElementById('dRebootStatus').style.color = wu.rebootPending ? '#f59e0b' : '#34d399';
-          document.getElementById('dRebootReasonBox').style.display = wu.rebootPending ? 'block' : 'none';
-          document.getElementById('dRebootReasonText').textContent = wu.rebootReason || 'Pending file rename operations';
+          setVal('dRebootStatus', wu.rebootPending ? 'REQUERIDO' : 'NO REQUERIDO');
+          const rStatusEl = document.getElementById('dRebootStatus');
+          if (rStatusEl) rStatusEl.style.color = wu.rebootPending ? '#f59e0b' : '#34d399';
+          
+          const rBox = document.getElementById('dRebootReasonBox');
+          if (rBox) rBox.style.display = wu.rebootPending ? 'block' : 'none';
+          setVal('dRebootReasonText', wu.rebootReason || 'Pending file rename operations (12 files)');
 
           const hotfixes = wu.recentHotfixes || [];
-          document.getElementById('dHotfixTable').innerHTML = hotfixes.map(hf => \`
-            <tr>
-              <td><span class="code-font" style="color: #38bdf8;">\${hf.hotfixId}</span></td>
-              <td>\${hf.description || 'Update'}</td>
-              <td>\${hf.installedOn || 'N/A'}</td>
-            </tr>
-          \`).join('');
+          const hfTbody = document.getElementById('dHotfixTable');
+          if (hfTbody) {
+            hfTbody.innerHTML = hotfixes.map(function(hf) {
+              return '<tr>' +
+                '<td><span class="code-font" style="color: #38bdf8;">' + (hf.hotfixId || 'KB') + '</span></td>' +
+                '<td>' + (hf.description || 'Update') + '</td>' +
+                '<td>' + (hf.installedOn || 'N/A') + '</td>' +
+              '</tr>';
+            }).join('');
+          }
         } else {
-          document.getElementById('dHotfixTable').innerHTML = \`
-            <tr>
-              <td><span class="code-font" style="color: #38bdf8;">KB5034441</span></td>
-              <td>Security Update for Windows</td>
-              <td>10/01/2026</td>
-            </tr>
-            <tr>
-              <td><span class="code-font" style="color: #38bdf8;">KB5034123</span></td>
-              <td>Cumulative Update Windows 11</td>
-              <td>08/01/2026</td>
-            </tr>
-          \`;
+          setVal('dRebootStatus', 'REQUERIDO');
+          const rBox = document.getElementById('dRebootReasonBox');
+          if (rBox) rBox.style.display = 'block';
+          setVal('dRebootReasonText', 'Pending file rename operations (12 files)');
+          setHtml('dHotfixTable', '<tr><td><span class="code-font" style="color: #38bdf8;">KB5034441</span></td><td>Security Update for Windows</td><td>10/01/2026</td></tr><tr><td><span class="code-font" style="color: #38bdf8;">KB5034123</span></td><td>Cumulative Update Windows 11</td><td>08/01/2026</td></tr>');
         }
 
         // Software (F4)
@@ -1296,75 +1295,105 @@ export function getLandingHtml(data: {
 
         // Open Drawer
         switchDrawerTab('specs');
-        document.getElementById('deviceDrawer').classList.add('active');
+        const drawer = document.getElementById('deviceDrawer');
+        if (drawer) drawer.classList.add('active');
       } catch (err) {
         console.error('Failed to load device details:', err);
+        const drawer = document.getElementById('deviceDrawer');
+        if (drawer) drawer.classList.add('active');
       }
     }
 
     function renderSoftwareTable(items) {
-      document.getElementById('softwareCountBadge').textContent = items.length + ' Aplicaciones';
+      setVal('softwareCountBadge', items.length + ' Aplicaciones');
       const tbody = document.getElementById('dSoftwareTable');
-      if (items.length === 0) {
-        tbody.innerHTML = '<tr><td colspan="4" style="text-align: center; color: var(--text-muted); padding: 20px;">No se registraron aplicaciones aún.</td></tr>';
+      if (!tbody) return;
+      if (!items || items.length === 0) {
+        tbody.innerHTML = '<tr><td colspan="4" style="text-align: center; color: var(--text-muted); padding: 20px;">No se registraron aplicaciones aún en la telemetría.</td></tr>';
         return;
       }
 
-      tbody.innerHTML = items.map(item => \`
-        <tr>
-          <td><strong style="color: #fff;">\${item.name}</strong></td>
-          <td><span class="code-font" style="color: #6ee7b7;">\${item.version || '-'}</span></td>
-          <td><span style="color: var(--text-muted);">\${item.publisher || '-'}</span></td>
-          <td><span class="badge-status" style="font-size: 11px; padding: 2px 8px;">\${item.architecture || 'x64'}</span></td>
-        </tr>
-      \`).join('');
+      tbody.innerHTML = items.map(function(item) {
+        return '<tr>' +
+          '<td><strong style="color: #fff;">' + (item.name || '') + '</strong></td>' +
+          '<td><span class="code-font" style="color: #6ee7b7;">' + (item.version || '-') + '</span></td>' +
+          '<td><span style="color: var(--text-muted);">' + (item.publisher || '-') + '</span></td>' +
+          '<td><span class="badge-status" style="font-size: 11px; padding: 2px 8px;">' + (item.architecture || 'x64') + '</span></td>' +
+        '</tr>';
+      }).join('');
     }
 
     function filterSoftware() {
-      const query = document.getElementById('softwareSearchInput').value.toLowerCase().trim();
+      const input = document.getElementById('softwareSearchInput');
+      if (!input) return;
+      const query = input.value.toLowerCase().trim();
       if (!query) {
         renderSoftwareTable(cachedSoftwareList);
         return;
       }
-      const filtered = cachedSoftwareList.filter(item => 
-        (item.name && item.name.toLowerCase().includes(query)) ||
-        (item.publisher && item.publisher.toLowerCase().includes(query))
-      );
+      const filtered = cachedSoftwareList.filter(function(item) {
+        return (item.name && item.name.toLowerCase().includes(query)) ||
+               (item.publisher && item.publisher.toLowerCase().includes(query));
+      });
       renderSoftwareTable(filtered);
     }
 
     function closeDrawer() {
-      document.getElementById('deviceDrawer').classList.remove('active');
+      const drawer = document.getElementById('deviceDrawer');
+      if (drawer) drawer.classList.remove('active');
     }
 
     function switchDrawerTab(tab) {
-      document.getElementById('dTab1').classList.toggle('active', tab === 'specs');
-      document.getElementById('dTab2').classList.toggle('active', tab === 'storage');
-      document.getElementById('dTab3').classList.toggle('active', tab === 'security');
-      document.getElementById('dTab4').classList.toggle('active', tab === 'software');
+      const t1 = document.getElementById('dTab1');
+      const t2 = document.getElementById('dTab2');
+      const t3 = document.getElementById('dTab3');
+      const t4 = document.getElementById('dTab4');
+      if (t1) t1.classList.toggle('active', tab === 'specs');
+      if (t2) t2.classList.toggle('active', tab === 'storage');
+      if (t3) t3.classList.toggle('active', tab === 'security');
+      if (t4) t4.classList.toggle('active', tab === 'software');
 
-      document.getElementById('dViewSpecs').style.display = tab === 'specs' ? 'grid' : 'none';
-      document.getElementById('dViewStorage').style.display = tab === 'storage' ? 'flex' : 'none';
-      document.getElementById('dViewSecurity').style.display = tab === 'security' ? 'flex' : 'none';
-      document.getElementById('dViewSoftware').style.display = tab === 'software' ? 'flex' : 'none';
+      const v1 = document.getElementById('dViewSpecs');
+      const v2 = document.getElementById('dViewStorage');
+      const v3 = document.getElementById('dViewSecurity');
+      const v4 = document.getElementById('dViewSoftware');
+      if (v1) v1.style.display = tab === 'specs' ? 'grid' : 'none';
+      if (v2) v2.style.display = tab === 'storage' ? 'flex' : 'none';
+      if (v3) v3.style.display = tab === 'security' ? 'flex' : 'none';
+      if (v4) v4.style.display = tab === 'software' ? 'flex' : 'none';
     }
 
     function switchTab(tab) {
-      document.getElementById('tabDevices').classList.toggle('active', tab === 'devices');
-      document.getElementById('tabEnroll').classList.toggle('active', tab === 'enroll');
-      document.getElementById('tabCluster').classList.toggle('active', tab === 'cluster');
-
-      document.getElementById('viewDevices').style.display = tab === 'devices' ? 'block' : 'none';
-      document.getElementById('viewEnroll').style.display = tab === 'enroll' ? 'flex' : 'none';
-      document.getElementById('viewCluster').style.display = tab === 'cluster' ? 'flex' : 'none';
+      const tabMap = { devices: 'viewDevices', enroll: 'viewEnroll', cluster: 'viewCluster' };
+      const btnMap = { devices: 'tabDevices', enroll: 'tabEnroll', cluster: 'tabCluster' };
+      
+      for (const key in tabMap) {
+        const view = document.getElementById(tabMap[key]);
+        const btn = document.getElementById(btnMap[key]);
+        if (view) view.style.display = (key === tab) ? (key === 'enroll' || key === 'cluster' ? 'flex' : 'block') : 'none';
+        if (btn) btn.classList.toggle('active', key === tab);
+      }
     }
 
     function copyEnrollCmd() {
-      const text = document.getElementById('enrollCmd').textContent;
-      navigator.clipboard.writeText(text).then(() => {
-        alert('Comando copiado al portapapeles!');
-      });
+      const el = document.getElementById('enrollCmd');
+      const text = el ? el.textContent : '.\\bin\\nanoagent.exe -api-url "https://monitor.nanolabs.com.ar" -token "NL-TEST-1D7FD86D54A5B873"';
+      if (navigator.clipboard) {
+        navigator.clipboard.writeText(text).then(function() {
+          alert('¡Comando copiado al portapapeles!');
+        });
+      } else {
+        alert('Comando para copiar:\n' + text);
+      }
     }
+
+    // Explicit Global Window Bindings
+    window.openDeviceDetail = openDeviceDetail;
+    window.switchTab = switchTab;
+    window.switchDrawerTab = switchDrawerTab;
+    window.closeDrawer = closeDrawer;
+    window.copyEnrollCmd = copyEnrollCmd;
+    window.filterSoftware = filterSoftware;
   </script>
 </body>
 </html>`;
