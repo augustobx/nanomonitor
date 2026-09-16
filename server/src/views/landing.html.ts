@@ -2454,6 +2454,16 @@ export function getLandingHtml(data: {
         copyCustomerPs1FromCard(copyPs1Btn.dataset.customerId);
         return;
       }
+      const ackBtn = e.target.closest('.btn-ack-alert');
+      if (ackBtn && ackBtn.dataset.alertId) {
+        acknowledgeAlert(ackBtn.dataset.alertId);
+        return;
+      }
+      const resBtn = e.target.closest('.btn-resolve-alert');
+      if (resBtn && resBtn.dataset.alertId) {
+        resolveAlert(resBtn.dataset.alertId);
+        return;
+      }
     });
 
     // Keyboard Shortcuts (Esc to navigate back)
@@ -3978,10 +3988,10 @@ export function getLandingHtml(data: {
 
         let actionBtns = '';
         if (a.status === 'OPEN') {
-          actionBtns += '<button class="btn btn-secondary btn-sm" onclick="acknowledgeAlert(\'' + a.id + '\')" title="Marcar como atendida/en investigación">👁️ Reconocer</button> ';
+          actionBtns += '<button class="btn btn-secondary btn-sm btn-ack-alert" data-alert-id="' + a.id + '" title="Marcar como atendida/en investigación">👁️ Reconocer</button> ';
         }
         if (a.status !== 'RESOLVED') {
-          actionBtns += '<button class="btn btn-secondary btn-sm" onclick="resolveAlert(\'' + a.id + '\')" title="Marcar alerta como solucionada">✅ Resolver</button> ';
+          actionBtns += '<button class="btn btn-secondary btn-sm btn-resolve-alert" data-alert-id="' + a.id + '" title="Marcar alerta como solucionada">✅ Resolver</button> ';
         }
         if (a.deviceId) {
           actionBtns += '<button class="btn btn-primary btn-sm btn-device-detail" data-device-id="' + a.deviceId + '" title="Abrir ficha del equipo">💻 Ver Ficha</button>';
@@ -4207,10 +4217,10 @@ export function getLandingHtml(data: {
 
         let actionBtns = '';
         if (a.status === 'OPEN') {
-          actionBtns += '<button class="btn btn-secondary btn-sm" onclick="acknowledgeAlert(\'' + a.id + '\')">👁️ Reconocer</button> ';
+          actionBtns += '<button class="btn btn-secondary btn-sm btn-ack-alert" data-alert-id="' + a.id + '">👁️ Reconocer</button> ';
         }
         if (a.status !== 'RESOLVED') {
-          actionBtns += '<button class="btn btn-secondary btn-sm" onclick="resolveAlert(\'' + a.id + '\')">✅ Resolver</button>';
+          actionBtns += '<button class="btn btn-secondary btn-sm btn-resolve-alert" data-alert-id="' + a.id + '">✅ Resolver</button>';
         }
 
         return '<tr>' +
