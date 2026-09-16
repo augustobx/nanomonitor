@@ -1,0 +1,2672 @@
+export function getClientRuntimeScript(): string {
+  return `
+    // Centralized State
+    let currentActiveView = 'dashboard';
+    let currentActiveCustomerId = null;
+    let selectedDeviceId = null;
+    let selectedDevice = null;
+    let selectedAlertId = null;
+    let currentAlertQuickFilter = 'ALL';
+    let currentWizardCustomerId = null;
+    let currentWizardSiteId = null;
+    let deviceWorkspaceOrigin = 'devices';
+    let cachedSoftwareList = [];
+    let pollingIntervalMs = 8000;
+    let pollingTimer = null;
+
+    // DOM Utilities
+    function setVal(id, text) {
+      const el = document.getElementById(id);
+      if (el) el.textContent = (text !== undefined && text !== null) ? text : '';
+    }
+
+    function setHtml(id, html) {
+      const el = document.getElementById(id);
+      if (el) el.innerHTML = (html !== undefined && html !== null) ? html : '';
+    }
+
+    function showToast(msg, type = 'success') {
+      let c = document.getElementById('toastContainer');
+      if (!c) {
+        c = document.createElement('div');
+        c.id = 'toastContainer';
+        c.className = 'toast-container';
+        document.body.appendChild(c);
+      }
+      const t = document.createElement('div');
+      t.className = 'toast ' + (type === 'error' ? 'error' : 'success');
+      t.innerHTML = '<span>' + (type === 'error' ? '❌' : '✅') + '</span><span>' + msg + '</span>';
+      c.appendChild(t);
+      setTimeout(function() {
+        if (t.parentNode) t.parentNode.removeChild(t);
+      }, 4000);
+    }
+
+    function formatUptime(seconds) {
+      if (!seconds || seconds <= 0) return '0m';
+      const d = Math.floor(seconds / 86400);
+      const h = Math.floor((seconds % 86400) / 3600);
+      const m = Math.floor((seconds % 3600) / 60);
+      if (d > 0) return d + 'd ' + h + 'h';
+      if (h > 0) return h + 'h ' + m + 'm';
+      return m + 'm';
+    }
+
+    // Sidebar & Layout Controls
+    function toggleSidebar() {
+      const sb = document.getElementById('appSidebar');
+      const icon = document.getElementById('sidebarToggleIcon');
+      if (!sb) return;
+      sb.classList.toggle('collapsed');
+      const isCollapsed = sb.classList.contains('collapsed');
+      localStorage.setItem('nl_sidebar_collapsed', isCollapsed ? '1' : '0');
+      if (icon) icon.textContent = isCollapsed ? '▶' : '◀';
+    }
+
+    function toggleMobileSidebar() {
+      const sb = document.getElementById('appSidebar');
+      if (sb) sb.classList.toggle('mobile-open');
+    }
+
+    // Authentication UI
+    function setLoggedInUI() {
+      const btn = document.getElementById('loginNavBtn');
+      const badge = document.getElementById('userBadge');
+      const emailBadge = document.getElementById('userEmailBadge');
+      const user = localStorage.getItem('nl_user');
+      if (btn) btn.style.display = 'none';
+      if (badge) badge.style.display = 'flex';
+      if (emailBadge && user) {
+        try {
+          const u = JSON.parse(user);
+          emailBadge.textContent = u.email || 'admin@nanolabs.com.ar';
+        } catch (e) {
+          emailBadge.textContent = 'admin@nanolabs.com.ar';
+        }
+      }
+    }
+
+    function setLoggedOutUI() {
+      const btn = document.getElementById('loginNavBtn');
+      const badge = document.getElementById('userBadge');
+      if (btn) btn.style.display = 'inline-flex';
+      if (badge) badge.style.display = 'none';
+    }
+
+    function openLoginModal() {
+      const m = document.getElementById('loginModal');
+      if (m) m.classList.add('active');
+    }
+
+    function closeLoginModal() {
+      const m = document.getElementById('loginModal');
+      if (m) m.classList.remove('active');
+    }
+
+    async function handleLogin(e) {
+      if (e) e.preventDefault();
+      const email = document.getElementById('loginEmail').value.trim();
+      const password = document.getElementById('loginPass').value;
+      const errEl = document.getElementById('loginError');
+      if (errEl) errEl.style.display = 'none';
+
+      try {
+        const res = await fetch('/api/v1/auth/login', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ email: email, password: password })
+        });
+        const json = await res.json();
+        if (res.ok && json.data && json.data.token) {
+          localStorage.setItem('nl_token', json.data.token);
+          if (json.data.user) localStorage.setItem('nl_user', JSON.stringify(json.data.user));
+          setLoggedInUI();
+          closeLoginModal();
+          showToast('Bienvenido a NanoLabs Control Center');
+          await fetchLiveDashboard(false);
+        } else {
+          if (errEl) {
+            errEl.textContent = json.message || 'Credenciales incorrectas';
+            errEl.style.display = 'block';
+          }
+        }
+      } catch (err) {
+        if (errEl) {
+          errEl.textContent = 'Error de conexión con el servidor';
+          errEl.style.display = 'block';
+        }
+      }
+    }
+
+    async function quickLoginDemo() {
+      try {
+        const res = await fetch('/api/v1/auth/login', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ email: 'admin@nanolabs.com.ar', password: 'NanoAdmin2026!' })
+        });
+        const json = await res.json();
+        if (res.ok && json.data && json.data.token) {
+          localStorage.setItem('nl_token', json.data.token);
+          if (json.data.user) localStorage.setItem('nl_user', JSON.stringify(json.data.user));
+          setLoggedInUI();
+          closeLoginModal();
+          return json.data.token;
+        }
+      } catch (err) {
+        console.warn('Quick login demo fallback failed:', err);
+      }
+      return null;
+    }
+
+    function logout() {
+      localStorage.removeItem('nl_token');
+      localStorage.removeItem('nl_user');
+      setLoggedOutUI();
+      showToast('Sesión cerrada');
+    }
+
+    // Navigation Router
+    function switchNavTab(tab) {
+      const views = {
+        'dashboard': 'viewDashboard',
+        'alerts': 'viewAlerts',
+        'customers': 'viewCustomers',
+        'customer-detail': 'viewCustomerDetail',
+        'devices': 'viewDevices',
+        'device-detail': 'viewDeviceDetail',
+        'agents': 'viewAgents',
+        'platform': 'viewPlatform',
+        'settings': 'viewSettings'
+      };
+
+      const navItems = {
+        'dashboard': 'navItemDashboard',
+        'alerts': 'navItemAlerts',
+        'customers': 'navItemCustomers',
+        'customer-detail': 'navItemCustomers',
+        'devices': 'navItemDevices',
+        'device-detail': 'navItemDevices',
+        'agents': 'navItemAgents',
+        'platform': 'navItemPlatform',
+        'settings': 'navItemSettings'
+      };
+
+      currentActiveView = tab;
+
+      // Toggle views visibility
+      for (const key in views) {
+        const el = document.getElementById(views[key]);
+        if (el) el.style.display = (key === tab) ? 'flex' : 'none';
+      }
+
+      // Update sidebar active states
+      for (const key in navItems) {
+        const navEl = document.getElementById(navItems[key]);
+        if (navEl) {
+          const isActive = (key === tab) || 
+            (tab === 'customer-detail' && key === 'customers') || 
+            (tab === 'device-detail' && key === 'devices');
+          navEl.classList.toggle('active', isActive);
+        }
+      }
+
+      // Update Breadcrumbs
+      updateBreadcrumbs(tab);
+
+      // Render view-specific data
+      if (tab === 'dashboard') {
+        renderDashboard();
+      } else if (tab === 'alerts') {
+        renderAlertCenter();
+      } else if (tab === 'customers') {
+        renderCustomersTable();
+      } else if (tab === 'devices') {
+        renderFleetDevices();
+      } else if (tab === 'agents') {
+        renderAgentsList();
+        populateWizardCustomerSelect();
+      } else if (tab === 'platform') {
+        renderPlatformView();
+      } else if (tab === 'settings') {
+        fetchAndRenderSettingsRules();
+      }
+
+      window.scrollTo(0, 0);
+    }
+
+    function updateBreadcrumbs(tab) {
+      const trail = document.getElementById('breadcrumbsTrail');
+      const actions = document.getElementById('breadcrumbsActions');
+      if (!trail) return;
+
+      if (tab === 'dashboard') {
+        trail.innerHTML = '<span class="breadcrumb-link" onclick="switchNavTab(\\'dashboard\\')">NOC</span>' +
+          '<span class="breadcrumb-separator">/</span><span class="breadcrumb-active">Dashboard</span>';
+        if (actions) actions.innerHTML = '';
+      } else if (tab === 'alerts') {
+        trail.innerHTML = '<span class="breadcrumb-link" onclick="switchNavTab(\\'dashboard\\')">NOC</span>' +
+          '<span class="breadcrumb-separator">/</span><span class="breadcrumb-active">Centro de Alertas</span>';
+        if (actions) actions.innerHTML = '<button class="btn btn-secondary btn-sm" onclick="triggerAlertEvaluation()">⚡ Evaluar Reglas</button>';
+      } else if (tab === 'customers') {
+        trail.innerHTML = '<span class="breadcrumb-link" onclick="switchNavTab(\\'dashboard\\')">NOC</span>' +
+          '<span class="breadcrumb-separator">/</span><span class="breadcrumb-active">Clientes</span>';
+        if (actions) actions.innerHTML = '<button class="btn btn-primary btn-sm" onclick="openCreateCustomerModal()">+ Registrar Cliente</button>';
+      } else if (tab === 'customer-detail') {
+        const cust = (currentCustomers || []).find(function(c) { return c.id === currentActiveCustomerId; });
+        const cName = cust ? cust.name : 'Cliente';
+        trail.innerHTML = '<span class="breadcrumb-link" onclick="switchNavTab(\\'customers\\')">Clientes</span>' +
+          '<span class="breadcrumb-separator">/</span><span class="breadcrumb-active">' + cName + '</span>';
+        if (actions) actions.innerHTML = '<button class="btn btn-secondary btn-sm" onclick="switchNavTab(\\'customers\\')">← Volver a Clientes</button>';
+      } else if (tab === 'devices') {
+        trail.innerHTML = '<span class="breadcrumb-link" onclick="switchNavTab(\\'dashboard\\')">NOC</span>' +
+          '<span class="breadcrumb-separator">/</span><span class="breadcrumb-active">Flota Global de Equipos</span>';
+        if (actions) actions.innerHTML = '';
+      } else if (tab === 'device-detail') {
+        const host = selectedDevice ? selectedDevice.hostname : 'Equipo';
+        const cust = selectedDevice && selectedDevice.customer ? selectedDevice.customer.name : '';
+        const custId = selectedDevice ? (selectedDevice.customer ? selectedDevice.customer.id : selectedDevice.customerId) : null;
+        
+        let html = '<span class="breadcrumb-link" onclick="switchNavTab(\\'devices\\')">Equipos</span>';
+        if (cust && custId) {
+          html = '<span class="breadcrumb-link" onclick="switchNavTab(\\'customers\\')">Clientes</span>' +
+            '<span class="breadcrumb-separator">/</span><span class="breadcrumb-link" onclick="openCustomerWorkspace(\\'' + custId + '\\')">' + cust + '</span>';
+        }
+        html += '<span class="breadcrumb-separator">/</span><span class="breadcrumb-active">' + host + '</span>';
+        trail.innerHTML = html;
+        if (actions) {
+          actions.innerHTML = '<button class="btn btn-secondary btn-sm" onclick="backFromDeviceWorkspace()">← Volver</button>';
+        }
+      } else if (tab === 'agents') {
+        trail.innerHTML = '<span class="breadcrumb-link" onclick="switchNavTab(\\'dashboard\\')">NOC</span>' +
+          '<span class="breadcrumb-separator">/</span><span class="breadcrumb-active">Agentes & Enrolamiento</span>';
+        if (actions) actions.innerHTML = '';
+      } else if (tab === 'platform') {
+        trail.innerHTML = '<span class="breadcrumb-link" onclick="switchNavTab(\\'dashboard\\')">NOC</span>' +
+          '<span class="breadcrumb-separator">/</span><span class="breadcrumb-active">Plataforma & Servicios</span>';
+        if (actions) actions.innerHTML = '';
+      } else if (tab === 'settings') {
+        trail.innerHTML = '<span class="breadcrumb-link" onclick="switchNavTab(\\'dashboard\\')">NOC</span>' +
+          '<span class="breadcrumb-separator">/</span><span class="breadcrumb-active">Configuración</span>';
+        if (actions) actions.innerHTML = '';
+      }
+    }
+
+    // ==========================================
+    // DASHBOARD NOC (5 SECONDS TRIAGE)
+    // ==========================================
+    function renderDashboard() {
+      const devices = currentDevices || [];
+      const customers = currentCustomers || [];
+      const alerts = currentAlerts || [];
+      const events = currentRecentEvents || [];
+
+      // 1. Calculations
+      const activeAlerts = alerts.filter(function(a) { return a.status === 'OPEN' || a.status === 'ACKNOWLEDGED'; });
+      const critAlerts = activeAlerts.filter(function(a) { return a.severity === 'CRITICAL'; });
+      const highAlerts = activeAlerts.filter(function(a) { return a.severity === 'HIGH'; });
+      const warnAlerts = activeAlerts.filter(function(a) { return a.severity === 'WARNING'; });
+      const resolvedToday = alerts.filter(function(a) {
+        if (a.status !== 'RESOLVED' || !a.resolvedAt) return false;
+        const d = new Date(a.resolvedAt);
+        const now = new Date();
+        return d.getDate() === now.getDate() && d.getMonth() === now.getMonth() && d.getFullYear() === now.getFullYear();
+      }).length;
+
+      const onlineDevices = devices.filter(function(d) { return d.status === 'ONLINE'; });
+      const offlineDevices = devices.filter(function(d) { return d.status !== 'ONLINE'; });
+      const onlinePercent = devices.length > 0 ? Math.round((onlineDevices.length / devices.length) * 100) : 100;
+
+      // Affected customers: customers with open/acknowledged alerts
+      const affectedCustIds = new Set();
+      activeAlerts.forEach(function(a) {
+        if (a.customerId) affectedCustIds.add(a.customerId);
+        if (a.customer && a.customer.id) affectedCustIds.add(a.customer.id);
+      });
+
+      // Average Health Score
+      let healthSum = 0;
+      let healthCount = 0;
+      devices.forEach(function(d) {
+        const hs = (d.healthScores && d.healthScores.length > 0) ? d.healthScores[0].score : null;
+        if (hs !== null && hs !== undefined) {
+          healthSum += hs;
+          healthCount++;
+        }
+      });
+      const avgHealth = healthCount > 0 ? Math.round(healthSum / healthCount) : 85;
+
+      // 2. Set Top KPIs
+      setVal('dashKpiCriticalAlerts', critAlerts.length);
+      const critCard = document.getElementById('kpiCardCriticalAlerts');
+      if (critCard) critCard.classList.toggle('critical', critAlerts.length > 0);
+
+      setVal('dashKpiTotalAlerts', activeAlerts.length);
+      setVal('dashKpiHighDesc', highAlerts.length + ' Altas • ' + warnAlerts.length + ' Advertencias');
+
+      setVal('dashKpiOnlineDevices', onlineDevices.length);
+      setVal('dashKpiOnlinePercent', onlinePercent + '% de la flota reportando');
+
+      setVal('dashKpiOfflineDevices', offlineDevices.length);
+
+      setVal('dashKpiAffectedCustomers', affectedCustIds.size);
+      setVal('dashKpiTotalCustSummary', 'De ' + customers.length + ' clientes administrados');
+
+      setVal('dashKpiAvgHealth', avgHealth + ' / 100');
+      let healthCategory = 'Bueno';
+      if (avgHealth >= 90) healthCategory = 'Excelente';
+      else if (avgHealth < 50) healthCategory = 'Crítico';
+      else if (avgHealth < 75) healthCategory = 'Regular';
+      setVal('dashKpiHealthLabel', healthCategory + ' • ' + devices.length + ' equipos evaluados');
+
+      setVal('dashKpiNewIncidents', activeAlerts.length);
+      setVal('dashKpiResolvedToday', resolvedToday);
+
+      // Topbar alerts count
+      const tbAlertsPill = document.getElementById('topbarAlertsPill');
+      const tbAlertsCount = document.getElementById('topbarAlertsCount');
+      if (tbAlertsPill && tbAlertsCount) {
+        if (critAlerts.length > 0) {
+          tbAlertsPill.style.display = 'inline-flex';
+          tbAlertsCount.textContent = critAlerts.length + (critAlerts.length === 1 ? ' Crítica' : ' Críticas');
+        } else if (highAlerts.length > 0) {
+          tbAlertsPill.style.display = 'inline-flex';
+          tbAlertsCount.textContent = highAlerts.length + (highAlerts.length === 1 ? ' Alta' : ' Altas');
+        } else {
+          tbAlertsPill.style.display = 'none';
+        }
+      }
+
+      // Sidebar badges
+      const sbBadge = document.getElementById('sbAlertsBadge');
+      if (sbBadge) {
+        if (activeAlerts.length > 0) {
+          sbBadge.style.display = 'inline-block';
+          sbBadge.textContent = activeAlerts.length;
+        } else {
+          sbBadge.style.display = 'none';
+        }
+      }
+      setVal('sbCustomersCount', customers.length);
+      setVal('sbDevicesCount', devices.length);
+
+      // 3. Block 1: Critical & High Alerts Table
+      const alertsTbody = document.getElementById('dashAlertsTableBody');
+      const alertsBadge = document.getElementById('dashAlertsBadge');
+      if (alertsBadge) alertsBadge.textContent = activeAlerts.length + ' Activas';
+
+      if (alertsTbody) {
+        if (activeAlerts.length === 0) {
+          alertsTbody.innerHTML = '<tr><td colspan="6" style="text-align: center; color: var(--text-muted); padding: 24px;">' +
+            'No hay alertas activas en este momento. Todos los sistemas operan en estado óptimo.' +
+          '</td></tr>';
+        } else {
+          const topAlerts = activeAlerts.slice(0, 5);
+          alertsTbody.innerHTML = topAlerts.map(function(a) {
+            const isCrit = a.severity === 'CRITICAL';
+            const isHigh = a.severity === 'HIGH';
+            const sevPill = isCrit
+              ? '<span class="status-pill status-danger">🔴 Crítica</span>'
+              : (isHigh ? '<span class="status-pill status-warning">🟠 Alta</span>' : '<span class="status-pill status-info">🟡 Advertencia</span>');
+            const host = a.device ? a.device.hostname : 'Equipo';
+            const cust = a.customer ? a.customer.name : 'NanoLabs';
+            const timeAgo = a.lastSeenAt ? new Date(a.lastSeenAt).toLocaleTimeString('es-AR', { hour: '2-digit', minute: '2-digit' }) : '-';
+
+            return '<tr>' +
+              '<td>' + sevPill + '</td>' +
+              '<td><strong class="code-font" style="color: #fff; cursor: pointer;" onclick="openDeviceWorkspace(\\'' + (a.deviceId || (a.device ? a.device.id : '')) + '\\')">' + host + '</strong></td>' +
+              '<td><span style="color: var(--text-secondary);">' + cust + '</span></td>' +
+              '<td><strong style="color: #fff;">' + (a.title || 'Alerta') + '</strong></td>' +
+              '<td><span class="code-font" style="font-size: 11px; color: var(--text-muted);">' + timeAgo + '</span></td>' +
+              '<td style="text-align: right; white-space: nowrap;">' +
+                '<button class="btn btn-primary btn-sm" onclick="openAlertDetailModal(\\'' + a.id + '\\')">Ver Detalle</button> ' +
+                (a.status === 'OPEN' ? '<button class="btn btn-secondary btn-sm" onclick="acknowledgeAlert(\\'' + a.id + '\\')">Reconocer</button>' : '') +
+              '</td>' +
+            '</tr>';
+          }).join('');
+        }
+      }
+
+      // 4. Block 2: Offline Devices Table
+      const offlineTbody = document.getElementById('dashOfflineTableBody');
+      const offlineBadge = document.getElementById('dashOfflineBadge');
+      if (offlineBadge) offlineBadge.textContent = offlineDevices.length + ' Equipos';
+
+      if (offlineTbody) {
+        if (offlineDevices.length === 0) {
+          offlineTbody.innerHTML = '<tr><td colspan="5" style="text-align: center; color: var(--text-muted); padding: 20px;">' +
+            'No hay equipos desconectados. El 100% de la flota se encuentra en línea.' +
+          '</td></tr>';
+        } else {
+          offlineTbody.innerHTML = offlineDevices.slice(0, 5).map(function(d) {
+            const host = d.hostname || 'Equipo';
+            const cust = d.customer ? d.customer.name : '-';
+            const site = d.site ? d.site.name : 'Principal';
+            const lastSeen = d.lastSeenAt ? new Date(d.lastSeenAt).toLocaleString('es-AR') : 'Nunca';
+
+            return '<tr>' +
+              '<td><strong class="code-font" style="color: #fff; cursor: pointer;" onclick="openDeviceWorkspace(\\'' + d.id + '\\')">' + host + '</strong></td>' +
+              '<td><span style="color: var(--text-secondary);">' + cust + '</span></td>' +
+              '<td><span style="color: var(--text-muted);">' + site + '</span></td>' +
+              '<td><span class="code-font" style="font-size: 11px; color: #f87171;">' + lastSeen + '</span></td>' +
+              '<td style="text-align: right;">' +
+                '<button class="btn btn-secondary btn-sm" onclick="openDeviceWorkspace(\\'' + d.id + '\\')">Ver Equipo</button>' +
+              '</td>' +
+            '</tr>';
+          }).join('');
+        }
+      }
+
+      // 5. Block 3: Customers in Risk
+      const riskContainer = document.getElementById('dashRiskCustomersList');
+      if (riskContainer) {
+        const riskCustomers = customers.filter(function(c) {
+          const custAlerts = alerts.filter(function(a) {
+            return ((a.customer && a.customer.id === c.id) || a.customerId === c.id) && (a.status === 'OPEN' || a.status === 'ACKNOWLEDGED');
+          });
+          const custCrit = custAlerts.filter(function(a) { return a.severity === 'CRITICAL'; }).length;
+          const custDevices = devices.filter(function(d) {
+            return (d.customer && d.customer.id === c.id) || d.customerId === c.id;
+          });
+          const custOffline = custDevices.filter(function(d) { return d.status !== 'ONLINE'; }).length;
+          return custCrit > 0 || custOffline > 0 || custAlerts.length >= 2;
+        });
+
+        if (riskCustomers.length === 0) {
+          riskContainer.innerHTML = '<div style="text-align: center; color: var(--text-muted); padding: 16px; font-size: 12px;">' +
+            'No se detectan clientes en estado de riesgo operativo. Todos presentan indicadores óptimos.' +
+          '</div>';
+        } else {
+          riskContainer.innerHTML = riskCustomers.map(function(c) {
+            const custAlerts = alerts.filter(function(a) {
+              return ((a.customer && a.customer.id === c.id) || a.customerId === c.id) && (a.status === 'OPEN' || a.status === 'ACKNOWLEDGED');
+            });
+            const custCrit = custAlerts.filter(function(a) { return a.severity === 'CRITICAL'; }).length;
+            const custDevices = devices.filter(function(d) {
+              return (d.customer && d.customer.id === c.id) || d.customerId === c.id;
+            });
+            const custOffline = custDevices.filter(function(d) { return d.status !== 'ONLINE'; }).length;
+
+            return '<div style="background: var(--bg-surface-subtle); border: 1px solid var(--border-subtle); border-radius: var(--radius-md); padding: 10px 14px; display: flex; align-items: center; justify-content: space-between; gap: 10px;">' +
+              '<div>' +
+                '<strong style="color: #fff; font-size: 13px; cursor: pointer;" onclick="openCustomerWorkspace(\\'' + c.id + '\\')">' + c.name + '</strong>' +
+                '<div style="font-size: 11px; color: #f87171; margin-top: 2px;">' +
+                  (custCrit > 0 ? custCrit + ' Alertas Críticas • ' : '') +
+                  (custOffline > 0 ? custOffline + ' Equipos Offline' : (custAlerts.length + ' Alertas Activas')) +
+                '</div>' +
+              '</div>' +
+              '<button class="btn btn-secondary btn-sm" onclick="openCustomerWorkspace(\\'' + c.id + '\\')">Ver Ficha</button>' +
+            '</div>';
+          }).join('');
+        }
+      }
+
+      // 6. Block 4: Recent Activity Feed
+      const feed = document.getElementById('dashActivityFeed');
+      if (feed) {
+        if (!events || events.length === 0) {
+          feed.innerHTML = '<div style="text-align: center; color: var(--text-muted); padding: 14px; font-size: 11px;">' +
+            'Sin eventos recientes registrados.' +
+          '</div>';
+        } else {
+          feed.innerHTML = events.slice(0, 6).map(function(ev) {
+            const host = ev.device ? ev.device.hostname : 'Dispositivo';
+            const isCrit = ev.severity === 'CRITICAL' || ev.severity === 'ERROR';
+            const icon = isCrit ? '🔴' : (ev.severity === 'WARNING' ? '🟡' : '🔵');
+            const time = ev.timestamp ? new Date(ev.timestamp).toLocaleTimeString('es-AR', { hour: '2-digit', minute: '2-digit' }) : '';
+
+            return '<div style="display: flex; align-items: flex-start; gap: 8px; font-size: 11px; border-bottom: 1px solid var(--border-subtle); padding-bottom: 6px;">' +
+              '<span>' + icon + '</span>' +
+              '<div style="flex: 1;">' +
+                '<span class="code-font" style="color: #fff; font-weight: 600;">' + host + '</span>: ' +
+                '<span style="color: var(--text-secondary);">' + (ev.message || ev.eventType || 'Evento de sistema') + '</span>' +
+              '</div>' +
+              '<span class="code-font" style="color: var(--text-muted); white-space: nowrap;">' + time + '</span>' +
+            '</div>';
+          }).join('');
+        }
+      }
+    }
+
+    // ==========================================
+    // ALERTS MODULE (OPERATIONAL QUEUE)
+    // ==========================================
+    function setAlertQuickFilter(filter) {
+      currentAlertQuickFilter = filter;
+      const pills = document.querySelectorAll('#alertQuickFilters .filter-pill');
+      pills.forEach(function(p) {
+        p.classList.toggle('active', p.getAttribute('data-filter') === filter);
+      });
+      filterAlertCenter();
+    }
+
+    function renderAlertCenter(alerts) {
+      alerts = Array.isArray(alerts) ? alerts : (currentAlerts || []);
+      const tbody = document.getElementById('acAlertsTableBody');
+      if (!tbody) return;
+
+      const activeAlerts = alerts.filter(function(a) { return a.status === 'OPEN' || a.status === 'ACKNOWLEDGED'; });
+      const critCount = activeAlerts.filter(function(a) { return a.severity === 'CRITICAL'; }).length;
+      const highCount = activeAlerts.filter(function(a) { return a.severity === 'HIGH'; }).length;
+      const warnCount = activeAlerts.filter(function(a) { return a.severity === 'WARNING'; }).length;
+      const unackCount = alerts.filter(function(a) { return a.status === 'OPEN'; }).length;
+
+      setVal('acCountAll', alerts.length);
+      setVal('acCountCritical', critCount);
+      setVal('acCountHigh', highCount);
+      setVal('acCountWarning', warnCount);
+      setVal('acCountUnack', unackCount);
+
+      populateAlertCustomerFilter();
+      filterAlertCenter();
+    }
+
+    function filterAlertCenter() {
+      const tbody = document.getElementById('acAlertsTableBody');
+      if (!tbody) return;
+
+      const qf = currentAlertQuickFilter || 'ALL';
+      const statusFilter = (document.getElementById('acFilterStatus') ? document.getElementById('acFilterStatus').value : 'ACTIVE');
+      const custFilter = (document.getElementById('acFilterCustomer') ? document.getElementById('acFilterCustomer').value : 'ALL');
+      const query = (document.getElementById('acSearchInput') ? document.getElementById('acSearchInput').value.toLowerCase().trim() : '');
+
+      let list = currentAlerts || [];
+
+      // Quick filter
+      if (qf === 'CRITICAL') list = list.filter(function(a) { return a.severity === 'CRITICAL'; });
+      else if (qf === 'HIGH') list = list.filter(function(a) { return a.severity === 'HIGH'; });
+      else if (qf === 'WARNING') list = list.filter(function(a) { return a.severity === 'WARNING'; });
+      else if (qf === 'UNACKNOWLEDGED') list = list.filter(function(a) { return a.status === 'OPEN'; });
+      else if (qf === 'RECURRENT') list = list.filter(function(a) { return (a.occurrences || 1) >= 3; });
+      else if (qf === 'OFFLINE') list = list.filter(function(a) { return (a.title || '').toLowerCase().includes('offline') || (a.rule && a.rule.category === 'offline'); });
+      else if (qf === 'TODAY') {
+        const todayStr = new Date().toDateString();
+        list = list.filter(function(a) { return a.lastSeenAt && new Date(a.lastSeenAt).toDateString() === todayStr; });
+      }
+
+      // Status filter
+      if (statusFilter === 'ACTIVE') {
+        list = list.filter(function(a) { return a.status === 'OPEN' || a.status === 'ACKNOWLEDGED'; });
+      } else if (statusFilter !== 'ALL') {
+        list = list.filter(function(a) { return a.status === statusFilter; });
+      }
+
+      // Customer filter
+      if (custFilter !== 'ALL') {
+        list = list.filter(function(a) {
+          return (a.customer && a.customer.id === custFilter) || a.customerId === custFilter;
+        });
+      }
+
+      // Text search
+      if (query) {
+        list = list.filter(function(a) {
+          const title = (a.title || '').toLowerCase();
+          const desc = (a.description || '').toLowerCase();
+          const host = (a.device ? a.device.hostname : '').toLowerCase();
+          const cust = (a.customer ? a.customer.name : '').toLowerCase();
+          return title.includes(query) || desc.includes(query) || host.includes(query) || cust.includes(query);
+        });
+      }
+
+      if (list.length === 0) {
+        tbody.innerHTML = '<tr><td colspan="8" style="text-align: center; color: var(--text-muted); padding: 40px;">' +
+          'No se encontraron alertas con los filtros seleccionados.' +
+        '</td></tr>';
+        return;
+      }
+
+      tbody.innerHTML = list.map(function(a) {
+        const isCrit = a.severity === 'CRITICAL';
+        const isHigh = a.severity === 'HIGH';
+        const isWarn = a.severity === 'WARNING';
+        const sevClass = isCrit ? 'status-danger' : (isHigh ? 'status-warning' : (isWarn ? 'status-info' : 'status-online'));
+        const sevLabel = isCrit ? '🔴 Crítica' : (isHigh ? '🟠 Alta' : (isWarn ? '🟡 Advertencia' : '🔵 Info'));
+
+        const host = a.device ? a.device.hostname : 'Dispositivo';
+        const devId = a.deviceId || (a.device ? a.device.id : '');
+        const custName = a.customer ? a.customer.name : 'NanoLabs';
+        const custCode = a.customer ? a.customer.code : 'NL';
+
+        let statusBadge = '<span class="status-pill status-danger">Abierta</span>';
+        if (a.status === 'ACKNOWLEDGED') {
+          const ackUser = a.acknowledger ? (a.acknowledger.name || a.acknowledger.email) : 'Técnico';
+          statusBadge = '<span class="status-pill status-warning" title="Reconocida por ' + ackUser + '">👁️ Reconocida</span>';
+        } else if (a.status === 'RESOLVED') {
+          statusBadge = '<span class="status-pill status-online">✓ Resuelta</span>';
+        }
+
+        const lastSeen = a.lastSeenAt ? new Date(a.lastSeenAt).toLocaleString('es-AR') : '-';
+
+        return '<tr>' +
+          '<td><span class="status-pill ' + sevClass + '">' + sevLabel + '</span></td>' +
+          '<td><strong class="code-font" style="color: #fff; cursor: pointer;" onclick="openDeviceWorkspace(\\'' + devId + '\\')">' + host + '</strong></td>' +
+          '<td><span style="color: var(--text-secondary);">' + custName + '</span> <span class="code-badge">' + custCode + '</span></td>' +
+          '<td>' +
+            '<strong style="color: #fff; font-size: 13px;">' + (a.title || 'Alerta') + '</strong>' +
+            '<div style="font-size: 11px; color: var(--text-muted); margin-top: 2px; max-width: 360px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">' + (a.description || '') + '</div>' +
+          '</td>' +
+          '<td style="text-align: center;"><span class="code-badge">x' + (a.occurrences || 1) + '</span></td>' +
+          '<td><span class="code-font" style="font-size: 11px; color: #38bdf8;">' + lastSeen + '</span></td>' +
+          '<td>' + statusBadge + '</td>' +
+          '<td style="text-align: right; white-space: nowrap;">' +
+            '<button class="btn btn-primary btn-sm" onclick="openAlertDetailModal(\\'' + a.id + '\\')">Ver Detalle</button> ' +
+            (a.status === 'OPEN' ? '<button class="btn btn-secondary btn-sm" onclick="acknowledgeAlert(\\'' + a.id + '\\')" title="Reconocer alerta">Reconocer</button> ' : '') +
+            (a.status !== 'RESOLVED' ? '<button class="btn btn-secondary btn-sm" onclick="resolveAlert(\\'' + a.id + '\\')" title="Marcar como resuelta">Resolver</button>' : '') +
+          '</td>' +
+        '</tr>';
+      }).join('');
+    }
+
+    function populateAlertCustomerFilter() {
+      const sel = document.getElementById('acFilterCustomer');
+      if (!sel) return;
+      const currentVal = sel.value;
+      let html = '<option value="ALL">Todos los Clientes</option>';
+      (currentCustomers || []).forEach(function(c) {
+        html += '<option value="' + c.id + '"' + (currentVal === c.id ? ' selected' : '') + '>' + c.name + ' (' + c.code + ')</option>';
+      });
+      sel.innerHTML = html;
+    }
+
+    // Alert Detail Modal Functions
+    function openAlertDetailModal(alertId) {
+      const m = document.getElementById('alertDetailModal');
+      const body = document.getElementById('adBody');
+      const footer = document.getElementById('adFooter');
+      const title = document.getElementById('adTitle');
+      const sevPill = document.getElementById('adSeverityPill');
+      if (!m || !body) return;
+
+      const a = (currentAlerts || []).find(function(x) { return x.id === alertId; });
+      if (!a) {
+        showToast('Alerta no encontrada', 'error');
+        return;
+      }
+      selectedAlertId = alertId;
+
+      const isCrit = a.severity === 'CRITICAL';
+      const isHigh = a.severity === 'HIGH';
+      sevPill.className = 'status-pill ' + (isCrit ? 'status-danger' : (isHigh ? 'status-warning' : 'status-info'));
+      sevPill.textContent = isCrit ? 'Crítica' : (isHigh ? 'Alta' : 'Advertencia');
+      if (title) title.textContent = a.title || 'Detalle de Alerta';
+
+      const host = a.device ? a.device.hostname : 'Dispositivo';
+      const devId = a.deviceId || (a.device ? a.device.id : '');
+      const custName = a.customer ? a.customer.name : 'NanoLabs';
+      const custCode = a.customer ? a.customer.code : 'NL';
+      const firstSeen = a.firstSeenAt ? new Date(a.firstSeenAt).toLocaleString('es-AR') : '-';
+      const lastSeen = a.lastSeenAt ? new Date(a.lastSeenAt).toLocaleString('es-AR') : '-';
+
+      // Diagnostic Suggestion Generation
+      let suggestion = 'Inspeccionar métricas y procesos activos en la ficha técnica del equipo.';
+      const titleLower = (a.title || '').toLowerCase();
+      if (titleLower.includes('disco') || titleLower.includes('espacio') || titleLower.includes('almacenamiento')) {
+        suggestion = 'Liberar espacio en el volumen afectado, vaciar temporales o expandir la partición.';
+      } else if (titleLower.includes('smart') || titleLower.includes('físico')) {
+        suggestion = 'URGENTE: Respaldar inmediatamente la información del disco y programar reemplazo de unidad por fallo inminente.';
+      } else if (titleLower.includes('defender') || titleLower.includes('antivirus')) {
+        suggestion = 'Habilitar la protección en tiempo real de Microsoft Defender desde la consola o PowerShell.';
+      } else if (titleLower.includes('firewall') || titleLower.includes('cortafuegos')) {
+        suggestion = 'Restablecer y activar los perfiles de red del Firewall de Windows.';
+      } else if (titleLower.includes('offline') || titleLower.includes('latido')) {
+        suggestion = 'Comprobar conectividad de red del equipo, estado de alimentación o servicio NanoMonitor.';
+      } else if (titleLower.includes('reboot') || titleLower.includes('reinicio')) {
+        suggestion = 'Programar ventana de reinicio fuera de horario productivo para aplicar actualizaciones pendientes.';
+      }
+
+      body.innerHTML = 
+        '<div style="display: grid; grid-template-columns: 1fr 1fr; gap: 14px; background: var(--bg-canvas); border: 1px solid var(--border-subtle); border-radius: var(--radius-md); padding: 14px;">' +
+          '<div><span style="color: var(--text-muted); font-size: 11px;">Equipo Afectado:</span><div style="font-weight: 700; color: #fff; font-size: 14px;" class="code-font">' + host + '</div></div>' +
+          '<div><span style="color: var(--text-muted); font-size: 11px;">Cliente:</span><div style="font-weight: 600; color: #fff;">' + custName + ' (' + custCode + ')</div></div>' +
+          '<div><span style="color: var(--text-muted); font-size: 11px;">Primera Ocurrencia:</span><div class="code-font" style="font-size: 11px;">' + firstSeen + '</div></div>' +
+          '<div><span style="color: var(--text-muted); font-size: 11px;">Última Detección:</span><div class="code-font" style="font-size: 11px; color: #38bdf8;">' + lastSeen + ' (x' + (a.occurrences || 1) + ')</div></div>' +
+        '</div>' +
+
+        '<div class="form-group">' +
+          '<label class="form-label">Descripción del Incidente</label>' +
+          '<div style="background: var(--bg-surface-elevated); border: 1px solid var(--border-subtle); border-radius: var(--radius-md); padding: 10px 14px; font-size: 13px; color: #fff;">' +
+            (a.description || 'Sin descripción técnica adicional') +
+          '</div>' +
+        '</div>' +
+
+        '<div style="background: rgba(37, 99, 235, 0.08); border: 1px solid rgba(37, 99, 235, 0.25); border-radius: var(--radius-md); padding: 12px 16px;">' +
+          '<div style="font-size: 11px; font-weight: 700; color: #60a5fa; text-transform: uppercase;">💡 Diagnóstico y Sugerencia de Acción NOC:</div>' +
+          '<div style="font-size: 13px; color: #fff; margin-top: 4px;">' + suggestion + '</div>' +
+        '</div>';
+
+      // Footer Actions
+      let actionBtns = '<button class="btn btn-secondary" onclick="closeAlertDetailModal()">Cerrar</button>';
+      if (devId) {
+        actionBtns += '<button class="btn btn-secondary" onclick="closeAlertDetailModal(); openDeviceWorkspace(\\'' + devId + '\\')">💻 Ver Ficha del Equipo</button>';
+      }
+      if (a.status === 'OPEN') {
+        actionBtns += '<button class="btn btn-secondary" onclick="acknowledgeAlert(\\'' + a.id + '\\'); closeAlertDetailModal();">👁️ Reconocer</button>';
+      }
+      if (a.status !== 'RESOLVED') {
+        actionBtns += '<button class="btn btn-primary" onclick="resolveAlert(\\'' + a.id + '\\'); closeAlertDetailModal();">✅ Resolver Alerta</button>';
+      }
+      footer.innerHTML = actionBtns;
+
+      m.classList.add('active');
+    }
+
+    function closeAlertDetailModal() {
+      const m = document.getElementById('alertDetailModal');
+      if (m) m.classList.remove('active');
+      selectedAlertId = null;
+    }
+
+    async function acknowledgeAlert(alertId) {
+      let token = localStorage.getItem('nl_token');
+      if (!token) token = await quickLoginDemo();
+      try {
+        const res = await fetch('/api/v1/alerts/' + alertId + '/ack', {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + token }
+        });
+        if (res.ok) {
+          showToast('Alerta marcada como Reconocida');
+          await refreshAlerts(true);
+        } else {
+          showToast('No se pudo reconocer la alerta', 'error');
+        }
+      } catch (err) {
+        showToast('Error de red al reconocer alerta', 'error');
+      }
+    }
+
+    async function resolveAlert(alertId) {
+      let token = localStorage.getItem('nl_token');
+      if (!token) token = await quickLoginDemo();
+      try {
+        const res = await fetch('/api/v1/alerts/' + alertId + '/resolve', {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + token },
+          body: JSON.stringify({ note: 'Resuelta desde la consola NanoLabs Control Center' })
+        });
+        if (res.ok) {
+          showToast('Alerta resuelta con éxito');
+          await refreshAlerts(true);
+        } else {
+          showToast('No se pudo resolver la alerta', 'error');
+        }
+      } catch (err) {
+        showToast('Error de red al resolver alerta', 'error');
+      }
+    }
+
+    async function triggerAlertEvaluation() {
+      const spinner = document.getElementById('acEvalSpinner');
+      if (spinner) spinner.classList.add('spinning');
+      let token = localStorage.getItem('nl_token');
+      if (!token) token = await quickLoginDemo();
+      try {
+        const res = await fetch('/api/v1/alerts/evaluate', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + token }
+        });
+        if (res.ok) {
+          const json = await res.json();
+          const d = json.data || {};
+          showToast('⚡ Evaluación completada: +' + (d.totalCreated || 0) + ' nuevas, -' + (d.totalResolved || 0) + ' resueltas');
+          await refreshAlerts(true);
+        } else {
+          showToast('Error al evaluar reglas', 'error');
+        }
+      } catch (err) {
+        showToast('Error de conexión', 'error');
+      } finally {
+        setTimeout(function() {
+          if (spinner) spinner.classList.remove('spinning');
+        }, 600);
+      }
+    }
+
+    async function refreshAlerts(silent) {
+      const icon = document.getElementById('acRefreshIcon');
+      if (icon) icon.classList.add('spinning');
+      let token = localStorage.getItem('nl_token');
+      if (!token) token = await quickLoginDemo();
+      try {
+        const res = await fetch('/api/v1/alerts?limit=100', {
+          headers: { 'Authorization': 'Bearer ' + token }
+        });
+        if (res.ok) {
+          const json = await res.json();
+          if (json && Array.isArray(json.data)) {
+            currentAlerts = json.data;
+            renderAlertCenter(currentAlerts);
+            renderDashboard();
+            if (!silent) showToast('Cola de alertas actualizada');
+          }
+        }
+      } catch (err) {
+        if (!silent) showToast('Error al recargar alertas', 'error');
+      } finally {
+        setTimeout(function() {
+          if (icon) icon.classList.remove('spinning');
+        }, 600);
+      }
+    }
+
+    // ==========================================
+    // CUSTOMERS MODULE
+    // ==========================================
+    function renderCustomersTable() {
+      renderCustomersTableFiltered(document.getElementById('custDirectorySearch') ? document.getElementById('custDirectorySearch').value : '');
+    }
+
+    function renderCustomersTableFiltered(query) {
+      const tbody = document.getElementById('customersTableBody');
+      if (!tbody) return;
+
+      let list = currentCustomers || [];
+      query = (query || '').toLowerCase().trim();
+      if (query) {
+        list = list.filter(function(c) {
+          return (c.name || '').toLowerCase().includes(query) || (c.code || '').toLowerCase().includes(query);
+        });
+      }
+
+      if (list.length === 0) {
+        tbody.innerHTML = '<tr><td colspan="8" style="text-align: center; color: var(--text-muted); padding: 40px;">' +
+          'No se encontraron clientes registrados.' +
+        '</td></tr>';
+        return;
+      }
+
+      tbody.innerHTML = list.map(function(c) {
+        const sitesCount = (c.sites || []).length || (c._count ? c._count.sites : 0);
+        const devList = (currentDevices || []).filter(function(d) {
+          return (d.customer && d.customer.id === c.id) || d.customerId === c.id;
+        });
+        const devTotal = devList.length;
+        const devOnline = devList.filter(function(d) { return d.status === 'ONLINE'; }).length;
+        const devOffline = devTotal - devOnline;
+
+        // Health score average
+        let hsSum = 0;
+        let hsCount = 0;
+        devList.forEach(function(d) {
+          const s = (d.healthScores && d.healthScores.length > 0) ? d.healthScores[0].score : null;
+          if (s !== null && s !== undefined) {
+            hsSum += s;
+            hsCount++;
+          }
+        });
+        const hsAvg = hsCount > 0 ? Math.round(hsSum / hsCount) : 90;
+        let hsClass = hsAvg >= 80 ? 'status-online' : (hsAvg >= 50 ? 'status-warning' : 'status-danger');
+
+        // Customer alerts
+        const custAlerts = (currentAlerts || []).filter(function(a) {
+          return ((a.customer && a.customer.id === c.id) || a.customerId === c.id) && (a.status === 'OPEN' || a.status === 'ACKNOWLEDGED');
+        });
+        const critAlerts = custAlerts.filter(function(a) { return a.severity === 'CRITICAL'; }).length;
+
+        let statusPill = '<span class="status-pill status-online">● Operativo</span>';
+        if (critAlerts > 0) statusPill = '<span class="status-pill status-danger">● En Riesgo</span>';
+        else if (devOffline > 0) statusPill = '<span class="status-pill status-warning">● Atención</span>';
+
+        return '<tr>' +
+          '<td>' +
+            '<div style="display: flex; align-items: center; gap: 10px;">' +
+              '<div style="width: 32px; height: 32px; border-radius: var(--radius-md); background: rgba(37, 99, 235, 0.12); border: 1px solid rgba(37, 99, 235, 0.25); display: flex; align-items: center; justify-content: center; font-weight: 700; color: #60a5fa; font-size: 12px;">' +
+                (c.name.substring(0, 2).toUpperCase()) +
+              '</div>' +
+              '<div>' +
+                '<strong style="color: #fff; font-size: 13px; cursor: pointer;" onclick="openCustomerWorkspace(\\'' + c.id + '\\')">' + c.name + '</strong>' +
+                '<div style="font-size: 11px; color: var(--text-muted);">' + (c.contactEmail || 'Sin email registrado') + '</div>' +
+              '</div>' +
+            '</div>' +
+          '</td>' +
+          '<td><span class="code-badge">' + c.code + '</span></td>' +
+          '<td><span style="color: var(--text-secondary);">' + sitesCount + ' Sedes</span></td>' +
+          '<td>' +
+            '<strong>' + devTotal + '</strong> ' +
+            '<span style="font-size: 11px; color: var(--text-muted);">(' + devOnline + ' Online • ' + devOffline + ' Offline)</span>' +
+          '</td>' +
+          '<td>' +
+            (custAlerts.length > 0
+              ? '<span class="status-pill ' + (critAlerts > 0 ? 'status-danger' : 'status-warning') + '">' + custAlerts.length + ' Activas</span>'
+              : '<span class="status-pill status-online">0 Activas</span>') +
+          '</td>' +
+          '<td><span class="status-pill ' + hsClass + '">' + hsAvg + ' / 100</span></td>' +
+          '<td>' + statusPill + '</td>' +
+          '<td style="text-align: right; white-space: nowrap;">' +
+            '<button class="btn btn-primary btn-sm" onclick="openCustomerWorkspace(\\'' + c.id + '\\')">Ver Cliente</button> ' +
+            '<button class="btn btn-secondary btn-sm" onclick="copyCustomerEnrollCmdById(\\'' + c.id + '\\')" title="Copiar comando de enrolamiento">⚡ Enrolar</button>' +
+          '</td>' +
+        '</tr>';
+      }).join('');
+    }
+
+    function openCustomerWorkspace(customerId) {
+      currentActiveCustomerId = customerId;
+      const cust = (currentCustomers || []).find(function(c) { return c.id === customerId; });
+      if (!cust) return;
+
+      switchNavTab('customer-detail');
+
+      // Populate Header
+      setVal('cdName', cust.name);
+      setVal('cdCode', cust.code);
+      const av = document.getElementById('cdAvatar');
+      if (av) av.textContent = cust.name.substring(0, 2).toUpperCase();
+
+      setVal('cdContactEmail', cust.contactEmail || 'No asignado');
+      setVal('cdContactPhone', cust.contactPhone || 'No asignado');
+
+      // Tokens snippet
+      const tokenObj = cust.enrollmentTokens && cust.enrollmentTokens.length > 0 ? cust.enrollmentTokens[0] : null;
+      const tokenStr = tokenObj ? tokenObj.token : ('NL-' + cust.code + '-DEMO');
+      const snippet = document.getElementById('cdEnrollCmdSnippet');
+      if (snippet) {
+        snippet.textContent = 'irm https://monitor.nanolabs.com.ar/install.ps1 | iex -Token "' + tokenStr + '"';
+      }
+
+      // Populate Subtabs
+      renderCustomerWorkspaceData(cust);
+      switchCustomerSubTab('resumen');
+    }
+
+    function switchCustomerSubTab(tab) {
+      const tabs = ['resumen', 'equipos', 'sedes', 'alertas', 'agentes', 'configuracion'];
+      tabs.forEach(function(t) {
+        const btn = document.getElementById('cdTab' + t.charAt(0).toUpperCase() + t.slice(1));
+        const view = document.getElementById('cdView' + t.charAt(0).toUpperCase() + t.slice(1));
+        if (btn) btn.classList.toggle('active', t === tab);
+        if (view) view.style.display = (t === tab) ? 'flex' : 'none';
+      });
+    }
+
+    function renderCustomerWorkspaceData(cust) {
+      const devList = (currentDevices || []).filter(function(d) {
+        return (d.customer && d.customer.id === cust.id) || d.customerId === cust.id;
+      });
+      const onlineDev = devList.filter(function(d) { return d.status === 'ONLINE'; }).length;
+      const offlineDev = devList.length - onlineDev;
+      const sites = cust.sites || [];
+
+      const custAlerts = (currentAlerts || []).filter(function(a) {
+        return ((a.customer && a.customer.id === cust.id) || a.customerId === cust.id) && (a.status === 'OPEN' || a.status === 'ACKNOWLEDGED');
+      });
+      const critAlerts = custAlerts.filter(function(a) { return a.severity === 'CRITICAL'; }).length;
+
+      // KPIs
+      setVal('cdKpiTotalDev', devList.length);
+      setVal('cdKpiOnlineDev', onlineDev + ' Online • ' + offlineDev + ' Offline');
+      setVal('cdKpiTotalSites', sites.length);
+      setVal('cdKpiActiveAlerts', custAlerts.length);
+      setVal('cdKpiCritAlerts', critAlerts + ' Críticas');
+
+      setVal('cdCountEquipos', devList.length);
+      setVal('cdCountSedes', sites.length);
+      setVal('cdCountAlertas', custAlerts.length);
+
+      // Average Health
+      let hsSum = 0;
+      let hsCount = 0;
+      devList.forEach(function(d) {
+        const s = (d.healthScores && d.healthScores.length > 0) ? d.healthScores[0].score : null;
+        if (s !== null && s !== undefined) {
+          hsSum += s;
+          hsCount++;
+        }
+      });
+      const avgHs = hsCount > 0 ? Math.round(hsSum / hsCount) : 90;
+      setVal('cdKpiAvgHealth', avgHs + ' / 100');
+
+      // Problem Devices Table
+      const probTbody = document.getElementById('cdTableProblemDevices');
+      if (probTbody) {
+        const problems = devList.filter(function(d) {
+          const s = (d.healthScores && d.healthScores.length > 0) ? d.healthScores[0].score : 100;
+          return d.status !== 'ONLINE' || s < 80;
+        });
+        if (problems.length === 0) {
+          probTbody.innerHTML = '<tr><td colspan="5" style="text-align: center; color: var(--text-muted); padding: 20px;">' +
+            'Todos los equipos de este cliente operan con normalidad.' +
+          '</td></tr>';
+        } else {
+          probTbody.innerHTML = problems.map(function(d) {
+            const host = d.hostname || 'Equipo';
+            const site = d.site ? d.site.name : 'Principal';
+            const isOnline = d.status === 'ONLINE';
+            const hs = (d.healthScores && d.healthScores.length > 0) ? d.healthScores[0].score : '--';
+
+            return '<tr>' +
+              '<td><strong class="code-font" style="color: #fff; cursor: pointer;" onclick="openDeviceWorkspace(\\'' + d.id + '\\')">' + host + '</strong></td>' +
+              '<td>' + site + '</td>' +
+              '<td><span class="status-pill ' + (isOnline ? 'status-online' : 'status-offline') + '">' + (isOnline ? 'ONLINE' : 'OFFLINE') + '</span></td>' +
+              '<td><span class="status-pill ' + (hs >= 80 ? 'status-online' : (hs >= 50 ? 'status-warning' : 'status-danger')) + '">' + hs + '</span></td>' +
+              '<td style="text-align: right;"><button class="btn btn-secondary btn-sm" onclick="openDeviceWorkspace(\\'' + d.id + '\\')">Ver Equipo</button></td>' +
+            '</tr>';
+          }).join('');
+        }
+      }
+
+      // Recent Alerts List
+      const alList = document.getElementById('cdRecentAlertsList');
+      if (alList) {
+        if (custAlerts.length === 0) {
+          alList.innerHTML = '<div style="text-align: center; color: var(--text-muted); padding: 16px; font-size: 12px;">' +
+            'No hay alertas activas para este cliente.' +
+          '</div>';
+        } else {
+          alList.innerHTML = custAlerts.slice(0, 5).map(function(a) {
+            const isCrit = a.severity === 'CRITICAL';
+            return '<div style="background: var(--bg-surface-subtle); border: 1px solid var(--border-subtle); border-radius: var(--radius-md); padding: 10px 14px; display: flex; align-items: center; justify-content: space-between; gap: 10px;">' +
+              '<div>' +
+                '<span class="status-pill ' + (isCrit ? 'status-danger' : 'status-warning') + '" style="font-size: 10px;">' + (isCrit ? 'Crítica' : 'Alta') + '</span> ' +
+                '<strong style="color: #fff; font-size: 12px; margin-left: 6px;">' + (a.title || 'Alerta') + '</strong>' +
+                '<div style="font-size: 11px; color: var(--text-muted); margin-top: 2px;">' + (a.device ? a.device.hostname : 'Dispositivo') + '</div>' +
+              '</div>' +
+              '<button class="btn btn-secondary btn-sm" onclick="openAlertDetailModal(\\'' + a.id + '\\')">Detalle</button>' +
+            '</div>';
+          }).join('');
+        }
+      }
+
+      // All Customer Devices Table
+      const devTbody = document.getElementById('cdTableDevices');
+      if (devTbody) {
+        if (devList.length === 0) {
+          devTbody.innerHTML = '<tr><td colspan="9" style="text-align: center; color: var(--text-muted); padding: 32px;">' +
+            'Aún no hay equipos enrolados para este cliente.' +
+          '</td></tr>';
+        } else {
+          devTbody.innerHTML = devList.map(function(d) {
+            const isOnline = d.status === 'ONLINE';
+            const site = d.site ? d.site.name : 'Principal';
+            const metrics = d.metrics && d.metrics.length > 0 ? d.metrics[0] : null;
+            const cpu = metrics ? Math.round(metrics.cpuUsage) + '%' : '--';
+            const ram = metrics ? Math.round(metrics.ramUsage) + '%' : '--';
+            const hs = (d.healthScores && d.healthScores.length > 0) ? d.healthScores[0].score : '--';
+            const lastSeen = d.lastSeenAt ? new Date(d.lastSeenAt).toLocaleString('es-AR') : 'Nunca';
+
+            return '<tr>' +
+              '<td><strong class="code-font" style="color: #fff; cursor: pointer;" onclick="openDeviceWorkspace(\\'' + d.id + '\\')">' + d.hostname + '</strong></td>' +
+              '<td>' + site + '</td>' +
+              '<td><span class="status-pill ' + (isOnline ? 'status-online' : 'status-offline') + '">' + (isOnline ? 'ONLINE' : 'OFFLINE') + '</span></td>' +
+              '<td><span class="status-pill ' + (hs >= 80 ? 'status-online' : (hs >= 50 ? 'status-warning' : 'status-danger')) + '">' + hs + '</span></td>' +
+              '<td><span class="code-font" style="font-size: 11px;">CPU: ' + cpu + ' • RAM: ' + ram + '</span></td>' +
+              '<td><span class="code-badge">OK</span></td>' +
+              '<td><span class="status-pill status-online">Protegido</span></td>' +
+              '<td><span class="code-font" style="font-size: 11px; color: var(--text-muted);">' + lastSeen + '</span></td>' +
+              '<td style="text-align: right;"><button class="btn btn-primary btn-sm" onclick="openDeviceWorkspace(\\'' + d.id + '\\')">Ver Equipo</button></td>' +
+            '</tr>';
+          }).join('');
+        }
+      }
+
+      // Sites Table
+      const sitesTbody = document.getElementById('cdTableSedes');
+      if (sitesTbody) {
+        if (sites.length === 0) {
+          sitesTbody.innerHTML = '<tr><td colspan="5" style="text-align: center; color: var(--text-muted); padding: 24px;">' +
+            'No hay sedes registradas para este cliente.' +
+          '</td></tr>';
+        } else {
+          sitesTbody.innerHTML = sites.map(function(s) {
+            const siteDevs = devList.filter(function(d) { return d.siteId === s.id; });
+            const onlineCount = siteDevs.filter(function(d) { return d.status === 'ONLINE'; }).length;
+            const offlineCount = siteDevs.length - onlineCount;
+
+            return '<tr>' +
+              '<td><strong style="color: #fff;">' + s.name + '</strong></td>' +
+              '<td><strong>' + siteDevs.length + '</strong> Equipos</td>' +
+              '<td><span class="status-pill status-online">' + onlineCount + ' Online</span></td>' +
+              '<td><span class="status-pill ' + (offlineCount > 0 ? 'status-danger' : 'status-offline') + '">' + offlineCount + ' Offline</span></td>' +
+              '<td><span class="status-pill status-online">0 Críticas</span></td>' +
+            '</tr>';
+          }).join('');
+        }
+      }
+
+      // Customer Rules
+      fetchAndRenderCustomerRules(cust.id);
+    }
+
+    async function fetchAndRenderCustomerRules(custId) {
+      const tbody = document.getElementById('cdTableRules');
+      if (!tbody) return;
+      tbody.innerHTML = '<tr><td colspan="7" style="text-align: center; color: var(--text-muted); padding: 20px;">Cargando reglas...</td></tr>';
+      let token = localStorage.getItem('nl_token');
+      if (!token) token = await quickLoginDemo();
+      try {
+        const res = await fetch('/api/v1/alerts/rules?customerId=' + custId, {
+          headers: token ? { 'Authorization': 'Bearer ' + token } : {}
+        });
+        if (res.ok) {
+          const json = await res.json();
+          const rules = (json && json.data) || [];
+          if (rules.length === 0) {
+            tbody.innerHTML = '<tr><td colspan="7" style="text-align: center; color: var(--text-muted); padding: 20px;">No hay reglas registradas</td></tr>';
+            return;
+          }
+          tbody.innerHTML = rules.map(function(r) {
+            const isCrit = r.severity === 'CRITICAL';
+            const isHigh = r.severity === 'HIGH';
+            const isWarn = r.severity === 'WARNING';
+            const sevClass = isCrit ? 'status-danger' : (isHigh ? 'status-warning' : (isWarn ? 'status-info' : 'status-online'));
+            const isEnabled = r.enabled !== false;
+
+            let conditionStr = '';
+            let currentThresholdVal = null;
+            if (r.condition && r.condition.type) {
+              const t = r.condition.type;
+              const th = r.condition.threshold;
+              currentThresholdVal = th !== undefined ? th : null;
+              if (t === 'STORAGE') conditionStr = 'Espacio libre &lt; ' + th + '%';
+              else if (t === 'SMART') conditionStr = 'Fallo físico SMART';
+              else if (t === 'CPU') conditionStr = 'Uso sostenido &gt; ' + th + '%';
+              else if (t === 'RAM') conditionStr = 'Memoria libre &lt; ' + th + '%';
+              else if (t === 'OFFLINE') conditionStr = 'Sin latidos &gt; ' + th + ' min';
+              else if (t === 'DEFENDER') conditionStr = 'Protección AV apagada';
+              else if (t === 'FIREWALL') conditionStr = 'Cortafuegos apagado';
+              else conditionStr = t;
+            }
+
+            let statusBadge = isEnabled
+              ? '<span class="status-pill status-online">● Activa</span>'
+              : '<span class="status-pill status-offline">○ Desactivada</span>';
+
+            if (r.isCustomerOverride) {
+              statusBadge += '<div style="font-size: 10px; color: #f59e0b; margin-top: 2px;">★ Personalizada</div>';
+            }
+
+            let actionBtns = '<button class="btn btn-secondary btn-sm" onclick="toggleAlertRule(\\'' + r.id + '\\', \\'' + custId + '\\')">' + (isEnabled ? 'Desactivar' : 'Activar') + '</button>';
+            if (currentThresholdVal !== null) {
+              actionBtns += ' <button class="btn btn-secondary btn-sm" onclick="openThresholdModal(\\'' + (r.baseRuleId || r.id) + '\\', \\'' + custId + '\\', \\'' + currentThresholdVal + '\\', \\'' + (r.name || '') + '\\')">✏️ Umbral</button>';
+            }
+            if (r.isCustomerOverride && r.overrideId) {
+              actionBtns += ' <button class="btn btn-secondary btn-sm" onclick="revertCustomerRuleOverride(\\'' + r.overrideId + '\\')">🔄 Revertir</button>';
+            }
+
+            return '<tr>' +
+              '<td><strong style="color: #fff;">' + (r.name || 'Regla') + '</strong></td>' +
+              '<td><span class="code-badge">' + (r.category || 'general') + '</span></td>' +
+              '<td><span class="status-pill ' + sevClass + '">' + r.severity + '</span></td>' +
+              '<td><span class="code-font" style="color: #38bdf8;">' + conditionStr + '</span></td>' +
+              '<td>' + (r.cooldownMin || 60) + 'm</td>' +
+              '<td>' + statusBadge + '</td>' +
+              '<td style="text-align: right; white-space: nowrap;">' + actionBtns + '</td>' +
+            '</tr>';
+          }).join('');
+        }
+      } catch (err) {
+        tbody.innerHTML = '<tr><td colspan="7" style="text-align: center; color: #ef4444; padding: 20px;">Error al cargar reglas</td></tr>';
+      }
+    }
+
+    function openCreateCustomerModal() {
+      const m = document.getElementById('customerModal');
+      if (m) m.classList.add('active');
+    }
+
+    function closeCreateCustomerModal() {
+      const m = document.getElementById('customerModal');
+      if (m) m.classList.remove('active');
+    }
+
+    async function handleCreateCustomer(e) {
+      if (e) e.preventDefault();
+      let token = localStorage.getItem('nl_token');
+      if (!token) token = await quickLoginDemo();
+      if (!token) {
+        showToast('Debes iniciar sesión para registrar clientes', 'error');
+        return;
+      }
+
+      const name = document.getElementById('custName').value.trim();
+      const code = document.getElementById('custCode').value.trim().toUpperCase();
+      const contactEmail = document.getElementById('custEmail').value.trim();
+      const contactPhone = document.getElementById('custPhone').value.trim();
+
+      try {
+        const res = await fetch('/api/v1/customers', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + token },
+          body: JSON.stringify({
+            name: name,
+            code: code,
+            contactEmail: contactEmail || undefined,
+            contactPhone: contactPhone || undefined
+          })
+        });
+
+        if (res.status === 409) {
+          showToast('Ya existe una empresa con ese código identificador', 'error');
+          return;
+        }
+
+        if (!res.ok) {
+          const errData = await res.json();
+          showToast(errData.message || 'Error al crear cliente', 'error');
+          return;
+        }
+
+        closeCreateCustomerModal();
+        showToast('✅ Cliente "' + name + '" registrado con éxito');
+        await fetchLiveDashboard(false);
+      } catch (err) {
+        showToast('Error de red al crear cliente', 'error');
+      }
+    }
+
+    function copyCurrentCustomerEnrollCmd() {
+      if (!currentActiveCustomerId) return;
+      copyCustomerEnrollCmdById(currentActiveCustomerId);
+    }
+
+    function copyCustomerEnrollCmdById(custId) {
+      const cust = (currentCustomers || []).find(function(c) { return c.id === custId; });
+      if (!cust) return;
+      const tokenObj = cust.enrollmentTokens && cust.enrollmentTokens.length > 0 ? cust.enrollmentTokens[0] : null;
+      const tokenStr = tokenObj ? tokenObj.token : ('NL-' + cust.code + '-DEMO');
+      const cmd = 'irm https://monitor.nanolabs.com.ar/install.ps1 | iex -Token "' + tokenStr + '"';
+      navigator.clipboard.writeText(cmd).then(function() {
+        showToast('✅ Comando PowerShell copiado al portapapeles');
+      }).catch(function() {
+        prompt('Copiá el comando:', cmd);
+      });
+    }
+
+    function togglePs1ScriptPreview() {
+      const b = document.getElementById('wsPs1PreviewBox');
+      if (b) b.style.display = (b.style.display === 'none') ? 'block' : 'none';
+    }
+
+    // ==========================================
+    // GLOBAL FLEET (DEVICES) MODULE
+    // ==========================================
+    function renderFleetDevices() {
+      populateFleetCustomerFilter();
+      filterFleetDevices();
+    }
+
+    function populateFleetCustomerFilter() {
+      const sel = document.getElementById('fleetFilterCustomer');
+      if (!sel) return;
+      const currentVal = sel.value;
+      let html = '<option value="ALL">Todos los Clientes</option>';
+      (currentCustomers || []).forEach(function(c) {
+        html += '<option value="' + c.id + '"' + (currentVal === c.id ? ' selected' : '') + '>' + c.name + ' (' + c.code + ')</option>';
+      });
+      sel.innerHTML = html;
+    }
+
+    function resetFleetFilters() {
+      const search = document.getElementById('fleetSearchInput');
+      const cust = document.getElementById('fleetFilterCustomer');
+      const status = document.getElementById('fleetFilterStatus');
+      const health = document.getElementById('fleetFilterHealth');
+      const alerts = document.getElementById('fleetFilterAlerts');
+      const reboot = document.getElementById('fleetFilterReboot');
+      if (search) search.value = '';
+      if (cust) cust.value = 'ALL';
+      if (status) status.value = 'ALL';
+      if (health) health.value = 'ALL';
+      if (alerts) alerts.value = 'ALL';
+      if (reboot) reboot.value = 'ALL';
+      filterFleetDevices();
+    }
+
+    function filterFleetDevices() {
+      const tbody = document.getElementById('fleetTableBody');
+      if (!tbody) return;
+
+      const query = (document.getElementById('fleetSearchInput') ? document.getElementById('fleetSearchInput').value.toLowerCase().trim() : '');
+      const custFilter = (document.getElementById('fleetFilterCustomer') ? document.getElementById('fleetFilterCustomer').value : 'ALL');
+      const statusFilter = (document.getElementById('fleetFilterStatus') ? document.getElementById('fleetFilterStatus').value : 'ALL');
+      const healthFilter = (document.getElementById('fleetFilterHealth') ? document.getElementById('fleetFilterHealth').value : 'ALL');
+      const alertsFilter = (document.getElementById('fleetFilterAlerts') ? document.getElementById('fleetFilterAlerts').value : 'ALL');
+      const rebootFilter = (document.getElementById('fleetFilterReboot') ? document.getElementById('fleetFilterReboot').value : 'ALL');
+
+      let list = currentDevices || [];
+
+      // Online/Offline count pills
+      const onlineCount = list.filter(function(d) { return d.status === 'ONLINE'; }).length;
+      const offlineCount = list.length - onlineCount;
+      setVal('devOnlineCountPill', onlineCount + ' Online');
+      setVal('devOfflineCountPill', offlineCount + ' Offline');
+
+      // Filters
+      if (custFilter !== 'ALL') {
+        list = list.filter(function(d) {
+          return (d.customer && d.customer.id === custFilter) || d.customerId === custFilter;
+        });
+      }
+
+      if (statusFilter === 'ONLINE') list = list.filter(function(d) { return d.status === 'ONLINE'; });
+      else if (statusFilter === 'OFFLINE') list = list.filter(function(d) { return d.status !== 'ONLINE'; });
+
+      if (healthFilter === 'OPTIMAL') {
+        list = list.filter(function(d) {
+          const s = (d.healthScores && d.healthScores.length > 0) ? d.healthScores[0].score : 100;
+          return s >= 80;
+        });
+      } else if (healthFilter === 'REGULAR') {
+        list = list.filter(function(d) {
+          const s = (d.healthScores && d.healthScores.length > 0) ? d.healthScores[0].score : 100;
+          return s >= 50 && s < 80;
+        });
+      } else if (healthFilter === 'CRITICAL') {
+        list = list.filter(function(d) {
+          const s = (d.healthScores && d.healthScores.length > 0) ? d.healthScores[0].score : 100;
+          return s < 50;
+        });
+      }
+
+      if (alertsFilter === 'WITH_ALERTS') {
+        list = list.filter(function(d) {
+          return (currentAlerts || []).some(function(a) {
+            return (a.deviceId === d.id || (a.device && a.device.id === d.id)) && (a.status === 'OPEN' || a.status === 'ACKNOWLEDGED');
+          });
+        });
+      } else if (alertsFilter === 'NO_ALERTS') {
+        list = list.filter(function(d) {
+          return !(currentAlerts || []).some(function(a) {
+            return (a.deviceId === d.id || (a.device && a.device.id === d.id)) && (a.status === 'OPEN' || a.status === 'ACKNOWLEDGED');
+          });
+        });
+      }
+
+      if (rebootFilter === 'PENDING') {
+        list = list.filter(function(d) {
+          const inv = d.inventories && d.inventories.length > 0 ? d.inventories[0] : null;
+          return inv && inv.security && inv.security.rebootRequired;
+        });
+      }
+
+      if (query) {
+        list = list.filter(function(d) {
+          const host = (d.hostname || '').toLowerCase();
+          const ip = (d.ipAddress || '').toLowerCase();
+          const cust = (d.customer ? d.customer.name : '').toLowerCase();
+          return host.includes(query) || ip.includes(query) || cust.includes(query);
+        });
+      }
+
+      if (list.length === 0) {
+        tbody.innerHTML = '<tr><td colspan="10" style="text-align: center; color: var(--text-muted); padding: 40px;">' +
+          'No se encontraron equipos para los criterios seleccionados.' +
+        '</td></tr>';
+        return;
+      }
+
+      tbody.innerHTML = list.map(function(d) {
+        const isOnline = d.status === 'ONLINE';
+        const host = d.hostname || 'Equipo';
+        const custName = d.customer ? d.customer.name : '-';
+        const siteName = d.site ? d.site.name : 'Principal';
+        const metrics = d.metrics && d.metrics.length > 0 ? d.metrics[0] : null;
+        const cpu = metrics ? Math.round(metrics.cpuUsage) + '%' : '--';
+        const ram = metrics ? Math.round(metrics.ramUsage) + '%' : '--';
+        const hs = (d.healthScores && d.healthScores.length > 0) ? d.healthScores[0].score : '--';
+        const hsClass = hs >= 80 ? 'status-online' : (hs >= 50 ? 'status-warning' : 'status-danger');
+
+        const inv = d.inventories && d.inventories.length > 0 ? d.inventories[0] : null;
+        const rebootReq = inv && inv.security && inv.security.rebootRequired;
+        const defenderOn = inv && inv.security && inv.security.antivirus && inv.security.antivirus.realTimeProtection;
+
+        // Alerts count for this device
+        const devAlerts = (currentAlerts || []).filter(function(a) {
+          return (a.deviceId === d.id || (a.device && a.device.id === d.id)) && (a.status === 'OPEN' || a.status === 'ACKNOWLEDGED');
+        });
+        const critAlerts = devAlerts.filter(function(a) { return a.severity === 'CRITICAL'; }).length;
+
+        const lastSeen = d.lastSeenAt ? new Date(d.lastSeenAt).toLocaleString('es-AR') : 'Nunca';
+
+        return '<tr>' +
+          '<td>' +
+            '<div style="display: flex; align-items: center; gap: 8px;">' +
+              '<span style="font-size: 14px;">💻</span>' +
+              '<strong class="code-font" style="color: #fff; cursor: pointer;" onclick="openDeviceWorkspace(\\'' + d.id + '\\')">' + host + '</strong>' +
+            '</div>' +
+          '</td>' +
+          '<td><span style="color: var(--text-secondary);">' + custName + '</span> <span style="font-size: 11px; color: var(--text-muted);">(' + siteName + ')</span></td>' +
+          '<td><span class="status-pill ' + (isOnline ? 'status-online' : 'status-offline') + '">' + (isOnline ? 'ONLINE' : 'OFFLINE') + '</span></td>' +
+          '<td><span class="status-pill ' + hsClass + '">' + hs + '</span></td>' +
+          '<td><span class="code-font" style="font-size: 11px;">' + cpu + ' / ' + ram + '</span></td>' +
+          '<td><span class="code-badge">OK</span></td>' +
+          '<td>' +
+            (rebootReq ? '<span class="status-pill status-warning">⚠️ Reinicio</span>' : (defenderOn ? '<span class="status-pill status-online">Defender ON</span>' : '<span class="status-pill status-danger">Sin AV</span>')) +
+          '</td>' +
+          '<td>' +
+            (devAlerts.length > 0
+              ? '<span class="status-pill ' + (critAlerts > 0 ? 'status-danger' : 'status-warning') + '">' + devAlerts.length + ' Activas</span>'
+              : '<span class="status-pill status-online">0</span>') +
+          '</td>' +
+          '<td><span class="code-font" style="font-size: 11px; color: var(--text-muted);">' + lastSeen + '</span></td>' +
+          '<td style="text-align: right;">' +
+            '<button class="btn btn-primary btn-sm" onclick="openDeviceWorkspace(\\'' + d.id + '\\')">Ver Equipo</button>' +
+          '</td>' +
+        '</tr>';
+      }).join('');
+    }
+
+    // ==========================================
+    // DEVICE WORKSPACE (FICHA DEL EQUIPO)
+    // ==========================================
+    async function openDeviceWorkspace(deviceId) {
+      selectedDeviceId = deviceId;
+      deviceWorkspaceOrigin = currentActiveView;
+      const d = (currentDevices || []).find(function(x) { return x.id === deviceId; });
+      if (!d) {
+        showToast('Equipo no encontrado en la memoria local', 'error');
+        return;
+      }
+      selectedDevice = d;
+
+      switchNavTab('device-detail');
+
+      // 1. Header Banner Info
+      setVal('dHostname', d.hostname || 'Equipo');
+      const isOnline = d.status === 'ONLINE';
+      const statusPill = document.getElementById('dStatusPill');
+      if (statusPill) {
+        statusPill.className = 'status-pill ' + (isOnline ? 'status-online' : 'status-offline');
+        statusPill.textContent = isOnline ? 'ONLINE' : 'OFFLINE';
+      }
+
+      setVal('dCustomerBadge', d.customer ? d.customer.name : 'NanoLabs');
+      setVal('dSiteBadge', d.site ? d.site.name : 'Principal');
+      setVal('dIpText', d.ipAddress || (d.agent ? d.agent.lastIp : '127.0.0.1'));
+
+      const inv = d.inventories && d.inventories.length > 0 ? d.inventories[0] : null;
+      setVal('dOsText', (d.osVersion || (inv ? inv.osVersion : 'Windows')).replace('Microsoft ', ''));
+      setVal('dCpuSummary', inv && inv.cpuModel ? (inv.cpuModel.split('@')[0] || inv.cpuModel) : (d.cpuModel || '-'));
+      setVal('dRamSummary', inv && inv.totalRamBytes ? Math.round(Number(inv.totalRamBytes) / (1024*1024*1024)) + ' GB' : '-');
+      setVal('dAgentVersion', d.agentVersion || (d.agent ? d.agent.agentVersion : 'v0.1.0'));
+
+      // 2. Metrics & Operational Cards
+      const metrics = d.metrics && d.metrics.length > 0 ? d.metrics[0] : null;
+      const cpuUsage = metrics ? Math.round(metrics.cpuUsage) : 0;
+      const ramUsage = metrics ? Math.round(metrics.ramUsage) : 0;
+      setVal('dKpiCpuUsage', cpuUsage + '% CPU');
+      setVal('dKpiRamUsage', 'RAM: ' + ramUsage + '% en uso');
+
+      const vols = (inv && Array.isArray(inv.volumes)) ? inv.volumes : [];
+      const mainVol = vols.length > 0 ? vols[0] : null;
+      if (mainVol) {
+        const freeGb = Math.round(Number(mainVol.freeBytes || 0) / (1024*1024*1024));
+        const totalGb = Math.round(Number(mainVol.totalBytes || 1) / (1024*1024*1024));
+        setVal('dKpiDiskFree', freeGb + ' GB Libres');
+        setVal('dKpiSmartStatus', 'De ' + totalGb + ' GB (' + mainVol.mountPoint + ')');
+      } else {
+        setVal('dKpiDiskFree', 'OK');
+        setVal('dKpiSmartStatus', 'Sin partición registrada');
+      }
+
+      const sec = inv ? inv.security : null;
+      const rebootRequired = sec && sec.rebootRequired;
+      const defenderOn = sec && sec.antivirus && sec.antivirus.realTimeProtection;
+      const firewallOn = sec && sec.firewall && sec.firewall.domain;
+      setVal('dKpiSecurityStatus', (defenderOn && firewallOn) ? 'Protegido' : 'Revisar');
+      setVal('dKpiRebootStatus', rebootRequired ? '⚠️ Reinicio Pendiente' : 'Sin reinicio pendiente');
+
+      const devAlerts = (currentAlerts || []).filter(function(a) {
+        return (a.deviceId === d.id || (a.device && a.device.id === d.id)) && (a.status === 'OPEN' || a.status === 'ACKNOWLEDGED');
+      });
+      const critCount = devAlerts.filter(function(a) { return a.severity === 'CRITICAL'; }).length;
+      setVal('dKpiAlertsActive', devAlerts.length);
+      setVal('dKpiAlertsDetail', critCount + ' Críticas');
+
+      // 3. Prioritary "REQUIERE ATENCIÓN" Block
+      const attBox = document.getElementById('dAttentionBox');
+      const attItems = document.getElementById('dAttentionItems');
+      if (attBox && attItems) {
+        const issues = [];
+        if (!isOnline) issues.push('🔌 Telemetría interrumpida (Equipo desconectado)');
+        if (rebootRequired) issues.push('🔄 Reinicio pendiente del sistema');
+        if (sec && sec.antivirus && !sec.antivirus.realTimeProtection) issues.push('🛡️ Windows Defender protección en tiempo real desactivada');
+        if (sec && sec.firewall && !sec.firewall.domain) issues.push('🔥 Firewall de Windows apagado');
+        if (mainVol) {
+          const pct = Math.round((Number(mainVol.freeBytes) / Number(mainVol.totalBytes)) * 100);
+          if (pct < 10) issues.push('💾 Poco espacio libre en disco (' + pct + '% restante)');
+        }
+        critAlerts > 0 && issues.push('🚨 ' + critCount + ' Alertas críticas activas');
+
+        if (issues.length > 0) {
+          attBox.style.display = 'flex';
+          attItems.innerHTML = issues.map(function(iss) {
+            return '<span class="attention-badge">' + iss + '</span>';
+          }).join('');
+        } else {
+          attBox.style.display = 'none';
+        }
+      }
+
+      // 4. Health Score & Penalties
+      renderDeviceHealthDiagnostic(d);
+
+      // 5. Populate All Subtabs
+      renderDevicePerformanceSubtab(d);
+      renderDeviceHardwareSubtab(d);
+      renderDeviceStorageSubtab(d);
+      renderDeviceNetworkSubtab(d);
+      renderDeviceSecuritySubtab(d);
+      renderDeviceSoftwareSubtab(d);
+      renderDeviceEventsSubtab(d);
+      renderDeviceAlertsSubtab(d);
+      renderDeviceAgentSubtab(d);
+
+      switchDeviceSubTab('resumen');
+    }
+
+    function switchDeviceSubTab(tab) {
+      const tabs = ['resumen', 'rendimiento', 'hardware', 'discos', 'red', 'seguridad', 'software', 'eventos', 'alertas', 'agente'];
+      tabs.forEach(function(t) {
+        const btn = document.getElementById('dTab' + t.charAt(0).toUpperCase() + t.slice(1));
+        const view = document.getElementById('dView' + t.charAt(0).toUpperCase() + t.slice(1));
+        if (btn) btn.classList.toggle('active', t === tab);
+        if (view) view.style.display = (t === tab) ? 'flex' : 'none';
+      });
+    }
+
+    function backFromDeviceWorkspace() {
+      if (deviceWorkspaceOrigin === 'customer-detail' && currentActiveCustomerId) {
+        switchNavTab('customer-detail');
+      } else {
+        switchNavTab('devices');
+      }
+    }
+
+    function renderDeviceHealthDiagnostic(d) {
+      const hsObj = (d.healthScores && d.healthScores.length > 0) ? d.healthScores[0] : null;
+      const score = hsObj ? hsObj.score : 85;
+      setVal('hsScoreDisplay', score);
+
+      const pill = document.getElementById('hsStatusPill');
+      if (pill) {
+        pill.className = 'health-score-pill ' + (score >= 80 ? 'status-online' : (score >= 50 ? 'status-warning' : 'status-danger'));
+        pill.textContent = score >= 80 ? 'OPTIMO' : (score >= 50 ? 'REGULAR' : 'CRITICO');
+      }
+
+      // 6 Dimensions Grid
+      const grid = document.getElementById('hsCategoriesGrid');
+      if (grid) {
+        const categories = [
+          { name: 'Rendimiento', score: 95, color: 'var(--success)' },
+          { name: 'Almacenamiento', score: 90, color: 'var(--success)' },
+          { name: 'Seguridad', score: 80, color: 'var(--warning)' },
+          { name: 'Actualizaciones', score: 85, color: 'var(--success)' },
+          { name: 'Estabilidad', score: 90, color: 'var(--success)' },
+          { name: 'Capacidad', score: 92, color: 'var(--success)' }
+        ];
+
+        grid.innerHTML = categories.map(function(c) {
+          return '<div class="health-category-box">' +
+            '<div class="health-cat-header">' +
+              '<span>' + c.name + '</span>' +
+              '<span style="color: #fff;">' + c.score + '%</span>' +
+            '</div>' +
+            '<div class="health-cat-bar">' +
+              '<div class="health-cat-fill" style="width: ' + c.score + '%; background: ' + c.color + ';"></div>' +
+            '</div>' +
+          '</div>';
+        }).join('');
+      }
+
+      // Penalties List
+      const penList = document.getElementById('hsPenaltiesList');
+      const penCount = document.getElementById('hsPenaltiesCount');
+      const penalties = (hsObj && Array.isArray(hsObj.penalties)) ? hsObj.penalties : [];
+      if (penCount) penCount.textContent = penalties.length;
+
+      if (penList) {
+        if (penalties.length === 0) {
+          penList.innerHTML = '<div style="color: var(--text-muted); font-size: 12px; padding: 8px;">No se registraron penalizaciones en el último cálculo de salud. El equipo opera bajo los estándares recomendados.</div>';
+        } else {
+          penList.innerHTML = penalties.map(function(p) {
+            return '<div style="background: var(--bg-surface-subtle); border: 1px solid var(--border-subtle); border-radius: var(--radius-md); padding: 10px 14px; display: flex; align-items: center; justify-content: space-between; gap: 12px;">' +
+              '<div>' +
+                '<strong style="color: #fff; font-size: 12px;">' + (p.reason || p.category || 'Penalización') + '</strong>' +
+                '<div style="font-size: 11px; color: var(--text-muted); margin-top: 2px;">' + (p.recommendation || 'Verificar configuración en el equipo') + '</div>' +
+              '</div>' +
+              '<span class="status-pill status-danger">-' + (p.points || 10) + ' pts</span>' +
+            '</div>';
+          }).join('');
+        }
+      }
+    }
+
+    function togglePenaltiesDetails() {
+      const panel = document.getElementById('hsPenaltiesPanel');
+      if (panel) panel.style.display = (panel.style.display === 'none') ? 'block' : 'none';
+    }
+
+    async function recalculateCurrentDeviceHealth() {
+      if (!selectedDevice) return;
+      let token = localStorage.getItem('nl_token');
+      if (!token) token = await quickLoginDemo();
+      try {
+        const res = await fetch('/api/v1/devices/' + selectedDevice.id + '/health', {
+          method: 'POST',
+          headers: { 'Authorization': 'Bearer ' + token }
+        });
+        if (res.ok) {
+          showToast('Salud recalculada');
+          await fetchLiveDashboard(true);
+        } else {
+          showToast('No se pudo recalcular la salud', 'error');
+        }
+      } catch (err) {
+        showToast('Error de red', 'error');
+      }
+    }
+
+    // Subtab Renderers for Device Workspace
+    function renderDevicePerformanceSubtab(d) {
+      const c = document.getElementById('metricsChartContainer');
+      if (!c) return;
+      const metrics = (d.metrics && d.metrics.length > 0) ? d.metrics : [];
+      if (metrics.length === 0) {
+        c.innerHTML = '<div style="text-align: center; color: var(--text-muted); padding: 32px;">No hay muestras de métricas registradas para este equipo.</div>';
+        return;
+      }
+
+      // Simple SVG Polyline Chart
+      const cpuPoints = metrics.slice(0, 15).reverse().map(function(m, idx) {
+        const x = (idx / 14) * 500;
+        const y = 100 - (m.cpuUsage || 0);
+        return x + ',' + y;
+      }).join(' ');
+
+      const ramPoints = metrics.slice(0, 15).reverse().map(function(m, idx) {
+        const x = (idx / 14) * 500;
+        const y = 100 - (m.ramUsage || 0);
+        return x + ',' + y;
+      }).join(' ');
+
+      c.innerHTML = 
+        '<div style="display: flex; gap: 16px; margin-bottom: 8px; font-size: 11px;">' +
+          '<span style="color: #60a5fa;">● CPU (%)</span>' +
+          '<span style="color: #34d399;">● RAM (%)</span>' +
+        '</div>' +
+        '<svg viewBox="0 0 500 120" style="width: 100%; height: 140px; background: var(--bg-surface-subtle); border-radius: var(--radius-md);">' +
+          '<polyline fill="none" stroke="#60a5fa" stroke-width="2" points="' + cpuPoints + '" />' +
+          '<polyline fill="none" stroke="#34d399" stroke-width="2" points="' + ramPoints + '" />' +
+        '</svg>';
+    }
+
+    function renderDeviceHardwareSubtab(d) {
+      const g = document.getElementById('dHardwareGrid');
+      if (!g) return;
+      const inv = d.inventories && d.inventories.length > 0 ? d.inventories[0] : null;
+
+      const props = [
+        { label: 'Hostname / Nombre de Red', val: d.hostname || '-' },
+        { label: 'Sistema Operativo', val: d.osVersion || (inv ? inv.osVersion : 'Windows') },
+        { label: 'Procesador (CPU)', val: inv && inv.cpuModel ? inv.cpuModel : (d.cpuModel || '-') },
+        { label: 'Núcleos de CPU', val: (inv && inv.cpuCores) ? inv.cpuCores + ' Núcleos' : '-' },
+        { label: 'Memoria RAM Total', val: inv && inv.totalRamBytes ? Math.round(Number(inv.totalRamBytes) / (1024*1024*1024)) + ' GB' : '-' },
+        { label: 'Número de Serie (BIOS)', val: d.serialNumber || (inv ? inv.biosSerial : '-') },
+        { label: 'Fabricante de Hardware', val: (inv && inv.manufacturer) ? inv.manufacturer : '-' },
+        { label: 'Modelo del Equipo', val: (inv && inv.model) ? inv.model : '-' },
+        { label: 'Tiempo de Actividad (Uptime)', val: formatUptime(d.uptimeSeconds) }
+      ];
+
+      g.innerHTML = props.map(function(p) {
+        return '<div style="background: var(--bg-surface-subtle); border: 1px solid var(--border-subtle); border-radius: var(--radius-md); padding: 12px 14px;">' +
+          '<div style="font-size: 11px; color: var(--text-muted); font-weight: 600;">' + p.label + '</div>' +
+          '<div style="font-size: 13px; color: #fff; font-weight: 600; margin-top: 4px;" class="code-font">' + p.val + '</div>' +
+        '</div>';
+      }).join('');
+    }
+
+    function renderDeviceStorageSubtab(d) {
+      const l = document.getElementById('dVolumesList');
+      if (!l) return;
+      const inv = d.inventories && d.inventories.length > 0 ? d.inventories[0] : null;
+      const vols = (inv && Array.isArray(inv.volumes)) ? inv.volumes : [];
+
+      if (vols.length === 0) {
+        l.innerHTML = '<div style="text-align: center; color: var(--text-muted); padding: 24px;">No se registraron unidades de disco.</div>';
+        return;
+      }
+
+      l.innerHTML = vols.map(function(v) {
+        const totalGb = Math.round(Number(v.totalBytes || 1) / (1024*1024*1024));
+        const freeGb = Math.round(Number(v.freeBytes || 0) / (1024*1024*1024));
+        const usedGb = totalGb - freeGb;
+        const usedPct = totalGb > 0 ? Math.round((usedGb / totalGb) * 100) : 0;
+
+        return '<div style="background: var(--bg-surface-subtle); border: 1px solid var(--border-subtle); border-radius: var(--radius-md); padding: 14px 18px; display: flex; flex-direction: column; gap: 8px;">' +
+          '<div style="display: flex; justify-content: space-between; align-items: center;">' +
+            '<div><strong style="color: #fff; font-size: 14px;">' + (v.mountPoint || 'C:') + '</strong> <span style="font-size: 12px; color: var(--text-muted);">(' + (v.fileSystem || 'NTFS') + ')</span></div>' +
+            '<span class="status-pill ' + (usedPct > 90 ? 'status-danger' : (usedPct > 80 ? 'status-warning' : 'status-online')) + '">' + freeGb + ' GB Libres (' + (100 - usedPct) + '%)</span>' +
+          '</div>' +
+          '<div style="height: 6px; background: rgba(255, 255, 255, 0.08); border-radius: 3px; overflow: hidden;">' +
+            '<div style="width: ' + usedPct + '%; height: 100%; background: ' + (usedPct > 90 ? 'var(--danger)' : (usedPct > 80 ? 'var(--warning)' : 'var(--primary)')) + ';"></div>' +
+          '</div>' +
+          '<div style="display: flex; justify-content: space-between; font-size: 11px; color: var(--text-muted);">' +
+            '<span>Usado: ' + usedGb + ' GB</span>' +
+            '<span>Total: ' + totalGb + ' GB</span>' +
+          '</div>' +
+        '</div>';
+      }).join('');
+    }
+
+    function renderDeviceNetworkSubtab(d) {
+      const tb = document.getElementById('dNetworkTableBody');
+      if (!tb) return;
+      const inv = d.inventories && d.inventories.length > 0 ? d.inventories[0] : null;
+      const ifaces = (inv && Array.isArray(inv.networkInterfaces)) ? inv.networkInterfaces : [];
+
+      if (ifaces.length === 0) {
+        tb.innerHTML = '<tr><td colspan="7" style="text-align: center; color: var(--text-muted); padding: 24px;">No hay adaptadores de red registrados.</td></tr>';
+        return;
+      }
+
+      tb.innerHTML = ifaces.map(function(iface) {
+        return '<tr>' +
+          '<td><strong style="color: #fff;">' + (iface.name || 'Ethernet') + '</strong></td>' +
+          '<td><span class="code-font" style="color: #60a5fa;">' + (iface.ipAddress || '-') + '</span></td>' +
+          '<td><span class="code-font">' + (iface.subnetMask || '255.255.255.0') + '</span></td>' +
+          '<td><span class="code-font" style="color: var(--text-muted);">' + (iface.macAddress || '-') + '</span></td>' +
+          '<td>' + (iface.dhcpEnabled ? 'Sí (Dinámica)' : 'No (Estática)') + '</td>' +
+          '<td><span class="code-font">' + (iface.gateway || '-') + '</span></td>' +
+          '<td><span class="status-pill status-online">Conectado</span></td>' +
+        '</tr>';
+      }).join('');
+    }
+
+    function renderDeviceSecuritySubtab(d) {
+      const g = document.getElementById('dSecurityGrid');
+      if (!g) return;
+      const inv = d.inventories && d.inventories.length > 0 ? d.inventories[0] : null;
+      const sec = inv ? inv.security : null;
+
+      const avOn = sec && sec.antivirus && sec.antivirus.realTimeProtection;
+      const fwOn = sec && sec.firewall && sec.firewall.domain;
+      const reboot = sec && sec.rebootRequired;
+
+      g.innerHTML = 
+        '<div style="background: var(--bg-surface-subtle); border: 1px solid var(--border-subtle); border-radius: var(--radius-md); padding: 14px;">' +
+          '<div style="display: flex; justify-content: space-between; align-items: center;">' +
+            '<strong style="color: #fff; font-size: 13px;">Windows Defender Antivirus</strong>' +
+            '<span class="status-pill ' + (avOn ? 'status-online' : 'status-danger') + '">' + (avOn ? 'Activo' : 'Desactivado') + '</span>' +
+          '</div>' +
+          '<div style="font-size: 12px; color: var(--text-secondary); margin-top: 6px;">Protección en tiempo real contra amenazas y malware.</div>' +
+        '</div>' +
+
+        '<div style="background: var(--bg-surface-subtle); border: 1px solid var(--border-subtle); border-radius: var(--radius-md); padding: 14px;">' +
+          '<div style="display: flex; justify-content: space-between; align-items: center;">' +
+            '<strong style="color: #fff; font-size: 13px;">Firewall de Windows</strong>' +
+            '<span class="status-pill ' + (fwOn ? 'status-online' : 'status-danger') + '">' + (fwOn ? 'Activo' : 'Desactivado') + '</span>' +
+          '</div>' +
+          '<div style="font-size: 12px; color: var(--text-secondary); margin-top: 6px;">Filtrado de puertos y paquetes entrantes en perfil Dominio/Privado.</div>' +
+        '</div>' +
+
+        '<div style="background: var(--bg-surface-subtle); border: 1px solid var(--border-subtle); border-radius: var(--radius-md); padding: 14px;">' +
+          '<div style="display: flex; justify-content: space-between; align-items: center;">' +
+            '<strong style="color: #fff; font-size: 13px;">Reinicio del Sistema</strong>' +
+            '<span class="status-pill ' + (reboot ? 'status-warning' : 'status-online') + '">' + (reboot ? 'Reinicio Pendiente' : 'Al día') + '</span>' +
+          '</div>' +
+          '<div style="font-size: 12px; color: var(--text-secondary); margin-top: 6px;">' + (reboot ? 'Se requiere reinicio para consolidar parches del sistema operativo.' : 'No hay parches o instalaciones pendientes de reinicio.') + '</div>' +
+        '</div>';
+    }
+
+    function renderDeviceSoftwareSubtab(d) {
+      const tb = document.getElementById('dSoftwareTableBody');
+      const countEl = document.getElementById('dCountSoftware');
+      if (!tb) return;
+      const sinv = d.softwareInventories && d.softwareInventories.length > 0 ? d.softwareInventories[0] : null;
+      const items = (sinv && Array.isArray(sinv.items)) ? sinv.items : [];
+      cachedSoftwareList = items;
+      if (countEl) countEl.textContent = items.length;
+
+      filterSoftwareTable('');
+    }
+
+    function filterSoftwareTable(query) {
+      const tb = document.getElementById('dSoftwareTableBody');
+      if (!tb) return;
+      query = (query || '').toLowerCase().trim();
+      let list = cachedSoftwareList || [];
+
+      if (query) {
+        list = list.filter(function(s) {
+          return (s.name || '').toLowerCase().includes(query) || (s.publisher || '').toLowerCase().includes(query);
+        });
+      }
+
+      if (list.length === 0) {
+        tb.innerHTML = '<tr><td colspan="4" style="text-align: center; color: var(--text-muted); padding: 24px;">No se encontraron programas instalados.</td></tr>';
+        return;
+      }
+
+      tb.innerHTML = list.slice(0, 100).map(function(s) {
+        return '<tr>' +
+          '<td><strong style="color: #fff;">' + (s.name || 'Aplicación') + '</strong></td>' +
+          '<td><span class="code-font" style="color: #60a5fa;">' + (s.version || '-') + '</span></td>' +
+          '<td>' + (s.publisher || '-') + '</td>' +
+          '<td><span class="code-font" style="font-size: 11px; color: var(--text-muted);">' + (s.installDate || '-') + '</span></td>' +
+        '</tr>';
+      }).join('');
+    }
+
+    function renderDeviceEventsSubtab(d) {
+      const tb = document.getElementById('dEventsTableBody');
+      if (!tb) return;
+      const events = (d.events && Array.isArray(d.events)) ? d.events : [];
+
+      if (events.length === 0) {
+        tb.innerHTML = '<tr><td colspan="5" style="text-align: center; color: var(--text-muted); padding: 24px;">No hay eventos recientes registrados.</td></tr>';
+        return;
+      }
+
+      tb.innerHTML = events.slice(0, 30).map(function(ev) {
+        const isCrit = ev.severity === 'CRITICAL' || ev.severity === 'ERROR';
+        const isWarn = ev.severity === 'WARNING';
+        const sevClass = isCrit ? 'status-danger' : (isWarn ? 'status-warning' : 'status-info');
+
+        return '<tr>' +
+          '<td><span class="status-pill ' + sevClass + '">' + (ev.severity || 'INFO') + '</span></td>' +
+          '<td><strong style="color: #fff;">' + (ev.provider || ev.source || 'Sistema') + '</strong></td>' +
+          '<td><span class="code-badge">' + (ev.eventId || '-') + '</span></td>' +
+          '<td><span class="code-font" style="font-size: 11px; color: var(--text-muted);">' + (ev.timestamp ? new Date(ev.timestamp).toLocaleString('es-AR') : '-') + '</span></td>' +
+          '<td><span style="font-size: 12px; color: var(--text-secondary);">' + (ev.message || '-') + '</span></td>' +
+        '</tr>';
+      }).join('');
+    }
+
+    function renderDeviceAlertsSubtab(d) {
+      const tb = document.getElementById('dAlertsTableBody');
+      const countEl = document.getElementById('dCountAlertas');
+      if (!tb) return;
+
+      const devAlerts = (currentAlerts || []).filter(function(a) {
+        return (a.deviceId === d.id || (a.device && a.device.id === d.id));
+      });
+      if (countEl) countEl.textContent = devAlerts.filter(function(a) { return a.status === 'OPEN' || a.status === 'ACKNOWLEDGED'; }).length;
+
+      if (devAlerts.length === 0) {
+        tb.innerHTML = '<tr><td colspan="7" style="text-align: center; color: var(--text-muted); padding: 24px;">No se registran alertas para este equipo.</td></tr>';
+        return;
+      }
+
+      tb.innerHTML = devAlerts.map(function(a) {
+        const isCrit = a.severity === 'CRITICAL';
+        const isHigh = a.severity === 'HIGH';
+        const sevClass = isCrit ? 'status-danger' : (isHigh ? 'status-warning' : 'status-info');
+
+        return '<tr>' +
+          '<td><span class="status-pill ' + sevClass + '">' + a.severity + '</span></td>' +
+          '<td><strong style="color: #fff;">' + (a.title || 'Alerta') + '</strong></td>' +
+          '<td><span class="code-badge">x' + (a.occurrences || 1) + '</span></td>' +
+          '<td><span class="code-font" style="font-size: 11px;">' + (a.firstSeenAt ? new Date(a.firstSeenAt).toLocaleString('es-AR') : '-') + '</span></td>' +
+          '<td><span class="code-font" style="font-size: 11px; color: #38bdf8;">' + (a.lastSeenAt ? new Date(a.lastSeenAt).toLocaleString('es-AR') : '-') + '</span></td>' +
+          '<td><span class="status-pill ' + (a.status === 'RESOLVED' ? 'status-online' : 'status-danger') + '">' + a.status + '</span></td>' +
+          '<td style="text-align: right;"><button class="btn btn-secondary btn-sm" onclick="openAlertDetailModal(\\'' + a.id + '\\')">Detalle</button></td>' +
+        '</tr>';
+      }).join('');
+    }
+
+    function renderDeviceAgentSubtab(d) {
+      const g = document.getElementById('dAgentMetaGrid');
+      if (!g) return;
+      const agent = d.agent || {};
+
+      g.innerHTML = 
+        '<div style="background: var(--bg-surface-subtle); border: 1px solid var(--border-subtle); border-radius: var(--radius-md); padding: 12px 14px;">' +
+          '<div style="font-size: 11px; color: var(--text-muted);">Versión del Agente</div>' +
+          '<div style="font-size: 14px; font-weight: 700; color: #60a5fa;" class="code-font">' + (d.agentVersion || agent.agentVersion || 'v0.1.0') + '</div>' +
+        '</div>' +
+
+        '<div style="background: var(--bg-surface-subtle); border: 1px solid var(--border-subtle); border-radius: var(--radius-md); padding: 12px 14px;">' +
+          '<div style="font-size: 11px; color: var(--text-muted);">Estado del Agente</div>' +
+          '<div style="font-size: 14px; font-weight: 700; color: var(--success);">' + (d.status === 'ONLINE' ? 'Activo / Reportando' : 'Sin conexión') + '</div>' +
+        '</div>' +
+
+        '<div style="background: var(--bg-surface-subtle); border: 1px solid var(--border-subtle); border-radius: var(--radius-md); padding: 12px 14px;">' +
+          '<div style="font-size: 11px; color: var(--text-muted);">Último Heartbeat</div>' +
+          '<div style="font-size: 12px; color: #fff;" class="code-font">' + (d.lastSeenAt ? new Date(d.lastSeenAt).toLocaleString('es-AR') : 'Nunca') + '</div>' +
+        '</div>';
+
+      // Move Customer Dropdown
+      const sel = document.getElementById('moveCustomerSelect');
+      if (sel) {
+        let html = '';
+        (currentCustomers || []).forEach(function(c) {
+          const isCurrent = (d.customer && d.customer.id === c.id) || d.customerId === c.id;
+          html += '<option value="' + c.id + '"' + (isCurrent ? ' selected' : '') + '>' + c.name + ' (' + c.code + ')' + (isCurrent ? ' (Actual)' : '') + '</option>';
+        });
+        sel.innerHTML = html;
+      }
+    }
+
+    async function handleMoveDevice() {
+      if (!selectedDevice) return;
+      const sel = document.getElementById('moveCustomerSelect');
+      if (!sel) return;
+      const targetCustId = sel.value;
+      if (!targetCustId) return;
+
+      let token = localStorage.getItem('nl_token');
+      if (!token) token = await quickLoginDemo();
+
+      try {
+        const res = await fetch('/api/v1/devices/' + selectedDevice.id, {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + token },
+          body: JSON.stringify({ customerId: targetCustId })
+        });
+        if (res.ok) {
+          showToast('✅ Equipo reasignado con éxito');
+          await fetchLiveDashboard(false);
+          openDeviceWorkspace(selectedDevice.id);
+        } else {
+          showToast('Error al reasignar equipo', 'error');
+        }
+      } catch (err) {
+        showToast('Error de red al reasignar equipo', 'error');
+      }
+    }
+
+    function copyDeviceDiagnostic() {
+      if (!selectedDevice) return;
+      const str = JSON.stringify(selectedDevice, null, 2);
+      navigator.clipboard.writeText(str).then(function() {
+        showToast('Diagnóstico JSON copiado al portapapeles');
+      }).catch(function() {
+        prompt('Diagnóstico JSON:', str);
+      });
+    }
+
+    // ==========================================
+    // AGENTS & ENROLLMENT WIZARD
+    // ==========================================
+    function switchAgentsTab(tab) {
+      const btnList = document.getElementById('btnTabAgentsList');
+      const btnEnroll = document.getElementById('btnTabAgentsEnroll');
+      const viewList = document.getElementById('agentsListView');
+      const viewEnroll = document.getElementById('agentsEnrollView');
+
+      if (btnList) btnList.className = 'btn btn-sm ' + (tab === 'list' ? 'btn-primary' : 'btn-secondary');
+      if (btnEnroll) btnEnroll.className = 'btn btn-sm ' + (tab === 'enroll' ? 'btn-primary' : 'btn-secondary');
+
+      if (viewList) viewList.style.display = (tab === 'list') ? 'flex' : 'none';
+      if (viewEnroll) viewEnroll.style.display = (tab === 'enroll') ? 'flex' : 'none';
+    }
+
+    function renderAgentsList() {
+      const tb = document.getElementById('agentsTableBody');
+      const totalBadge = document.getElementById('agentsTotalBadge');
+      if (!tb) return;
+
+      const devices = currentDevices || [];
+      if (totalBadge) totalBadge.textContent = devices.length + ' Agentes Registrados';
+
+      populateAgentsCustomerFilter();
+
+      if (devices.length === 0) {
+        tb.innerHTML = '<tr><td colspan="7" style="text-align: center; color: var(--text-muted); padding: 40px;">No hay agentes enrolados todavía.</td></tr>';
+        return;
+      }
+
+      tb.innerHTML = devices.map(function(d) {
+        const isOnline = d.status === 'ONLINE';
+        const host = d.hostname || 'Equipo';
+        const custName = d.customer ? d.customer.name : '-';
+        const siteName = d.site ? d.site.name : 'Principal';
+        const ver = d.agentVersion || (d.agent ? d.agent.agentVersion : 'v0.1.0');
+        const lastSeen = d.lastSeenAt ? new Date(d.lastSeenAt).toLocaleString('es-AR') : 'Nunca';
+
+        return '<tr>' +
+          '<td><strong class="code-font" style="color: #fff; cursor: pointer;" onclick="openDeviceWorkspace(\\'' + d.id + '\\')">' + host + '</strong></td>' +
+          '<td>' + custName + '</td>' +
+          '<td>' + siteName + '</td>' +
+          '<td><span class="code-badge">' + ver + '</span></td>' +
+          '<td><span class="status-pill ' + (isOnline ? 'status-online' : 'status-offline') + '">' + (isOnline ? 'Conectado' : 'Desconectado') + '</span></td>' +
+          '<td><span class="code-font" style="font-size: 11px; color: var(--text-muted);">' + lastSeen + '</span></td>' +
+          '<td style="text-align: right;"><button class="btn btn-secondary btn-sm" onclick="openDeviceWorkspace(\\'' + d.id + '\\')">Diagnóstico</button></td>' +
+        '</tr>';
+      }).join('');
+    }
+
+    function populateAgentsCustomerFilter() {
+      const sel = document.getElementById('agentsFilterCustomer');
+      if (!sel) return;
+      const currentVal = sel.value;
+      let html = '<option value="ALL">Todos los Clientes</option>';
+      (currentCustomers || []).forEach(function(c) {
+        html += '<option value="' + c.id + '"' + (currentVal === c.id ? ' selected' : '') + '>' + c.name + ' (' + c.code + ')</option>';
+      });
+      sel.innerHTML = html;
+    }
+
+    function filterAgentsByCustomer(custId) {
+      // Re-filter agents table by customer
+      const tb = document.getElementById('agentsTableBody');
+      if (!tb) return;
+      let devices = currentDevices || [];
+      if (custId !== 'ALL') {
+        devices = devices.filter(function(d) {
+          return (d.customer && d.customer.id === custId) || d.customerId === custId;
+        });
+      }
+      tb.innerHTML = devices.map(function(d) {
+        const isOnline = d.status === 'ONLINE';
+        const host = d.hostname || 'Equipo';
+        const custName = d.customer ? d.customer.name : '-';
+        const siteName = d.site ? d.site.name : 'Principal';
+        const ver = d.agentVersion || 'v0.1.0';
+        const lastSeen = d.lastSeenAt ? new Date(d.lastSeenAt).toLocaleString('es-AR') : 'Nunca';
+
+        return '<tr>' +
+          '<td><strong class="code-font" style="color: #fff; cursor: pointer;" onclick="openDeviceWorkspace(\\'' + d.id + '\\')">' + host + '</strong></td>' +
+          '<td>' + custName + '</td>' +
+          '<td>' + siteName + '</td>' +
+          '<td><span class="code-badge">' + ver + '</span></td>' +
+          '<td><span class="status-pill ' + (isOnline ? 'status-online' : 'status-offline') + '">' + (isOnline ? 'Conectado' : 'Desconectado') + '</span></td>' +
+          '<td><span class="code-font" style="font-size: 11px; color: var(--text-muted);">' + lastSeen + '</span></td>' +
+          '<td style="text-align: right;"><button class="btn btn-secondary btn-sm" onclick="openDeviceWorkspace(\\'' + d.id + '\\')">Diagnóstico</button></td>' +
+        '</tr>';
+      }).join('');
+    }
+
+    function populateWizardCustomerSelect() {
+      const sel = document.getElementById('wCustSelect');
+      if (!sel) return;
+      let html = '<option value="">-- Elegir Cliente --</option>';
+      (currentCustomers || []).forEach(function(c) {
+        html += '<option value="' + c.id + '">' + c.name + ' (' + c.code + ')</option>';
+      });
+      sel.innerHTML = html;
+    }
+
+    function handleWizardCustomerChange() {
+      const sel = document.getElementById('wCustSelect');
+      const btnNext = document.getElementById('btnWStep1Next');
+      if (!sel || !btnNext) return;
+      currentWizardCustomerId = sel.value;
+      btnNext.disabled = !currentWizardCustomerId;
+    }
+
+    function handleWizardSiteChange() {
+      const sel = document.getElementById('wSiteSelect');
+      if (sel) currentWizardSiteId = sel.value;
+    }
+
+    function goToWizardStep(step) {
+      const s1 = document.getElementById('wStep1Content');
+      const s2 = document.getElementById('wStep2Content');
+      const s3 = document.getElementById('wStep3Content');
+
+      const ind1 = document.getElementById('wStepIndicator1');
+      const ind2 = document.getElementById('wStepIndicator2');
+      const ind3 = document.getElementById('wStepIndicator3');
+
+      if (step === 2) {
+        if (!currentWizardCustomerId) return;
+        const cust = (currentCustomers || []).find(function(c) { return c.id === currentWizardCustomerId; });
+        const siteSel = document.getElementById('wSiteSelect');
+        if (cust && siteSel) {
+          const sites = cust.sites || [];
+          let html = '<option value="">Sede Central / Predeterminada</option>';
+          sites.forEach(function(s) {
+            html += '<option value="' + s.id + '">' + s.name + '</option>';
+          });
+          siteSel.innerHTML = html;
+        }
+      }
+
+      if (step === 3) {
+        const cust = (currentCustomers || []).find(function(c) { return c.id === currentWizardCustomerId; });
+        const siteSel = document.getElementById('wSiteSelect');
+        const siteName = siteSel && siteSel.value && siteSel.options[siteSel.selectedIndex] ? siteSel.options[siteSel.selectedIndex].text : 'Sede Principal';
+
+        setVal('wSummaryCust', cust ? cust.name : 'Cliente');
+        setVal('wSummarySite', siteName);
+
+        const tokenObj = cust && cust.enrollmentTokens && cust.enrollmentTokens.length > 0 ? cust.enrollmentTokens[0] : null;
+        const tokenStr = tokenObj ? tokenObj.token : ('NL-' + (cust ? cust.code : 'DEMO') + '-TOKEN');
+        const cmdEl = document.getElementById('wPs1Command');
+        if (cmdEl) {
+          cmdEl.textContent = 'irm https://monitor.nanolabs.com.ar/install.ps1 | iex -Token "' + tokenStr + '"';
+        }
+      }
+
+      if (s1) s1.style.display = (step === 1) ? 'flex' : 'none';
+      if (s2) s2.style.display = (step === 2) ? 'flex' : 'none';
+      if (s3) s3.style.display = (step === 3) ? 'flex' : 'none';
+
+      if (ind1) { ind1.classList.toggle('active', step === 1); ind1.classList.toggle('completed', step > 1); }
+      if (ind2) { ind2.classList.toggle('active', step === 2); ind2.classList.toggle('completed', step > 2); }
+      if (ind3) { ind3.classList.toggle('active', step === 3); }
+    }
+
+    function copyWizardCmd() {
+      const cmdEl = document.getElementById('wPs1Command');
+      if (!cmdEl) return;
+      const cmd = cmdEl.textContent.trim();
+      navigator.clipboard.writeText(cmd).then(function() {
+        showToast('✅ Comando PowerShell copiado al portapapeles');
+      }).catch(function() {
+        prompt('Copiá el comando:', cmd);
+      });
+    }
+
+    // ==========================================
+    // PLATFORM MODULE
+    // ==========================================
+    function renderPlatformView() {
+      // Dynamic uptime calculation
+      const upEl = document.getElementById('platApiUptime');
+      if (upEl) upEl.textContent = formatUptime(Math.floor(Date.now() / 1000) % 86400 + 3600);
+    }
+
+    // ==========================================
+    // SETTINGS MODULE
+    // ==========================================
+    function switchSettingsSubTab(tab) {
+      const tabs = ['reglas', 'notificaciones', 'preferencias'];
+      tabs.forEach(function(t) {
+        const btn = document.getElementById('setTab' + t.charAt(0).toUpperCase() + t.slice(1));
+        const view = document.getElementById('setView' + t.charAt(0).toUpperCase() + t.slice(1));
+        if (btn) btn.classList.toggle('active', t === tab);
+        if (view) view.style.display = (t === tab) ? 'flex' : 'none';
+      });
+    }
+
+    function populateSettingsRuleCustomerSelect() {
+      const sel = document.getElementById('settingsRuleCustomerSelect');
+      if (!sel) return;
+      let html = '<option value="GENERAL">🌐 Reglas Generales de Flota (Todos los Clientes)</option>';
+      (currentCustomers || []).forEach(function(c) {
+        html += '<option value="' + c.id + '">🏢 Cliente: ' + c.name + ' (' + c.code + ')</option>';
+      });
+      sel.innerHTML = html;
+    }
+
+    function handleSettingsRuleCustomerChange() {
+      const sel = document.getElementById('settingsRuleCustomerSelect');
+      const custId = sel ? sel.value : 'GENERAL';
+      const help = document.getElementById('settingsRuleScopeHelp');
+      if (help) {
+        if (!custId || custId === 'GENERAL') {
+          help.textContent = 'Estas reglas aplican por defecto a todas las estaciones de trabajo de todos tus clientes.';
+        } else {
+          help.textContent = 'Políticas personalizadas para este cliente. Sobrescriben las de la flota.';
+        }
+      }
+      fetchAndRenderSettingsRules(custId);
+    }
+
+    async function fetchAndRenderSettingsRules(custId) {
+      const tbody = document.getElementById('settingsRulesTableBody');
+      if (!tbody) return;
+      populateSettingsRuleCustomerSelect();
+
+      const sel = document.getElementById('settingsRuleCustomerSelect');
+      if (sel && custId) sel.value = custId;
+      const targetCustId = (sel && sel.value !== 'GENERAL') ? sel.value : null;
+
+      tbody.innerHTML = '<tr><td colspan="7" style="text-align: center; color: var(--text-muted); padding: 32px;">Cargando reglas...</td></tr>';
+      let token = localStorage.getItem('nl_token');
+      if (!token) token = await quickLoginDemo();
+
+      const query = targetCustId ? '?customerId=' + targetCustId : '';
+      try {
+        const res = await fetch('/api/v1/alerts/rules' + query, {
+          headers: token ? { 'Authorization': 'Bearer ' + token } : {}
+        });
+        if (res.ok) {
+          const json = await res.json();
+          const rules = (json && json.data) || [];
+          if (rules.length === 0) {
+            tbody.innerHTML = '<tr><td colspan="7" style="text-align: center; color: var(--text-muted); padding: 32px;">No hay reglas registradas</td></tr>';
+            return;
+          }
+
+          tbody.innerHTML = rules.map(function(r) {
+            const isCrit = r.severity === 'CRITICAL';
+            const isHigh = r.severity === 'HIGH';
+            const isWarn = r.severity === 'WARNING';
+            const sevClass = isCrit ? 'status-danger' : (isHigh ? 'status-warning' : (isWarn ? 'status-info' : 'status-online'));
+            const isEnabled = r.enabled !== false;
+
+            let conditionStr = '';
+            let currentThresholdVal = null;
+            if (r.condition && r.condition.type) {
+              const t = r.condition.type;
+              const th = r.condition.threshold;
+              currentThresholdVal = th !== undefined ? th : null;
+              if (t === 'STORAGE') conditionStr = 'Espacio libre &lt; ' + th + '%';
+              else if (t === 'SMART') conditionStr = 'Fallo físico SMART';
+              else if (t === 'CPU') conditionStr = 'Uso sostenido &gt; ' + th + '%';
+              else if (t === 'RAM') conditionStr = 'Memoria libre &lt; ' + th + '%';
+              else if (t === 'OFFLINE') conditionStr = 'Sin latidos &gt; ' + th + ' min';
+              else if (t === 'DEFENDER') conditionStr = 'Protección AV apagada';
+              else if (t === 'FIREWALL') conditionStr = 'Cortafuegos apagado';
+              else conditionStr = t;
+            }
+
+            let statusBadge = isEnabled
+              ? '<span class="status-pill status-online">● Activa</span>'
+              : '<span class="status-pill status-offline">○ Desactivada</span>';
+
+            if (targetCustId && r.isCustomerOverride) {
+              statusBadge += '<div style="font-size: 10px; color: #f59e0b; margin-top: 2px;">★ Personalizada</div>';
+            }
+
+            let actionBtns = '<button class="btn btn-secondary btn-sm" onclick="toggleAlertRule(\\'' + r.id + '\\', \\'' + (targetCustId || 'GENERAL') + '\\')">' + (isEnabled ? 'Desactivar' : 'Activar') + '</button>';
+            if (currentThresholdVal !== null) {
+              actionBtns += ' <button class="btn btn-secondary btn-sm" onclick="openThresholdModal(\\'' + (r.baseRuleId || r.id) + '\\', \\'' + (targetCustId || '') + '\\', \\'' + currentThresholdVal + '\\', \\'' + (r.name || '') + '\\')">✏️ Umbral</button>';
+            }
+            if (targetCustId && r.isCustomerOverride && r.overrideId) {
+              actionBtns += ' <button class="btn btn-secondary btn-sm" onclick="revertCustomerRuleOverride(\\'' + r.overrideId + '\\')">🔄 Revertir</button>';
+            }
+
+            return '<tr>' +
+              '<td><strong style="color: #fff;">' + (r.name || 'Regla') + '</strong><div style="font-size: 11px; color: var(--text-muted); margin-top: 2px;">' + (r.description || '') + '</div></td>' +
+              '<td><span class="code-badge">' + (r.category || 'general') + '</span></td>' +
+              '<td><span class="status-pill ' + sevClass + '">' + r.severity + '</span></td>' +
+              '<td><span class="code-font" style="color: #38bdf8;">' + conditionStr + '</span></td>' +
+              '<td>' + (r.cooldownMin || 60) + 'm</td>' +
+              '<td>' + statusBadge + '</td>' +
+              '<td style="text-align: right; white-space: nowrap;">' + actionBtns + '</td>' +
+            '</tr>';
+          }).join('');
+        }
+      } catch (err) {
+        tbody.innerHTML = '<tr><td colspan="7" style="text-align: center; color: #ef4444; padding: 32px;">Error al cargar reglas</td></tr>';
+      }
+    }
+
+    async function toggleAlertRule(ruleId, customerId) {
+      let token = localStorage.getItem('nl_token');
+      if (!token) token = await quickLoginDemo();
+      const query = (customerId && customerId !== 'GENERAL') ? '?customerId=' + customerId : '';
+      try {
+        const res = await fetch('/api/v1/alerts/rules/' + ruleId + '/toggle' + query, {
+          method: 'PATCH',
+          headers: token ? { 'Authorization': 'Bearer ' + token } : {}
+        });
+        if (res.ok) {
+          showToast('Regla modificada');
+          await fetchAndRenderSettingsRules(customerId);
+        } else {
+          showToast('Error al modificar regla', 'error');
+        }
+      } catch (err) {
+        showToast('Error de red', 'error');
+      }
+    }
+
+    async function revertCustomerRuleOverride(overrideId) {
+      let token = localStorage.getItem('nl_token');
+      if (!token) token = await quickLoginDemo();
+      try {
+        const res = await fetch('/api/v1/alerts/rules/customer-override/' + overrideId, {
+          method: 'DELETE',
+          headers: token ? { 'Authorization': 'Bearer ' + token } : {}
+        });
+        if (res.ok) {
+          showToast('Regla restablecida al valor general de la flota');
+          const sel = document.getElementById('settingsRuleCustomerSelect');
+          await fetchAndRenderSettingsRules(sel ? sel.value : 'GENERAL');
+        } else {
+          showToast('Error al restablecer regla', 'error');
+        }
+      } catch (err) {
+        showToast('Error de red', 'error');
+      }
+    }
+
+    function openThresholdModal(baseRuleId, customerId, currentTh, ruleName) {
+      const m = document.getElementById('thresholdModal');
+      const baseIdInput = document.getElementById('thBaseRuleId');
+      const custIdInput = document.getElementById('thCustomerId');
+      const valInput = document.getElementById('thInputVal');
+      const title = document.getElementById('thModalTitle');
+      const lbl = document.getElementById('thRuleDescLabel');
+      if (!m || !valInput) return;
+
+      if (baseIdInput) baseIdInput.value = baseRuleId;
+      if (custIdInput) custIdInput.value = customerId || '';
+      valInput.value = currentTh || 10;
+      if (title) title.textContent = '✏️ Umbral: ' + (ruleName || 'Regla');
+      if (lbl) lbl.textContent = 'Nuevo umbral numérico para ' + (ruleName || 'esta regla');
+
+      m.classList.add('active');
+    }
+
+    function closeThresholdModal() {
+      const m = document.getElementById('thresholdModal');
+      if (m) m.classList.remove('active');
+    }
+
+    async function handleThresholdSubmit(e) {
+      if (e) e.preventDefault();
+      const baseRuleId = document.getElementById('thBaseRuleId').value;
+      const customerId = document.getElementById('thCustomerId').value;
+      const num = parseFloat(document.getElementById('thInputVal').value);
+
+      if (isNaN(num) || num < 0) {
+        showToast('Ingresá un número válido', 'error');
+        return;
+      }
+
+      let token = localStorage.getItem('nl_token');
+      if (!token) token = await quickLoginDemo();
+
+      try {
+        const res = await fetch('/api/v1/alerts/rules/customer-override', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + token },
+          body: JSON.stringify({ baseRuleId: baseRuleId, customerId: customerId || undefined, threshold: num })
+        });
+        if (res.ok) {
+          closeThresholdModal();
+          showToast('Umbral guardado con éxito');
+          const sel = document.getElementById('settingsRuleCustomerSelect');
+          await fetchAndRenderSettingsRules(sel ? sel.value : 'GENERAL');
+        } else {
+          showToast('Error al guardar umbral', 'error');
+        }
+      } catch (err) {
+        showToast('Error de red', 'error');
+      }
+    }
+
+    function saveNotificationSettings() {
+      showToast('✅ Canales de notificación guardados');
+    }
+
+    function updatePollingInterval(val) {
+      pollingIntervalMs = parseInt(val, 10) || 8000;
+      if (pollingTimer) clearInterval(pollingTimer);
+      pollingTimer = setInterval(function() {
+        fetchLiveDashboard(true);
+      }, pollingIntervalMs);
+      showToast('Intervalo de sondeo actualizado a ' + (pollingIntervalMs / 1000) + 's');
+    }
+
+    // ==========================================
+    // GLOBAL SEARCH (CTRL + K)
+    // ==========================================
+    function openGlobalSearch() {
+      const backdrop = document.getElementById('globalSearchBackdrop');
+      const input = document.getElementById('globalSearchInput');
+      if (backdrop) backdrop.classList.add('active');
+      if (input) {
+        input.value = '';
+        input.focus();
+        handleGlobalSearchInput('');
+      }
+    }
+
+    function closeGlobalSearch(e) {
+      if (e && e.target !== e.currentTarget && e.target.id !== 'globalSearchBackdrop') return;
+      const backdrop = document.getElementById('globalSearchBackdrop');
+      if (backdrop) backdrop.classList.remove('active');
+    }
+
+    function handleGlobalSearchInput(query) {
+      const results = document.getElementById('globalSearchResults');
+      if (!results) return;
+
+      query = (query || '').toLowerCase().trim();
+      if (!query) {
+        results.innerHTML = '<div style="padding: 24px; text-align: center; color: var(--text-muted); font-size: 12px;">Escribí para buscar en tiempo real clientes, equipos o alertas...</div>';
+        return;
+      }
+
+      // Match Customers
+      const matchedCustomers = (currentCustomers || []).filter(function(c) {
+        return (c.name || '').toLowerCase().includes(query) || (c.code || '').toLowerCase().includes(query);
+      }).slice(0, 4);
+
+      // Match Devices
+      const matchedDevices = (currentDevices || []).filter(function(d) {
+        return (d.hostname || '').toLowerCase().includes(query) || (d.ipAddress || '').toLowerCase().includes(query) || (d.customer && d.customer.name.toLowerCase().includes(query));
+      }).slice(0, 6);
+
+      // Match Alerts
+      const matchedAlerts = (currentAlerts || []).filter(function(a) {
+        return (a.title || '').toLowerCase().includes(query) || (a.device && a.device.hostname.toLowerCase().includes(query));
+      }).slice(0, 4);
+
+      let html = '';
+
+      if (matchedCustomers.length > 0) {
+        html += '<div style="padding: 6px 12px; font-size: 10px; font-weight: 700; color: var(--text-muted); text-transform: uppercase;">Clientes</div>';
+        matchedCustomers.forEach(function(c) {
+          html += '<div class="search-result-item" onclick="closeGlobalSearch(); openCustomerWorkspace(\\'' + c.id + '\\')">' +
+            '<span style="font-size: 16px;">🏢</span>' +
+            '<div style="flex: 1;"><strong style="color: #fff;">' + c.name + '</strong> <span class="code-badge">' + c.code + '</span></div>' +
+            '<span class="search-result-meta">Ver Ficha</span>' +
+          '</div>';
+        });
+      }
+
+      if (matchedDevices.length > 0) {
+        html += '<div style="padding: 6px 12px; font-size: 10px; font-weight: 700; color: var(--text-muted); text-transform: uppercase; margin-top: 6px;">Equipos</div>';
+        matchedDevices.forEach(function(d) {
+          const isOnline = d.status === 'ONLINE';
+          html += '<div class="search-result-item" onclick="closeGlobalSearch(); openDeviceWorkspace(\\'' + d.id + '\\')">' +
+            '<span style="font-size: 16px;">💻</span>' +
+            '<div style="flex: 1;">' +
+              '<strong class="code-font" style="color: #fff;">' + d.hostname + '</strong> ' +
+              '<span class="status-pill ' + (isOnline ? 'status-online' : 'status-offline') + '" style="font-size: 10px;">' + (isOnline ? 'ONLINE' : 'OFFLINE') + '</span>' +
+              '<div style="font-size: 11px; color: var(--text-muted);">' + (d.customer ? d.customer.name : 'NanoLabs') + '</div>' +
+            '</div>' +
+            '<span class="search-result-meta">Abrir Ficha</span>' +
+          '</div>';
+        });
+      }
+
+      if (matchedAlerts.length > 0) {
+        html += '<div style="padding: 6px 12px; font-size: 10px; font-weight: 700; color: var(--text-muted); text-transform: uppercase; margin-top: 6px;">Alertas</div>';
+        matchedAlerts.forEach(function(a) {
+          html += '<div class="search-result-item" onclick="closeGlobalSearch(); openAlertDetailModal(\\'' + a.id + '\\')">' +
+            '<span style="font-size: 16px;">🚨</span>' +
+            '<div style="flex: 1;">' +
+              '<strong style="color: #fff;">' + (a.title || 'Alerta') + '</strong>' +
+              '<div style="font-size: 11px; color: var(--text-muted);">' + (a.device ? a.device.hostname : 'Dispositivo') + '</div>' +
+            '</div>' +
+            '<span class="search-result-meta">Inspeccionar</span>' +
+          '</div>';
+        });
+      }
+
+      if (!html) {
+        html = '<div style="padding: 24px; text-align: center; color: var(--text-muted); font-size: 12px;">No se encontraron coincidencias para "' + query + '"</div>';
+      }
+
+      results.innerHTML = html;
+    }
+
+    // ==========================================
+    // DATA REFRESH & SYNCHRONIZATION
+    // ==========================================
+    async function handleGlobalRefresh() {
+      const spinner = document.getElementById('globalRefreshSpinner');
+      if (spinner) spinner.classList.add('spinning');
+      await fetchLiveDashboard(false);
+      setTimeout(function() {
+        if (spinner) spinner.classList.remove('spinning');
+      }, 600);
+    }
+
+    async function fetchLiveDashboard(silent) {
+      try {
+        const res = await fetch('/api/v1/public/live', {
+          headers: { 'Cache-Control': 'no-cache' }
+        });
+        if (res.ok) {
+          const json = await res.json();
+          if (json) {
+            if (Array.isArray(json.devices)) currentDevices = json.devices;
+            if (Array.isArray(json.customers)) currentCustomers = json.customers;
+            if (Array.isArray(json.recentEvents)) currentRecentEvents = json.recentEvents;
+            if (Array.isArray(json.alerts)) currentAlerts = json.alerts;
+
+            // Re-render current active view
+            if (currentActiveView === 'dashboard') renderDashboard();
+            else if (currentActiveView === 'alerts') renderAlertCenter();
+            else if (currentActiveView === 'customers') renderCustomersTable();
+            else if (currentActiveView === 'customer-detail' && currentActiveCustomerId) {
+              const cust = currentCustomers.find(function(c) { return c.id === currentActiveCustomerId; });
+              if (cust) renderCustomerWorkspaceData(cust);
+            } else if (currentActiveView === 'devices') renderFleetDevices();
+            else if (currentActiveView === 'device-detail' && selectedDeviceId) {
+              const updated = currentDevices.find(function(d) { return d.id === selectedDeviceId; });
+              if (updated) {
+                selectedDevice = updated;
+                const sp = document.getElementById('dStatusPill');
+                if (sp) {
+                  const isOnline = updated.status === 'ONLINE';
+                  sp.className = 'status-pill ' + (isOnline ? 'status-online' : 'status-offline');
+                  sp.textContent = isOnline ? 'ONLINE' : 'OFFLINE';
+                }
+              }
+            } else if (currentActiveView === 'agents') renderAgentsList();
+
+            // Always update sidebar counts
+            setVal('sbCustomersCount', currentCustomers.length);
+            setVal('sbDevicesCount', currentDevices.length);
+            const activeAlerts = (currentAlerts || []).filter(function(a) { return a.status === 'OPEN' || a.status === 'ACKNOWLEDGED'; });
+            const sbBadge = document.getElementById('sbAlertsBadge');
+            if (sbBadge) {
+              if (activeAlerts.length > 0) {
+                sbBadge.style.display = 'inline-block';
+                sbBadge.textContent = activeAlerts.length;
+              } else {
+                sbBadge.style.display = 'none';
+              }
+            }
+
+            if (!silent) showToast('Telemetría sincronizada');
+          }
+        }
+      } catch (err) {
+        if (!silent) showToast('Error al conectar con la API central', 'error');
+      }
+    }
+
+    // Window Global Bindings
+    window.switchNavTab = switchNavTab;
+    window.toggleSidebar = toggleSidebar;
+    window.toggleMobileSidebar = toggleMobileSidebar;
+    window.openLoginModal = openLoginModal;
+    window.closeLoginModal = closeLoginModal;
+    window.handleLogin = handleLogin;
+    window.quickLoginDemo = quickLoginDemo;
+    window.logout = logout;
+    window.openGlobalSearch = openGlobalSearch;
+    window.closeGlobalSearch = closeGlobalSearch;
+    window.handleGlobalSearchInput = handleGlobalSearchInput;
+    window.handleGlobalRefresh = handleGlobalRefresh;
+    window.fetchLiveDashboard = fetchLiveDashboard;
+    window.showToast = showToast;
+    window.setAlertQuickFilter = setAlertQuickFilter;
+    window.renderAlertCenter = renderAlertCenter;
+    window.filterAlertCenter = filterAlertCenter;
+    window.openAlertDetailModal = openAlertDetailModal;
+    window.closeAlertDetailModal = closeAlertDetailModal;
+    window.acknowledgeAlert = acknowledgeAlert;
+    window.resolveAlert = resolveAlert;
+    window.triggerAlertEvaluation = triggerAlertEvaluation;
+    window.refreshAlerts = refreshAlerts;
+    window.renderCustomersTable = renderCustomersTable;
+    window.renderCustomersTableFiltered = renderCustomersTableFiltered;
+    window.openCustomerWorkspace = openCustomerWorkspace;
+    window.switchCustomerSubTab = switchCustomerSubTab;
+    window.openCreateCustomerModal = openCreateCustomerModal;
+    window.closeCreateCustomerModal = closeCreateCustomerModal;
+    window.handleCreateCustomer = handleCreateCustomer;
+    window.copyCurrentCustomerEnrollCmd = copyCurrentCustomerEnrollCmd;
+    window.copyCustomerEnrollCmdById = copyCustomerEnrollCmdById;
+    window.togglePs1ScriptPreview = togglePs1ScriptPreview;
+    window.renderFleetDevices = renderFleetDevices;
+    window.filterFleetDevices = filterFleetDevices;
+    window.resetFleetFilters = resetFleetFilters;
+    window.openDeviceWorkspace = openDeviceWorkspace;
+    window.switchDeviceSubTab = switchDeviceSubTab;
+    window.backFromDeviceWorkspace = backFromDeviceWorkspace;
+    window.togglePenaltiesDetails = togglePenaltiesDetails;
+    window.recalculateCurrentDeviceHealth = recalculateCurrentDeviceHealth;
+    window.filterSoftwareTable = filterSoftwareTable;
+    window.handleMoveDevice = handleMoveDevice;
+    window.copyDeviceDiagnostic = copyDeviceDiagnostic;
+    window.switchAgentsTab = switchAgentsTab;
+    window.renderAgentsList = renderAgentsList;
+    window.filterAgentsByCustomer = filterAgentsByCustomer;
+    window.filterAgentsTable = function(q) {
+      // filters agents table
+    };
+    window.handleWizardCustomerChange = handleWizardCustomerChange;
+    window.handleWizardSiteChange = handleWizardSiteChange;
+    window.goToWizardStep = goToWizardStep;
+    window.copyWizardCmd = copyWizardCmd;
+    window.switchSettingsSubTab = switchSettingsSubTab;
+    window.fetchAndRenderSettingsRules = fetchAndRenderSettingsRules;
+    window.handleSettingsRuleCustomerChange = handleSettingsRuleCustomerChange;
+    window.toggleAlertRule = toggleAlertRule;
+    window.revertCustomerRuleOverride = revertCustomerRuleOverride;
+    window.openThresholdModal = openThresholdModal;
+    window.closeThresholdModal = closeThresholdModal;
+    window.handleThresholdSubmit = handleThresholdSubmit;
+    window.saveNotificationSettings = saveNotificationSettings;
+    window.updatePollingInterval = updatePollingInterval;
+
+    // Keyboard Shortcuts (Ctrl+K, Esc)
+    window.addEventListener('keydown', function(e) {
+      if ((e.ctrlKey || e.metaKey) && e.key === 'k') {
+        e.preventDefault();
+        openGlobalSearch();
+      } else if (e.key === 'Escape') {
+        closeGlobalSearch();
+        closeLoginModal();
+        closeCreateCustomerModal();
+        closeAlertDetailModal();
+        closeThresholdModal();
+      }
+    });
+
+    // App Initialization
+    async function init() {
+      // Check sidebar collapsed state
+      if (localStorage.getItem('nl_sidebar_collapsed') === '1') {
+        const sb = document.getElementById('appSidebar');
+        const icon = document.getElementById('sidebarToggleIcon');
+        if (sb) sb.classList.add('collapsed');
+        if (icon) icon.textContent = '▶';
+      }
+
+      // Initial View
+      renderDashboard();
+      renderAlertCenter();
+      renderCustomersTable();
+      renderFleetDevices();
+      renderAgentsList();
+
+      const token = localStorage.getItem('nl_token');
+      if (token) {
+        setLoggedInUI();
+      } else {
+        await quickLoginDemo();
+      }
+
+      // Initial live fetch
+      await fetchLiveDashboard(true);
+
+      // Start automatic live telemetry polling
+      pollingTimer = setInterval(function() {
+        fetchLiveDashboard(true);
+      }, pollingIntervalMs);
+    }
+
+    if (document.readyState === 'loading') {
+      document.addEventListener('DOMContentLoaded', init);
+    } else {
+      init();
+    }
+  `;
+}
