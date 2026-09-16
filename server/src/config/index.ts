@@ -14,7 +14,7 @@ const envSchema = z.object({
   REDIS_PORT: z.coerce.number().default(6379),
   REDIS_PASSWORD: z.string().optional(),
   JWT_SECRET: z.string().min(16).default('super-secret-jwt-key-for-dev-change-in-production-min-32-chars'),
-  JWT_EXPIRES_IN: z.string().default('15m'),
+  JWT_EXPIRES_IN: z.string().default('24h'),
   REFRESH_TOKEN_EXPIRES_DAYS: z.coerce.number().default(7),
   AGENT_TIMESTAMP_DRIFT_SECS: z.coerce.number().default(300),
 });

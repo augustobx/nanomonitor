@@ -87,6 +87,7 @@ export async function buildApp(): Promise<FastifyInstance> {
             inventories: { take: 1, orderBy: { collectedAt: 'desc' } },
             softwareInventories: { take: 1, orderBy: { collectedAt: 'desc' } },
             metrics: { take: 1, orderBy: { timestamp: 'desc' } },
+            events: { take: 20, orderBy: { timestamp: 'desc' } },
           },
           orderBy: { lastSeenAt: 'desc' },
         });

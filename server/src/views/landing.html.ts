@@ -1037,7 +1037,7 @@ export function getLandingHtml(data: {
     let selectedDevice = null;
     let cachedSoftwareList = [];
 
-    function init() {
+    async function init() {
       if (currentDevices && currentDevices.length > 0) {
         renderDevicesTable(currentDevices);
         updateKpis(currentDevices);
@@ -1046,9 +1046,9 @@ export function getLandingHtml(data: {
       const token = localStorage.getItem('nl_token');
       if (token) {
         setLoggedInUI();
-        loadDevices();
+        await loadDevices();
       } else {
-        quickLoginDemo();
+        await quickLoginDemo();
       }
     }
 
@@ -1059,8 +1059,17 @@ export function getLandingHtml(data: {
     }
 
     function setLoggedInUI() {
-      document.getElementById('userBadge').style.display = 'flex';
-      document.getElementById('loginNavBtn').style.display = 'none';
+      const ub = document.getElementById('userBadge');
+      if (ub) ub.style.display = 'flex';
+      const lnb = document.getElementById('loginNavBtn');
+      if (lnb) lnb.style.display = 'none';
+    }
+
+    function setLoggedOutUI() {
+      const ub = document.getElementById('userBadge');
+      if (ub) ub.style.display = 'none';
+      const lnb = document.getElementById('loginNavBtn');
+      if (lnb) lnb.style.display = 'inline-flex';
     }
 
     function openLoginModal() {
@@ -1081,6 +1090,7 @@ export function getLandingHtml(data: {
             password: 'NanoLabs2026!MonitorAdmin'
           })
         });
+        if (!res.ok) return null;
         const data = await res.json();
         const token = (data.data && data.data.accessToken) || data.accessToken;
         const user = (data.data && data.data.user) || data.user;
@@ -1089,11 +1099,12 @@ export function getLandingHtml(data: {
           if (user) localStorage.setItem('nl_user', JSON.stringify(user));
           setLoggedInUI();
           closeLoginModal();
-          loadDevices();
+          return token;
         }
       } catch (err) {
         console.error('Login error:', err);
       }
+      return null;
     }
 
     async function handleLogin(e) {
@@ -1115,7 +1126,7 @@ export function getLandingHtml(data: {
           if (user) localStorage.setItem('nl_user', JSON.stringify(user));
           setLoggedInUI();
           closeLoginModal();
-          loadDevices();
+          await loadDevices();
         } else {
           alert('Credenciales incorrectas: ' + (data.message || 'Error'));
         }
@@ -1127,23 +1138,52 @@ export function getLandingHtml(data: {
     function logout() {
       localStorage.removeItem('nl_token');
       localStorage.removeItem('nl_user');
+      setLoggedOutUI();
       location.reload();
     }
 
     // Load Devices from API
     async function loadDevices() {
-      const token = localStorage.getItem('nl_token');
-      if (!token) return;
+      let token = localStorage.getItem('nl_token');
+      if (!token) {
+        token = await quickLoginDemo();
+        if (!token) return;
+      }
 
       try {
         const res = await fetch('/api/v1/devices', {
           headers: { 'Authorization': 'Bearer ' + token }
         });
+
+        if (res.status === 401) {
+          localStorage.removeItem('nl_token');
+          localStorage.removeItem('nl_user');
+          setLoggedOutUI();
+          const freshToken = await quickLoginDemo();
+          if (freshToken) {
+            const retryRes = await fetch('/api/v1/devices', {
+              headers: { 'Authorization': 'Bearer ' + freshToken }
+            });
+            if (retryRes.ok) {
+              const retryJson = await retryRes.json();
+              if (retryJson && retryJson.data && Array.isArray(retryJson.data.devices) && retryJson.data.devices.length > 0) {
+                currentDevices = retryJson.data.devices;
+                renderDevicesTable(currentDevices);
+                updateKpis(currentDevices);
+              }
+            }
+          }
+          return;
+        }
+
+        if (!res.ok) return;
+
         const json = await res.json();
-        const devices = (json.data && json.data.devices) || [];
-        currentDevices = devices;
-        renderDevicesTable(currentDevices);
-        updateKpis(currentDevices);
+        if (json && json.data && Array.isArray(json.data.devices) && json.data.devices.length > 0) {
+          currentDevices = json.data.devices;
+          renderDevicesTable(currentDevices);
+          updateKpis(currentDevices);
+        }
       } catch (err) {
         console.error('Failed to load devices:', err);
       }
@@ -1219,16 +1259,37 @@ export function getLandingHtml(data: {
     async function openDeviceDetail(deviceId) {
       try {
         let d = (currentDevices && currentDevices.find(function(item) { return item.id === deviceId; })) || (currentDevices && currentDevices[0]);
-        const token = localStorage.getItem('nl_token');
-        if (token && deviceId) {
-          try {
-            const res = await fetch('/api/v1/devices/' + deviceId, {
-              headers: { 'Authorization': 'Bearer ' + token }
-            });
-            const json = await res.json();
-            if (json && json.data) d = json.data;
-          } catch (err) {
-            console.error(err);
+        let token = localStorage.getItem('nl_token');
+        if (deviceId) {
+          if (!token) {
+            token = await quickLoginDemo();
+          }
+          if (token) {
+            try {
+              const res = await fetch('/api/v1/devices/' + deviceId, {
+                headers: { 'Authorization': 'Bearer ' + token }
+              });
+              if (res.status === 401) {
+                localStorage.removeItem('nl_token');
+                localStorage.removeItem('nl_user');
+                setLoggedOutUI();
+                const freshToken = await quickLoginDemo();
+                if (freshToken) {
+                  const retryRes = await fetch('/api/v1/devices/' + deviceId, {
+                    headers: { 'Authorization': 'Bearer ' + freshToken }
+                  });
+                  if (retryRes.ok) {
+                    const retryJson = await retryRes.json();
+                    if (retryJson && retryJson.data) d = retryJson.data;
+                  }
+                }
+              } else if (res.ok) {
+                const json = await res.json();
+                if (json && json.data) d = json.data;
+              }
+            } catch (err) {
+              console.error('Failed to fetch detailed device info:', err);
+            }
           }
         }
 
