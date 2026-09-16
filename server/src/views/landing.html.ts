@@ -1,6 +1,6 @@
 function renderInitialRows(devices: any[]): string {
   if (!devices || devices.length === 0) {
-    return '<tr><td colspan="8" style="text-align: center; padding: 32px; color: var(--text-muted);">No hay dispositivos registrados todavía. Utiliza la pestaña "Enrolar Nuevo Agente" para conectar tu primer equipo.</td></tr>';
+    return '<tr><td colspan="9" style="text-align: center; padding: 32px; color: var(--text-muted);">No hay dispositivos registrados todavía. Utiliza la pestaña "Enrolar Nuevo Agente" para conectar tu primer equipo.</td></tr>';
   }
 
   return devices.map(d => {
@@ -9,6 +9,12 @@ function renderInitialRows(devices: any[]): string {
     const osName = d.osEdition || 'Windows 11 Pro 64-bit';
     const cpu = d.cpuName || '11th Gen Intel(R) Core(TM) i5-11400';
     const ram = d.ramTotalMB ? Math.round(d.ramTotalMB / 1024) + ' GB' : '16 GB';
+    const events = d.events || [];
+    const critCount = events.filter((e: any) => e.severity === 'CRITICAL').length;
+    const totalEvents = events.length;
+    const eventsBadge = totalEvents > 0
+      ? `<span class="badge-status" style="background: rgba(239, 68, 68, 0.2); color: #ef4444; border: 1px solid #ef4444; font-size: 11px; font-weight: 700;">${critCount > 0 ? '⚠️ ' + critCount + ' Críticos' : '● ' + totalEvents + ' Eventos'}</span><div style="font-size: 11px; color: var(--text-muted); margin-top: 2px;">● Event Viewer F5</div>`
+      : `<span class="status-pill status-online" style="font-size: 11px;">0 Incidentes</span><div style="font-size: 11px; color: #34d399; margin-top: 2px;">● Estable</div>`;
 
     return `
       <tr>
@@ -38,13 +44,16 @@ function renderInitialRows(devices: any[]): string {
           <div style="font-size: 11px; color: #f59e0b; margin-top: 2px;">● Reinicio Pendiente</div>
         </td>
         <td>
+          ${eventsBadge}
+        </td>
+        <td>
           <span class="status-pill ${isOnline ? 'status-online' : 'status-offline'}">
             ${isOnline ? '● ONLINE' : '○ OFFLINE'}
           </span>
         </td>
         <td>
           <button class="btn btn-primary btn-device-detail" style="padding: 6px 12px; font-size: 12px;" data-device-id="${d.id}">
-            Ver Ficha F4
+            Ver Ficha (F4/F5)
           </button>
         </td>
       </tr>
@@ -734,8 +743,13 @@ export function getLandingHtml(data: {
       </div>
       <div class="kpi-card">
         <div class="kpi-label">Windows Updates (F4)</div>
-        <div class="kpi-value" id="kpiUpdates" style="color: #f59e0b;">1 Pendiente</div>
+        <div class="kpi-value" style="color: #f59e0b;">1 Pendiente</div>
         <div class="kpi-sub"><span class="kpi-badge-warn">REINICIO REQUERIDO</span> 4 Hotfixes instalados</div>
+      </div>
+      <div class="kpi-card">
+        <div class="kpi-label">Eventos Críticos (F5)</div>
+        <div class="kpi-value" style="color: #f87171;" id="kpiEvents">3 Registrados</div>
+        <div class="kpi-sub"><span class="kpi-badge-warn">2 CRÍTICOS</span> KernelPower, NTFS, WU</div>
       </div>
     </div>
 
@@ -771,6 +785,7 @@ export function getLandingHtml(data: {
               <th>Hardware & CPU</th>
               <th>Almacenamiento (F4)</th>
               <th>Seguridad (F4)</th>
+              <th>Eventos (F5)</th>
               <th>Estado</th>
               <th>Acción</th>
             </tr>
@@ -1193,6 +1208,16 @@ export function getLandingHtml(data: {
       document.getElementById('kpiTotal').textContent = devices.length;
       const online = devices.filter(d => d.status === 'ONLINE').length;
       document.getElementById('kpiOnline').textContent = online + ' EN LÍNEA';
+      let totalEvts = 0;
+      let critEvts = 0;
+      devices.forEach(d => {
+        if (d.events && Array.isArray(d.events)) {
+          totalEvts += d.events.length;
+          critEvts += d.events.filter(e => e.severity === 'CRITICAL').length;
+        }
+      });
+      const elEvt = document.getElementById('kpiEvents');
+      if (elEvt) elEvt.textContent = totalEvts > 0 ? (totalEvts + ' Eventos (' + critEvts + ' Críticos)') : '0 Incidentes';
     }
 
     function setVal(id, text) {
@@ -1209,7 +1234,7 @@ export function getLandingHtml(data: {
       var tbody = document.getElementById('devicesTableBody');
       if (!tbody) return;
       if (!devices || devices.length === 0) {
-        tbody.innerHTML = '<tr><td colspan="8" style="text-align: center; padding: 32px; color: var(--text-muted);">No hay dispositivos registrados. Utiliza la pestaña Enrolar Nuevo Agente para conectar tu primer equipo.</td></tr>';
+        tbody.innerHTML = '<tr><td colspan="9" style="text-align: center; padding: 32px; color: var(--text-muted);">No hay dispositivos registrados. Utiliza la pestaña Enrolar Nuevo Agente para conectar tu primer equipo.</td></tr>';
         return;
       }
 
@@ -1222,6 +1247,13 @@ export function getLandingHtml(data: {
         var mfg = (d.manufacturer || 'Gigabyte') + ' ' + (d.model || 'H510M H');
         var statusClass = isOnline ? 'status-online' : 'status-offline';
         var statusLabel = isOnline ? '● ONLINE' : '○ OFFLINE';
+
+        var events = (d.events && Array.isArray(d.events)) ? d.events : [];
+        var critCount = events.filter(function(e) { return e.severity === 'CRITICAL'; }).length;
+        var totalEvents = events.length;
+        var eventsBadge = totalEvents > 0
+          ? '<span class="badge-status" style="background: rgba(239, 68, 68, 0.2); color: #ef4444; border: 1px solid #ef4444; font-size: 11px; font-weight: 700;">' + (critCount > 0 ? '⚠️ ' + critCount + ' Críticos' : '● ' + totalEvents + ' Eventos') + '</span><div style="font-size: 11px; color: var(--text-muted); margin-top: 2px;">● Event Viewer F5</div>'
+          : '<span class="status-pill status-online" style="font-size: 11px;">0 Incidentes</span><div style="font-size: 11px; color: #34d399; margin-top: 2px;">● Estable</div>';
 
         return '<tr>' +
           '<td>' +
@@ -1241,8 +1273,9 @@ export function getLandingHtml(data: {
           '</td>' +
           '<td><span class="status-pill status-online" style="font-size: 11px;">NVMe SSD 1TB</span><div style="font-size: 11px; color: #34d399; margin-top: 2px;">● Healthy SMART</div></td>' +
           '<td><span class="status-pill status-online" style="font-size: 11px;">Defender Activo</span><div style="font-size: 11px; color: #f59e0b; margin-top: 2px;">● Reinicio Pendiente</div></td>' +
+          '<td>' + eventsBadge + '</td>' +
           '<td><span class="status-pill ' + statusClass + '">' + statusLabel + '</span></td>' +
-          '<td><button class="btn btn-primary btn-device-detail" style="padding: 6px 12px; font-size: 12px;" data-device-id="' + d.id + '">Ver Ficha F4</button></td>' +
+          '<td><button class="btn btn-primary btn-device-detail" style="padding: 6px 12px; font-size: 12px;" data-device-id="' + d.id + '">Ver Ficha (F4/F5)</button></td>' +
         '</tr>';
       }).join('');
     }
