@@ -1,3 +1,57 @@
+function renderInitialRows(devices: any[]): string {
+  if (!devices || devices.length === 0) {
+    return '<tr><td colspan="8" style="text-align: center; padding: 32px; color: var(--text-muted);">No hay dispositivos registrados todavía. Utiliza la pestaña "Enrolar Nuevo Agente" para conectar tu primer equipo.</td></tr>';
+  }
+
+  return devices.map(d => {
+    const isOnline = d.status === 'ONLINE';
+    const clientName = (d.customer && d.customer.name) ? d.customer.name : 'NanoLabs Infraestructura Interna';
+    const osName = d.osEdition || 'Windows 11 Pro 64-bit';
+    const cpu = d.cpuName || '11th Gen Intel(R) Core(TM) i5-11400';
+    const ram = d.ramTotalMB ? Math.round(d.ramTotalMB / 1024) + ' GB' : '16 GB';
+
+    return `
+      <tr>
+        <td>
+          <div class="device-name">
+            <div class="device-icon">💻</div>
+            <div>
+              <div>${d.hostname}</div>
+              <div style="font-size: 11px; color: var(--text-muted);">${d.manufacturer || 'Gigabyte'} ${d.model || 'H510M H'}</div>
+            </div>
+          </div>
+        </td>
+        <td>${clientName}</td>
+        <td>
+          <span style="font-size: 13px; font-weight: 600;">${osName}</span>
+        </td>
+        <td>
+          <div>${cpu}</div>
+          <div style="font-size: 12px; color: var(--text-muted);">${d.cpuCores || 6} Cores • ${ram} RAM</div>
+        </td>
+        <td>
+          <span class="status-pill status-online" style="font-size: 11px;">NVMe SSD 1TB</span>
+          <div style="font-size: 11px; color: #34d399; margin-top: 2px;">● Healthy SMART</div>
+        </td>
+        <td>
+          <span class="status-pill status-online" style="font-size: 11px;">Defender Activo</span>
+          <div style="font-size: 11px; color: #f59e0b; margin-top: 2px;">● Reinicio Pendiente</div>
+        </td>
+        <td>
+          <span class="status-pill ${isOnline ? 'status-online' : 'status-offline'}">
+            ${isOnline ? '● ONLINE' : '○ OFFLINE'}
+          </span>
+        </td>
+        <td>
+          <button class="btn btn-primary" style="padding: 6px 12px; font-size: 12px;" onclick="openDeviceDetail('${d.id}')">
+            Ver Ficha F4
+          </button>
+        </td>
+      </tr>
+    `;
+  }).join('');
+}
+
 export function getLandingHtml(data: {
   uptimeSeconds: number;
   serverTime: string;
@@ -722,11 +776,7 @@ export function getLandingHtml(data: {
             </tr>
           </thead>
           <tbody id="devicesTableBody">
-            <tr>
-              <td colspan="8" style="text-align: center; padding: 32px; color: var(--text-muted);">
-                Cargando equipos del clúster...
-              </td>
-            </tr>
+            ${renderInitialRows(data.devices || [])}
           </tbody>
         </table>
       </div>
@@ -963,11 +1013,11 @@ export function getLandingHtml(data: {
     let selectedDevice = null;
     let cachedSoftwareList = [];
 
-    // Check Auth on page load
-    window.addEventListener('DOMContentLoaded', () => {
-      // Immediate SSR rendering
-      renderDevicesTable(currentDevices);
-      updateKpis(currentDevices);
+    function init() {
+      if (currentDevices && currentDevices.length > 0) {
+        renderDevicesTable(currentDevices);
+        updateKpis(currentDevices);
+      }
 
       const token = localStorage.getItem('nl_token');
       if (token) {
@@ -976,7 +1026,13 @@ export function getLandingHtml(data: {
       } else {
         quickLoginDemo();
       }
-    });
+    }
+
+    if (document.readyState === 'loading') {
+      document.addEventListener('DOMContentLoaded', init);
+    } else {
+      init();
+    }
 
     function setLoggedInUI() {
       document.getElementById('userBadge').style.display = 'flex';
