@@ -2907,36 +2907,42 @@ export function getLandingHtml(data: {
         diagStatus.className = 'status-pill ' + (score >= 90 ? 'status-online' : (score >= 75 ? 'status-info' : (score >= 50 ? 'status-warning' : 'status-danger')));
       }
 
-      // 6 Category Progress Bars
-      const perfVal = Math.round(hs.performance != null ? hs.performance : 20);
-      setVal('hsCatPerfVal', perfVal + '/20 pts');
+      // 6 Category Progress Bars (subscores are 0-100 percentage)
+      const perfVal = Math.round(hs.performance != null ? hs.performance : 100);
+      const perfPts = Math.round((perfVal / 100) * 20);
+      setVal('hsCatPerfVal', perfPts + '/20 pts (' + perfVal + '%)');
       const barPerf = document.getElementById('hsBarPerf');
-      if (barPerf) barPerf.style.width = Math.min(100, Math.round((perfVal / 20) * 100)) + '%';
+      if (barPerf) barPerf.style.width = perfVal + '%';
 
-      const storageVal = Math.round(hs.storage != null ? hs.storage : 20);
-      setVal('hsCatStorageVal', storageVal + '/20 pts');
+      const storageVal = Math.round(hs.storage != null ? hs.storage : 100);
+      const storagePts = Math.round((storageVal / 100) * 20);
+      setVal('hsCatStorageVal', storagePts + '/20 pts (' + storageVal + '%)');
       const barStorage = document.getElementById('hsBarStorage');
-      if (barStorage) barStorage.style.width = Math.min(100, Math.round((storageVal / 20) * 100)) + '%';
+      if (barStorage) barStorage.style.width = storageVal + '%';
 
-      const secVal = Math.round(hs.security != null ? hs.security : 20);
-      setVal('hsCatSecurityVal', secVal + '/20 pts');
+      const secVal = Math.round(hs.security != null ? hs.security : 100);
+      const secPts = Math.round((secVal / 100) * 20);
+      setVal('hsCatSecurityVal', secPts + '/20 pts (' + secVal + '%)');
       const barSec = document.getElementById('hsBarSecurity');
-      if (barSec) barSec.style.width = Math.min(100, Math.round((secVal / 20) * 100)) + '%';
+      if (barSec) barSec.style.width = secVal + '%';
 
-      const updVal = Math.round(hs.updates != null ? hs.updates : 15);
-      setVal('hsCatUpdatesVal', updVal + '/15 pts');
+      const updVal = Math.round(hs.updates != null ? hs.updates : 100);
+      const updPts = Math.round((updVal / 100) * 15);
+      setVal('hsCatUpdatesVal', updPts + '/15 pts (' + updVal + '%)');
       const barUpd = document.getElementById('hsBarUpdates');
-      if (barUpd) barUpd.style.width = Math.min(100, Math.round((updVal / 15) * 100)) + '%';
+      if (barUpd) barUpd.style.width = updVal + '%';
 
-      const stabVal = Math.round(hs.stability != null ? hs.stability : 15);
-      setVal('hsCatStabilityVal', stabVal + '/15 pts');
+      const stabVal = Math.round(hs.stability != null ? hs.stability : 100);
+      const stabPts = Math.round((stabVal / 100) * 15);
+      setVal('hsCatStabilityVal', stabPts + '/15 pts (' + stabVal + '%)');
       const barStab = document.getElementById('hsBarStability');
-      if (barStab) barStab.style.width = Math.min(100, Math.round((stabVal / 15) * 100)) + '%';
+      if (barStab) barStab.style.width = stabVal + '%';
 
-      const hwVal = Math.round(hs.hardware != null ? hs.hardware : 10);
-      setVal('hsCatHardwareVal', hwVal + '/10 pts');
+      const hwVal = Math.round(hs.hardware != null ? hs.hardware : 100);
+      const hwPts = Math.round((hwVal / 100) * 10);
+      setVal('hsCatHardwareVal', hwPts + '/10 pts (' + hwVal + '%)');
       const barHw = document.getElementById('hsBarHardware');
-      if (barHw) barHw.style.width = Math.min(100, Math.round((hwVal / 10) * 100)) + '%';
+      if (barHw) barHw.style.width = hwVal + '%';
 
       // Penalties List
       const penContainer = document.getElementById('hsPenaltiesList');
