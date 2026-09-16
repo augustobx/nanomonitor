@@ -3,6 +3,7 @@ import { config } from './config/index.js';
 import { logger } from './lib/logger.js';
 import { cacheService } from './lib/redis.js';
 import { db } from './lib/db.js';
+import { jobScheduler } from './jobs/scheduler.js';
 
 // Global BigInt JSON serialization polyfill
 if (!('toJSON' in BigInt.prototype)) {
@@ -25,8 +26,12 @@ async function start() {
       `🚀 NanoLabs Control Center API listening at http://${config.HOST}:${config.PORT}`
     );
 
+    // Start background jobs (device offline detection, health scoring, aggregations)
+    jobScheduler.start();
+
     const shutdown = async (signal: string) => {
       logger.info(`Received ${signal}, shutting down gracefully...`);
+      jobScheduler.stop();
       await app.close();
       await cacheService.disconnect();
       await db.$disconnect();
