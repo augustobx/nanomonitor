@@ -5,6 +5,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/nanolabs/nanomonitor/agent/internal/patch"
 	"github.com/nanolabs/nanomonitor/agent/internal/transport"
 )
 
@@ -23,6 +24,7 @@ func (m *mockHook) TriggerSecurity(ctx context.Context)      { m.securityTrigger
 func (m *mockHook) TriggerInventory(ctx context.Context)     { m.inventoryTriggered = true }
 func (m *mockHook) TriggerSmart(ctx context.Context)         { m.smartTriggered = true }
 func (m *mockHook) TriggerWindowsUpdate(ctx context.Context) { m.wuTriggered = true }
+func (m *mockHook) ReportPatches(ctx context.Context, scanResult *patch.ScanResult) {}
 
 func TestServiceWhitelist(t *testing.T) {
 	// 1. Allowed services

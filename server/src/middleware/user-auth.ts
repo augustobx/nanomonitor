@@ -116,6 +116,7 @@ export function getRequiredPermissionForAction(actionType: string): ActionPermis
     case 'DEFENDER_UPDATE_SIGNATURES':
     case 'DEFENDER_QUICK_SCAN':
     case 'DEFENDER_FULL_SCAN':
+    case 'DEFENDER_ENABLE_PROTECTION':
       return 'RUN_SECURITY_ACTION';
 
     case 'WINDOWS_SFC_SCAN':

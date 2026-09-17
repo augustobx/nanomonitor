@@ -2066,6 +2066,7 @@ export function getClientRuntimeScript(): string {
         case 'DEFENDER_UPDATE_SIGNATURES': return '📥 Actualizar Defender';
         case 'DEFENDER_QUICK_SCAN': return '⚡ Quick Scan Defender';
         case 'DEFENDER_FULL_SCAN': return '🔍 Full Scan Defender';
+        case 'DEFENDER_ENABLE_PROTECTION': return '🛡️ Activar Defender';
         case 'FLUSH_DNS': return '🧹 Flush DNS';
         case 'RENEW_DHCP': return '🔄 Renew DHCP';
         case 'WINDOWS_SFC_SCAN': return '📜 SFC /scannow';

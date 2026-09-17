@@ -546,6 +546,9 @@ export function getDeviceDetailViewHtml(): string {
                 </div>
                 <div style="font-size: 12px; color: var(--text-secondary);">Operaciones directas sobre el motor antivirus de Windows Defender.</div>
                 <div style="display: flex; gap: 8px; flex-wrap: wrap; margin-top: auto;">
+                  <button class="btn btn-secondary btn-sm" onclick="triggerAction('DEFENDER_ENABLE_PROTECTION')">
+                    🛡️ Activar Protección
+                  </button>
                   <button class="btn btn-secondary btn-sm" onclick="triggerAction('DEFENDER_UPDATE_SIGNATURES')">
                     📥 Actualizar Firmas
                   </button>

@@ -114,6 +114,12 @@ func CollectSecurity() (*SecurityInfo, error) {
 					sec.DefenderUpdated = defSec.DefenderUpdated
 				} else if defSec.DefenderActive {
 					sec.DefenderActive = true
+					for i, av := range sec.AntivirusList {
+						if strings.Contains(strings.ToLower(av.DisplayName), "defender") {
+							sec.AntivirusList[i].Enabled = true
+							break
+						}
+					}
 				}
 			}
 		}
@@ -137,10 +143,14 @@ func CollectSecurity() (*SecurityInfo, error) {
 		)
 	}
 
-	// Ensure DefenderActive flag is accurate based on AntivirusList
-	for _, av := range sec.AntivirusList {
+	// Ensure DefenderActive flag and AntivirusList are synchronized accurately
+	for i, av := range sec.AntivirusList {
 		if strings.Contains(strings.ToLower(av.DisplayName), "defender") {
-			sec.DefenderActive = av.Enabled
+			if sec.DefenderActive {
+				sec.AntivirusList[i].Enabled = true
+			} else {
+				sec.DefenderActive = av.Enabled
+			}
 			sec.DefenderUpdated = av.UpToDate
 			break
 		}
