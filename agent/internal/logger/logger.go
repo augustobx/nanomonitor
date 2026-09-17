@@ -44,10 +44,16 @@ func New(logFile string, level string) (*Logger, error) {
 		return nil, fmt.Errorf("opening log file: %w", err)
 	}
 
-	// Write to both stdout and file
-	multiWriter := io.MultiWriter(os.Stdout, f)
+	// Always write to the file first. Windows services launched by the Service
+	// Control Manager may not have a valid stdout handle; if stdout is the
+	// first MultiWriter target, that error can prevent the file from receiving
+	// the log entry at all.
+	var writer io.Writer = f
+	if _, statErr := os.Stdout.Stat(); statErr == nil {
+		writer = io.MultiWriter(f, os.Stdout)
+	}
 
-	handler := slog.NewJSONHandler(multiWriter, &slog.HandlerOptions{
+	handler := slog.NewJSONHandler(writer, &slog.HandlerOptions{
 		Level: slogLevel,
 		ReplaceAttr: func(groups []string, a slog.Attr) slog.Attr {
 			// Use ISO 8601 format for timestamps
