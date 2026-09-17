@@ -2991,8 +2991,8 @@ export function getClientRuntimeScript(): string {
 
     async function confirmRegenerateTamperKey() {
       if (!selectedDevice) return;
-      const confirmMsg = '¿Estás seguro de regenerar la Clave de Desbloqueo para este equipo?\n\n' +
-        '⚠️ La clave actual quedará invalidada de inmediato y el agente en la máquina se actualizará en el próximo heartbeat.\n' +
+      const confirmMsg = '¿Estás seguro de regenerar la Clave de Desbloqueo para este equipo?\\n\\n' +
+        '⚠️ La clave actual quedará invalidada de inmediato y el agente en la máquina se actualizará en el próximo heartbeat.\\n' +
         'Cualquier intento de desinstalación con la clave anterior será rechazado.';
       if (!confirm(confirmMsg)) return;
 
