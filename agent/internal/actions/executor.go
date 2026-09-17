@@ -11,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/nanolabs/nanomonitor/agent/internal/collector"
 	"github.com/nanolabs/nanomonitor/agent/internal/patch"
 	"github.com/nanolabs/nanomonitor/agent/internal/transport"
 )
@@ -46,31 +47,13 @@ func ExecuteAction(ctx context.Context, action *transport.ActionItem, hook Sched
 
 	// ==================== TELEMETRÍA NANOMONITOR ====================
 	case "FORCE_HEARTBEAT":
-		if hook != nil {
-			hook.TriggerHeartbeat(ctx)
-		}
-		return &ExecutionResult{
-			ExitCode: 0,
-			Output:   "Ciclo de Heartbeat y Seguridad disparado y sincronizado con éxito.",
-		}
+		return executeForceHeartbeat(ctx, hook)
 
 	case "FORCE_METRICS":
-		if hook != nil {
-			hook.TriggerMetrics(ctx)
-		}
-		return &ExecutionResult{
-			ExitCode: 0,
-			Output:   "Recolección de métricas de rendimiento disparada y sincronizada con éxito.",
-		}
+		return executeForceMetrics(ctx, hook)
 
 	case "FORCE_SECURITY_SCAN":
-		if hook != nil {
-			hook.TriggerSecurity(ctx)
-		}
-		return &ExecutionResult{
-			ExitCode: 0,
-			Output:   "Escaneo completo de seguridad (AV + Firewall) disparado y sincronizado con éxito.",
-		}
+		return executeForceSecurityScan(ctx, hook)
 
 	case "FORCE_INVENTORY":
 		if hook != nil {
@@ -82,13 +65,7 @@ func ExecuteAction(ctx context.Context, action *transport.ActionItem, hook Sched
 		}
 
 	case "FORCE_SMART_CHECK":
-		if hook != nil {
-			hook.TriggerSmart(ctx)
-		}
-		return &ExecutionResult{
-			ExitCode: 0,
-			Output:   "Comprobación física SMART de discos disparada y sincronizada con éxito.",
-		}
+		return executeForceSmartCheck(ctx, hook)
 
 	case "FORCE_WINDOWS_UPDATE":
 		if hook != nil {
@@ -523,6 +500,18 @@ try {
     $out.signatureVersion = $pre.AntivirusSignatureVersion
     $out.signatureLastUpdated = $pre.AntivirusSignatureLastUpdated.ToString('o')
 
+    # If Defender or RealTimeProtection is disabled, attempt to activate it
+    if (-not $pre.AntivirusEnabled -or -not $pre.RealTimeProtectionEnabled) {
+        $out.wasDisabled = $true
+        try {
+            Set-MpPreference -DisableRealtimeMonitoring $false -ErrorAction SilentlyContinue
+            Start-Service WinDefend -ErrorAction SilentlyContinue
+            Start-Sleep -Seconds 1
+            $pre = Get-MpComputerStatus
+            $out.reactivated = [bool]$pre.RealTimeProtectionEnabled
+        } catch {}
+    }
+
     $scanStart = Get-Date
     Start-MpScan -ScanType %s
     $scanEnd = Get-Date
@@ -588,11 +577,33 @@ $out | ConvertTo-Json -Compress`, scanType, scanType, scanType)
 	// Try to parse JSON output for structured result
 	result := make(map[string]interface{})
 	if err := json.Unmarshal([]byte(combined), &result); err == nil {
-		// Build human-readable summary
 		var sb strings.Builder
-		sb.WriteString(fmt.Sprintf("Windows Defender %s completado.\n\n", scanType))
+
+		if success, ok := result["success"].(bool); ok && !success {
+			errDetail := "Fallo en la ejecución del escaneo de Windows Defender"
+			if e, ok := result["error"].(string); ok && e != "" {
+				errDetail = e
+			}
+			sb.WriteString(fmt.Sprintf("Windows Defender %s: ❌ NO PUDO COMPLETARSE\n\n", scanType))
+			sb.WriteString(fmt.Sprintf("Detalle del error: %s\n", errDetail))
+			if wasDis, ok := result["wasDisabled"].(bool); ok && wasDis {
+				sb.WriteString("\n⚠️ Causa detectada: El Antivirus o la Protección en Tiempo Real de Windows Defender estaban DESACTIVADOS al solicitar el examen.\n")
+			}
+			return &ExecutionResult{
+				ExitCode: 1,
+				Output:   sb.String(),
+				Error:    errDetail,
+				Result:   result,
+			}
+		}
+
+		// Success case
+		sb.WriteString(fmt.Sprintf("Windows Defender %s completado con éxito.\n\n", scanType))
+		if reactivated, ok := result["reactivated"].(bool); ok && reactivated {
+			sb.WriteString("⚡ La protección en tiempo real estaba desactivada y fue reactivada automáticamente antes del examen.\n")
+		}
 		if confirmed, ok := result["scanConfirmed"].(bool); ok && confirmed {
-			sb.WriteString("✅ Scan confirmado por Defender.\n")
+			sb.WriteString("✅ Escaneo confirmado por el motor de Defender.\n")
 		}
 		if dur, ok := result["scanDurationSeconds"].(float64); ok {
 			sb.WriteString(fmt.Sprintf("⏱️ Duración: %.1f segundos\n", dur))
@@ -611,13 +622,8 @@ $out | ConvertTo-Json -Compress`, scanType, scanType, scanType)
 			sb.WriteString(fmt.Sprintf("📋 Versión de firmas: %s\n", sigVer))
 		}
 
-		exitCode := 0
-		if success, ok := result["success"].(bool); ok && !success {
-			exitCode = 1
-		}
-
 		return &ExecutionResult{
-			ExitCode: exitCode,
+			ExitCode: 0,
 			Output:   sb.String(),
 			Result:   result,
 		}
@@ -721,6 +727,232 @@ $out | ConvertTo-Json -Compress`
 		Output:   combined,
 		Error:    errStr,
 	}
+}
+
+func executeForceHeartbeat(ctx context.Context, hook SchedTriggerHook) *ExecutionResult {
+	if hook != nil {
+		hook.TriggerHeartbeat(ctx)
+	}
+
+	return &ExecutionResult{
+		ExitCode: 0,
+		Output:   "Ciclo de Heartbeat, Seguridad y Telemetría disparado y sincronizado exitosamente con el servidor central.",
+	}
+}
+
+func executeForceSecurityScan(ctx context.Context, hook SchedTriggerHook) *ExecutionResult {
+	// 1. Recolectar estado de seguridad actual
+	sec, err := collector.CollectSecurity()
+	if err != nil {
+		if hook != nil {
+			hook.TriggerSecurity(ctx)
+		}
+		return &ExecutionResult{
+			ExitCode: 1,
+			Output:   fmt.Sprintf("Error auditando seguridad del endpoint: %v", err),
+			Error:    err.Error(),
+		}
+	}
+
+	var sb strings.Builder
+	sb.WriteString("Auditoría y Validación de Seguridad Operativa (AV & Firewall):\n\n")
+
+	initialAV := sec.HasEnabledAV()
+	reactivated := false
+
+	// Si el antivirus / Defender se encuentra desactivado, intentar auto-remediación
+	if !initialAV {
+		sb.WriteString("⚠️ Alerta detectada: La Protección Antivirus se encuentra DESACTIVADA.\n")
+		sb.WriteString("⚡ Intentando reactivación automática de Microsoft Defender...\n")
+
+		cmdCtx, cancel := context.WithTimeout(ctx, 15*time.Second)
+		_ = exec.CommandContext(cmdCtx, "powershell.exe", "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-Command",
+			"Set-MpPreference -DisableRealtimeMonitoring $false -ErrorAction SilentlyContinue; Start-Service WinDefend -ErrorAction SilentlyContinue").Run()
+		cancel()
+
+		time.Sleep(1 * time.Second)
+
+		// Volver a inspeccionar tras el intento de activación
+		if resec, err := collector.CollectSecurity(); err == nil && resec != nil {
+			sec = resec
+			if sec.HasEnabledAV() {
+				reactivated = true
+				sb.WriteString("✅ Reactivación exitosa: La Protección en Tiempo Real fue restaurada.\n\n")
+			} else {
+				sb.WriteString("❌ No se pudo reactivar automáticamente (posible bloqueo por política de grupo o manipulación local).\n\n")
+			}
+		}
+	}
+
+	// Disparar hook para que el NOC y dashboard se sincronicen de inmediato
+	if hook != nil {
+		hook.TriggerSecurity(ctx)
+	}
+
+	finalAV := sec.HasEnabledAV()
+	if finalAV {
+		sb.WriteString("🛡️ Antivirus: ✅ ACTIVO\n")
+	} else {
+		sb.WriteString("🛡️ Antivirus: 🚨 DESACTIVADO\n")
+	}
+
+	if len(sec.AntivirusList) > 0 {
+		for _, av := range sec.AntivirusList {
+			stateStr := "Desactivado"
+			if av.Enabled {
+				stateStr = "Protección en Tiempo Real Activa"
+			}
+			upStr := "Firmas Desactualizadas"
+			if av.UpToDate {
+				upStr = "Firmas al Día"
+			}
+			sb.WriteString(fmt.Sprintf("   • %s: %s | %s\n", av.DisplayName, stateStr, upStr))
+		}
+	} else {
+		sb.WriteString("   • Sin antivirus registrado en el Centro de Seguridad.\n")
+	}
+
+	sb.WriteString("\n🔥 Firewall de Windows:\n")
+	if sec.FirewallActive {
+		sb.WriteString("   • Estado Global: ✅ ACTIVO\n")
+	} else {
+		sb.WriteString("   • Estado Global: 🚨 DESACTIVADO\n")
+	}
+	sb.WriteString(fmt.Sprintf("   • Perfil Dominio: %s\n", formatStatusBool(sec.FirewallProfiles.Domain)))
+	sb.WriteString(fmt.Sprintf("   • Perfil Privado: %s\n", formatStatusBool(sec.FirewallProfiles.Private)))
+	sb.WriteString(fmt.Sprintf("   • Perfil Público: %s\n", formatStatusBool(sec.FirewallProfiles.Public)))
+
+	exitCode := 0
+	if !finalAV || !sec.FirewallActive {
+		exitCode = 1
+		sb.WriteString("\n🚨 ESTADO CRÍTICO: El equipo presenta protecciones de seguridad desactivadas.")
+	} else if reactivated {
+		sb.WriteString("\n✅ Protección restablecida y telemetría sincronizada con el NOC.")
+	} else {
+		sb.WriteString("\n✅ Todas las defensas del endpoint operan con normalidad.")
+	}
+
+	return &ExecutionResult{
+		ExitCode: exitCode,
+		Output:   sb.String(),
+		Result: map[string]interface{}{
+			"antivirusEnabled": finalAV,
+			"wasReactivated":   reactivated,
+			"firewallActive":   sec.FirewallActive,
+			"primaryAV":        sec.PrimaryAVName(),
+			"defenderActive":   sec.DefenderActive,
+			"defenderUpdated":  sec.DefenderUpdated,
+		},
+	}
+}
+
+func executeForceMetrics(ctx context.Context, hook SchedTriggerHook) *ExecutionResult {
+	if hook != nil {
+		hook.TriggerMetrics(ctx)
+	}
+
+	perf, err := collector.CollectPerformance()
+	if err != nil {
+		return &ExecutionResult{
+			ExitCode: 0,
+			Output:   "Recolección de métricas de rendimiento disparada y sincronizada con éxito.",
+		}
+	}
+
+	var sb strings.Builder
+	sb.WriteString("Métricas de Rendimiento en Tiempo Real:\n\n")
+	if perf.CPUPercent >= 0 {
+		sb.WriteString(fmt.Sprintf("⚡ Uso de CPU: %.1f%%\n", perf.CPUPercent))
+	}
+	sb.WriteString(fmt.Sprintf("🧠 Memoria RAM: %.1f%% en uso (%d MB usados / %d MB disponibles)\n",
+		perf.RAMPercent, perf.RAMUsedMB, perf.RAMAvailMB))
+
+	if len(perf.Volumes) > 0 {
+		sb.WriteString("\n💾 Almacenamiento:\n")
+		for _, v := range perf.Volumes {
+			sb.WriteString(fmt.Sprintf("   • Unidad %s (%s): %.1f GB libres de %.1f GB (%.1f%% usado)\n",
+				v.Letter, v.FSType, v.FreeGB, v.TotalGB, v.Percent))
+		}
+	}
+
+	hours := perf.UptimeSecs / 3600
+	mins := (perf.UptimeSecs % 3600) / 60
+	sb.WriteString(fmt.Sprintf("\n⏱️ Tiempo activo del sistema: %d horas, %d minutos\n", hours, mins))
+	sb.WriteString("✅ Métricas sincronizadas con el NOC.")
+
+	return &ExecutionResult{
+		ExitCode: 0,
+		Output:   sb.String(),
+		Result: map[string]interface{}{
+			"cpuPercent": perf.CPUPercent,
+			"ramPercent": perf.RAMPercent,
+			"ramUsedMb":  perf.RAMUsedMB,
+			"uptimeSecs": perf.UptimeSecs,
+		},
+	}
+}
+
+func executeForceSmartCheck(ctx context.Context, hook SchedTriggerHook) *ExecutionResult {
+	if hook != nil {
+		hook.TriggerSmart(ctx)
+	}
+
+	smart, err := collector.CollectSmart()
+	if err != nil {
+		return &ExecutionResult{
+			ExitCode: 0,
+			Output:   "Comprobación física SMART de discos disparada y sincronizada con éxito.",
+		}
+	}
+
+	var sb strings.Builder
+	sb.WriteString("Diagnóstico Físico de Discos (S.M.A.R.T.):\n\n")
+	sb.WriteString(fmt.Sprintf("📊 Estado General: %s\n", smart.OverallStatus))
+
+	if len(smart.Disks) > 0 {
+		sb.WriteString("\nUnidades detectadas:\n")
+		for i, d := range smart.Disks {
+			name := d.FriendlyName
+			if name == "" {
+				name = d.Model
+			}
+			tempStr := "N/A"
+			if d.TemperatureC != nil {
+				tempStr = fmt.Sprintf("%d°C", *d.TemperatureC)
+			}
+			wearStr := "N/A"
+			if d.WearPercent != nil {
+				wearStr = fmt.Sprintf("%d%%", *d.WearPercent)
+			}
+			sb.WriteString(fmt.Sprintf(" %d. %s [%s]\n    Salud: %s | Operativo: %s | Temp: %s | Desgaste: %s\n",
+				i+1, name, d.MediaType, d.HealthStatus, d.OperationalStatus, tempStr, wearStr))
+		}
+	}
+
+	exitCode := 0
+	if smart.OverallStatus == "CRITICAL" || smart.OverallStatus == "WARNING" {
+		exitCode = 1
+		sb.WriteString("\n⚠️ ALERTA: Se detectaron discos con degradación o advertencia física.")
+	} else {
+		sb.WriteString("\n✅ Todas las unidades de almacenamiento se encuentran en óptimo estado de salud.")
+	}
+
+	return &ExecutionResult{
+		ExitCode: exitCode,
+		Output:   sb.String(),
+		Result: map[string]interface{}{
+			"overallStatus": smart.OverallStatus,
+			"diskCount":     len(smart.Disks),
+			"degradedCount": smart.DegradedCount,
+		},
+	}
+}
+
+func formatStatusBool(val bool) string {
+	if val {
+		return "Activo"
+	}
+	return "Inactivo"
 }
 
 

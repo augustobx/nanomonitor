@@ -79,8 +79,10 @@ if ($Token) {
 }
 
 try {
-    $process = Start-Process -FilePath $installerPath -ArgumentList $procArgs -PassThru -Wait
-    if ($process.ExitCode -ne 0) {
+    $process = Start-Process -FilePath $installerPath -ArgumentList $procArgs -PassThru
+    # Espera controlada de max 15 segundos para evitar bloqueos por handles heredados
+    $null = $process.WaitForExit(15000)
+    if ($process.HasExited -and $process.ExitCode -ne 0) {
         Write-Host "[!] El instalador finalizo con codigo de error: $($process.ExitCode)" -ForegroundColor Red
         exit $process.ExitCode
     }
