@@ -220,8 +220,10 @@ func doInstall(token, apiURL string, silent bool) {
 	_ = exec.Command("icacls", DefaultDataDir, "/grant", "*S-1-5-32-545:(OI)(CI)M", "/T").Run()
 
 	configYamlPath := filepath.Join(DefaultDataDir, "config.yaml")
-	initialConfig := fmt.Sprintf("apiUrl: %s\nlogFile: %s\\logs\\nanoagent.log\nlogLevel: info\n", apiURL, DefaultDataDir)
-	_ = os.WriteFile(configYamlPath, []byte(initialConfig), 0666)
+	if _, err := os.Stat(configYamlPath); os.IsNotExist(err) {
+		initialConfig := fmt.Sprintf("apiUrl: %s\nlogFile: %s\\logs\\nanoagent.log\nlogLevel: info\n", apiURL, DefaultDataDir)
+		_ = os.WriteFile(configYamlPath, []byte(initialConfig), 0666)
+	}
 
 	// If token was provided, write .enrollment-token
 	if token != "" {
