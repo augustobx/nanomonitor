@@ -190,6 +190,8 @@ export function getClientRuntimeScript(): string {
           localStorage.setItem('nl_token', token);
           if (json.data.user) localStorage.setItem('nl_user', JSON.stringify(json.data.user));
           setLoggedInUI();
+          closeLoginModal();
+          showToast('Sesión iniciada: Augusto / NanoLabs Admin');
           return token;
         }
       } catch (err) {

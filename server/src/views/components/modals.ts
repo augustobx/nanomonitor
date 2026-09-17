@@ -14,13 +14,16 @@ export function getModalsHtml(): string {
               <input type="email" id="loginEmail" class="form-input" placeholder="admin@nanolabs.com.ar" required value="admin@nanolabs.com.ar">
             </div>
             <div class="form-group">
-              <label class="form-label">Contraseña</label>
-              <input type="password" id="loginPass" class="form-input" placeholder="••••••••" required value="NanoAdmin2026!">
+              <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px;">
+                <label class="form-label" style="margin-bottom: 0;">Contraseña</label>
+                <button type="button" class="btn btn-ghost btn-xs" style="font-size: 11px; padding: 2px 6px;" onclick="const p=document.getElementById('loginPass'); p.type = p.type==='password'?'text':'password'; this.textContent = p.type==='password'?'👁️ Ver':'🔒 Ocultar';">👁️ Ver</button>
+              </div>
+              <input type="password" id="loginPass" class="form-input" placeholder="••••••••" required value="NanoLabs2026!MonitorAdmin">
             </div>
             <div id="loginError" style="color: var(--danger); font-size: 12px; display: none;"></div>
           </div>
           <div class="modal-footer">
-            <button type="button" class="btn btn-secondary" onclick="quickLoginDemo()">⚡ Acceso Rápido Demo</button>
+            <button type="button" class="btn btn-secondary" onclick="quickLoginDemo()">⚡ Acceso Rápido Admin</button>
             <button type="submit" class="btn btn-primary" id="btnLoginSubmit">Ingresar</button>
           </div>
         </form>
