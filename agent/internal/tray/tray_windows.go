@@ -251,8 +251,12 @@ func (app *TrayApp) Run() error {
 
 	shellNotifyIcon.Call(NIM_ADD, uintptr(unsafe.Pointer(&app.nid)))
 
-	// Show balloon notification on initial startup
-	app.ShowNotification("NanoLabs Control Center", "Agente activo y monitoreando el equipo.")
+	// Show a truthful startup notification. The tray process is independent from the service.
+	if app.isServiceRunning() {
+		app.ShowNotification("NanoLabs Control Center", "Servicio de monitoreo en ejecución.")
+	} else {
+		app.ShowNotification("NanoLabs Control Center", "ATENCIÓN: la bandeja inició, pero el servicio NanoLabsAgent está detenido.")
+	}
 
 	// Periodic service status check in background
 	go func() {
@@ -299,7 +303,7 @@ func (app *TrayApp) updateTooltip() {
 	isRunning := app.isServiceRunning()
 	var statusText string
 	if isRunning {
-		statusText = "🟢 Conectado al NOC"
+		statusText = "🟢 Servicio en ejecución"
 		app.nid.HIcon = app.greenIcon
 	} else {
 		statusText = "🔴 Servicio Detenido"
@@ -416,7 +420,7 @@ func (app *TrayApp) showContextMenu() {
 	defer destroyMenu.Call(hMenu)
 
 	isRunning := app.isServiceRunning()
-	statusText := "Estado: 🟢 En ejecución (Reportando)"
+	statusText := "Estado: 🟢 Servicio en ejecución"
 	if !isRunning {
 		statusText = "Estado: 🔴 Detenido"
 	}
@@ -590,7 +594,8 @@ func (app *TrayApp) handleRestartService() {
 				return
 			}
 		}
-		app.ShowNotification("Servicio de Monitoreo", "Comando enviado. Verificando estado...")
+		app.updateTooltip()
+		app.ShowNotification("Servicio de Monitoreo", "No se pudo confirmar el inicio del servicio. Revise los logs y el Service Control Manager.")
 	}()
 }
 
