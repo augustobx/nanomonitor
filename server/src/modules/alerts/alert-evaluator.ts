@@ -2,6 +2,7 @@ import { AlertStatus, Severity } from '@prisma/client';
 import { db } from '../../lib/db.js';
 import { logger } from '../../lib/logger.js';
 import { ensureDefaultAlertRules } from './alert-rules.seed.js';
+import { RemediationService } from '../remediation/remediation.service.js';
 
 export interface EvaluationResult {
   deviceId: string;
@@ -450,9 +451,21 @@ export async function evaluateDeviceAlerts(
           },
         });
         result.alertsUpdated++;
+
+        // Evaluate auto-remediation on recurring alert if within policy
+        RemediationService.handleAlertRemediation({
+          id: existingAlert.id,
+          tenantId: existingAlert.tenantId,
+          deviceId: existingAlert.deviceId,
+          customerId: existingAlert.customerId,
+          ruleId: existingAlert.ruleId,
+          title: existingAlert.title,
+        }).catch((err) => {
+          logger.error({ err, alertId: existingAlert.id }, 'Failed to evaluate remediation for recurring alert');
+        });
       } else {
         // Create new Alert
-        await db.alert.create({
+        const newAlert = await db.alert.create({
           data: {
             tenantId,
             deviceId,
@@ -473,6 +486,18 @@ export async function evaluateDeviceAlerts(
           { deviceId, hostname: device.hostname, rule: rule.name, severity: rule.severity },
           `🚨 Alert triggered: [${rule.severity}] ${rule.name} on ${device.hostname}`
         );
+
+        // Trigger auto-remediation if configured on rule
+        RemediationService.handleAlertRemediation({
+          id: newAlert.id,
+          tenantId: newAlert.tenantId,
+          deviceId: newAlert.deviceId,
+          customerId: newAlert.customerId,
+          ruleId: newAlert.ruleId,
+          title: newAlert.title,
+        }).catch((err) => {
+          logger.error({ err, alertId: newAlert.id }, 'Failed to trigger remediation for new alert');
+        });
       }
     } else if (canAutoHeal && existingAlert) {
       // Auto-healing: condition normalized, mark resolved!

@@ -115,6 +115,23 @@ enum ActionType {
   WINDOWS_CHKDSK_SCAN
   QUERY_SERVICES
   RESTART_SERVICE
+  CLEAN_TEMP_FILES
+}
+
+enum RemediationMode {
+  MONITOR_ONLY
+  MANUAL_APPROVAL
+  AUTO_REMEDIATE
+}
+
+enum RemediationStatus {
+  PENDING_APPROVAL
+  QUEUED
+  EXECUTING
+  VALIDATING
+  SUCCESS
+  FAILED
+  CIRCUIT_BROKEN
 }
 
 enum ActionStatus {
@@ -195,6 +212,7 @@ model Tenant {
   patchPolicies    PatchPolicy[]
   devicePatches    DevicePatch[]
   patchHistory     PatchHistory[]
+  remediations     RemediationExecution[]
 
   @@map("tenants")
 }
@@ -291,6 +309,7 @@ model Device {
   remoteActions      RemoteAction[]
   patches            DevicePatch[]
   patchHistory       PatchHistory[]
+  remediations       RemediationExecution[]
 
   @@index([tenantId, customerId])
   @@index([tenantId, status])
@@ -494,14 +513,22 @@ model AlertRule {
   category    String
   condition   Json
   severity    Severity
-  enabled     Boolean  @default(true)
-  cooldownMin Int      @default(60)
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
+  enabled           Boolean          @default(true)
+  cooldownMin       Int              @default(60)
+  remediationMode   RemediationMode  @default(MONITOR_ONLY)
+  remediationAction String?
+  remediationParams Json?
+  validationMethod  String?
+  maxAttempts       Int              @default(3)
+  cooldownSec       Int              @default(300)
+  timeoutSec        Int              @default(60)
+  createdAt         DateTime         @default(now())
+  updatedAt         DateTime         @updatedAt
 
-  tenant   Tenant    @relation(fields: [tenantId], references: [id], onDelete: Cascade)
-  customer Customer? @relation(fields: [customerId], references: [id], onDelete: Cascade)
-  alerts   Alert[]
+  tenant       Tenant                 @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  customer     Customer?              @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  alerts       Alert[]
+  remediations RemediationExecution[]
 
   @@index([tenantId])
   @@index([customerId])
@@ -524,14 +551,16 @@ model Alert {
   resolvedAt     DateTime?
   acknowledgedBy String?     @db.Uuid
   occurrences    Int         @default(1)
+  autoResolved   Boolean     @default(false)
 
-  tenant          Tenant          @relation(fields: [tenantId], references: [id], onDelete: Cascade)
-  customer        Customer        @relation(fields: [customerId], references: [id], onDelete: Cascade)
-  device          Device          @relation(fields: [deviceId], references: [id], onDelete: Cascade)
-  rule            AlertRule?      @relation(fields: [ruleId], references: [id], onDelete: SetNull)
-  acknowledger    User?           @relation("AcknowledgedAlerts", fields: [acknowledgedBy], references: [id], onDelete: SetNull)
+  tenant          Tenant                 @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  customer        Customer               @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  device          Device                 @relation(fields: [deviceId], references: [id], onDelete: Cascade)
+  rule            AlertRule?             @relation(fields: [ruleId], references: [id], onDelete: SetNull)
+  acknowledger    User?                  @relation("AcknowledgedAlerts", fields: [acknowledgedBy], references: [id], onDelete: SetNull)
   incidentAlerts  IncidentAlert[]
   notifications   Notification[]
+  remediations    RemediationExecution[]
 
   @@index([tenantId, status])
   @@index([tenantId, deviceId, status])
@@ -632,6 +661,7 @@ model User {
   incidentNotes       IncidentNote[]
   notifications       Notification[]
   requestedActions    RemoteAction[]
+  approvedRemediations RemediationExecution[] @relation("ApprovedRemediations")
 
   @@unique([tenantId, email])
   @@index([tenantId])
@@ -737,16 +767,50 @@ model RemoteAction {
   createdAt     DateTime     @default(now())
   updatedAt     DateTime     @updatedAt
 
-  tenant          Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
-  customer        Customer @relation(fields: [customerId], references: [id], onDelete: Cascade)
-  device          Device   @relation(fields: [deviceId], references: [id], onDelete: Cascade)
-  requestedByUser User?    @relation(fields: [requestedById], references: [id], onDelete: SetNull)
+  tenant          Tenant                 @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  customer        Customer               @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  device          Device                 @relation(fields: [deviceId], references: [id], onDelete: Cascade)
+  requestedByUser User?                  @relation(fields: [requestedById], references: [id], onDelete: SetNull)
+  remediations    RemediationExecution[]
 
-  @@index([tenantId, deviceId, status])
   @@index([tenantId, status])
-  @@index([deviceId, createdAt(sort: Desc)])
+  @@index([deviceId, status])
   @@index([expiresAt])
   @@map("remote_actions")
+}
+
+model RemediationExecution {
+  id                String            @id @default(uuid()) @db.Uuid
+  tenantId          String            @db.Uuid
+  alertId           String            @db.Uuid
+  ruleId            String?           @db.Uuid
+  deviceId          String            @db.Uuid
+  actionType        ActionType
+  parameters        Json?
+  status            RemediationStatus @default(QUEUED)
+  attempt           Int               @default(1)
+  maxAttempts       Int               @default(3)
+  remoteActionId    String?           @db.Uuid
+  startedAt         DateTime          @default(now())
+  validatedAt       DateTime?
+  completedAt       DateTime?
+  output            String?           @db.Text
+  error             String?           @db.Text
+  savedIntervention Boolean           @default(false)
+  approvedById      String?           @db.Uuid
+  createdAt         DateTime          @default(now())
+  updatedAt         DateTime          @updatedAt
+
+  tenant       Tenant        @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  alert        Alert         @relation(fields: [alertId], references: [id], onDelete: Cascade)
+  rule         AlertRule?    @relation(fields: [ruleId], references: [id], onDelete: SetNull)
+  device       Device        @relation(fields: [deviceId], references: [id], onDelete: Cascade)
+  remoteAction RemoteAction? @relation(fields: [remoteActionId], references: [id], onDelete: SetNull)
+  approvedBy   User?         @relation("ApprovedRemediations", fields: [approvedById], references: [id], onDelete: SetNull)
+
+  @@index([tenantId, deviceId, status])
+  @@index([tenantId, alertId])
+  @@map("remediation_executions")
 }
 
 model PatchPolicy {

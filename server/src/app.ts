@@ -16,6 +16,7 @@ import { devicesRoutes } from './modules/devices/devices.routes.js';
 import { alertsRoutes } from './modules/alerts/alerts.routes.js';
 import { deviceActionRoutes, agentActionRoutes } from './modules/actions/actions.routes.js';
 import { patchRoutes, devicePatchRoutes, agentPatchRoutes } from './modules/patches/patches.routes.js';
+import { remediationRoutes } from './modules/remediation/remediation.routes.js';
 import { ensureDefaultAlertRules } from './modules/alerts/alert-rules.seed.js';
 import { authenticateUser } from './middleware/user-auth.js';
 import { db } from './lib/db.js';
@@ -425,6 +426,7 @@ export async function buildApp(): Promise<FastifyInstance> {
   await app.register(devicePatchRoutes, { prefix: '/api/v1/devices' });
   await app.register(patchRoutes, { prefix: '/api/v1/patches' });
   await app.register(alertsRoutes, { prefix: '/api/v1/alerts' });
+  await app.register(remediationRoutes, { prefix: '/api/v1/remediations' });
 
   // Centralized Error Handler
   app.setErrorHandler((error: any, request, reply) => {

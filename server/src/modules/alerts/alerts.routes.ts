@@ -96,6 +96,20 @@ export const alertsRoutes: FastifyPluginAsync = async (fastify: FastifyInstance)
               name: true,
             },
           },
+          remediations: {
+            select: {
+              id: true,
+              actionType: true,
+              status: true,
+              savedIntervention: true,
+              createdAt: true,
+              completedAt: true,
+              error: true,
+              output: true,
+            },
+            orderBy: { createdAt: 'desc' },
+            take: 1,
+          },
         },
         orderBy: [
           { severity: 'asc' }, // CRITICAL first in enum order or handled in client

@@ -328,6 +328,7 @@ export function getClientRuntimeScript(): string {
         renderDashboard();
       } else if (tab === 'alerts') {
         renderAlertCenter();
+        loadRemediationData();
       } else if (tab === 'customers') {
         renderCustomersTable();
       } else if (tab === 'devices') {
@@ -744,11 +745,23 @@ export function getClientRuntimeScript(): string {
         const custCode = a.customer ? a.customer.code : 'NL';
 
         let statusBadge = '<span class="status-pill status-danger">Abierta</span>';
-        if (a.status === 'ACKNOWLEDGED') {
+        const latestRemed = (a.remediations && a.remediations.length > 0) ? a.remediations[0] : null;
+
+        if (a.status === 'RESOLVED') {
+          if (a.autoResolved) {
+            statusBadge = '<span class="status-pill status-online" title="Resuelta de forma autónoma por motor de auto-remediación">⚡ Auto-Resuelta</span>';
+          } else {
+            statusBadge = '<span class="status-pill status-online">✓ Resuelta</span>';
+          }
+        } else if (latestRemed && latestRemed.status === 'PENDING_APPROVAL') {
+          statusBadge = '<span class="status-pill status-warning" title="Remediación técnica pendiente de autorización">🛡️ Aprobación Pendiente</span>';
+        } else if (latestRemed && (latestRemed.status === 'QUEUED' || latestRemed.status === 'EXECUTING')) {
+          statusBadge = '<span class="status-pill status-info" title="Ejecutando auto-remediación...">⚙️ Remediando...</span>';
+        } else if (latestRemed && latestRemed.status === 'CIRCUIT_BROKEN') {
+          statusBadge = '<span class="status-pill status-danger" title="Circuit Breaker activo: falló el límite de intentos">🛑 Circuit Breaker</span>';
+        } else if (a.status === 'ACKNOWLEDGED') {
           const ackUser = a.acknowledger ? (a.acknowledger.name || a.acknowledger.email) : 'Técnico';
           statusBadge = '<span class="status-pill status-warning" title="Reconocida por ' + ackUser + '">👁️ Reconocida</span>';
-        } else if (a.status === 'RESOLVED') {
-          statusBadge = '<span class="status-pill status-online">✓ Resuelta</span>';
         }
 
         const lastSeen = a.lastSeenAt ? new Date(a.lastSeenAt).toLocaleString('es-AR') : '-';
@@ -765,7 +778,8 @@ export function getClientRuntimeScript(): string {
           '<td><span class="code-font" style="font-size: 11px; color: #38bdf8;">' + lastSeen + '</span></td>' +
           '<td>' + statusBadge + '</td>' +
           '<td style="text-align: right; white-space: nowrap;">' +
-            '<button class="btn btn-primary btn-sm" onclick="openAlertDetailModal(\\'' + a.id + '\\')">Ver Detalle</button> ' +
+            (latestRemed && latestRemed.status === 'PENDING_APPROVAL' ? '<button class="btn btn-primary btn-sm" onclick="approveRemediation(\\'' + latestRemed.id + '\\')" title="Autorizar remediación inmediata">⚡ Aprobar</button> ' : '') +
+            '<button class="btn btn-secondary btn-sm" onclick="openAlertDetailModal(\\'' + a.id + '\\')">Ver Detalle</button> ' +
             (a.status === 'OPEN' ? '<button class="btn btn-secondary btn-sm" onclick="acknowledgeAlert(\\'' + a.id + '\\')" title="Reconocer alerta">Reconocer</button> ' : '') +
             (a.status !== 'RESOLVED' ? '<button class="btn btn-secondary btn-sm" onclick="resolveAlert(\\'' + a.id + '\\')" title="Marcar como resuelta">Resolver</button>' : '') +
           '</td>' +
@@ -962,6 +976,166 @@ export function getClientRuntimeScript(): string {
         setTimeout(function() {
           if (icon) icon.classList.remove('spinning');
         }, 600);
+      }
+    }
+
+    // ==========================================
+    // AUTO-REMEDIATION MODULE
+    // ==========================================
+    let currentRemediations = [];
+
+    function switchAlertViewTab(tab) {
+      const qView = document.getElementById('subviewAlertsQueue');
+      const rView = document.getElementById('subviewRemediations');
+      const qBtn = document.getElementById('tabBtnAlertsQueue');
+      const rBtn = document.getElementById('tabBtnRemediations');
+      if (!qView || !rView || !qBtn || !rBtn) return;
+
+      if (tab === 'remediations') {
+        qView.style.display = 'none';
+        rView.style.display = 'flex';
+        qBtn.classList.remove('active');
+        rBtn.classList.add('active');
+        loadRemediationData();
+      } else {
+        rView.style.display = 'none';
+        qView.style.display = 'flex';
+        rBtn.classList.remove('active');
+        qBtn.classList.add('active');
+      }
+    }
+
+    async function refreshAlertsAndRemediations() {
+      await refreshAlerts();
+      await loadRemediationData();
+    }
+
+    async function loadRemediationData() {
+      let token = localStorage.getItem('nl_token');
+      if (!token) return;
+
+      try {
+        const [statsRes, histRes] = await Promise.all([
+          fetch('/api/v1/remediations/stats', { credentials: 'omit', headers: { 'Authorization': 'Bearer ' + token } }),
+          fetch('/api/v1/remediations/history?limit=50', { credentials: 'omit', headers: { 'Authorization': 'Bearer ' + token } })
+        ]);
+
+        if (statsRes.ok) {
+          const statsJson = await statsRes.json();
+          if (statsJson && statsJson.data) {
+            renderRemediationStats(statsJson.data);
+          }
+        }
+
+        if (histRes.ok) {
+          const histJson = await histRes.json();
+          if (histJson && Array.isArray(histJson.data)) {
+            currentRemediations = histJson.data;
+            renderRemediationsTable(currentRemediations);
+          }
+        }
+      } catch (err) {
+        console.error('Error loading remediation data:', err);
+      }
+    }
+
+    function renderRemediationStats(s) {
+      setVal('remedSavedInterventions', s.savedInterventions || 0);
+      setVal('remedSuccessRate', (s.successRate !== undefined ? s.successRate : 100) + '%');
+      setVal('remedPendingApproval', s.pendingApproval || 0);
+      setVal('remedCircuitBroken', s.circuitBroken || 0);
+      setVal('remedTotalAttempted', s.totalAttempted || 0);
+      setVal('remedPendingBadge', s.pendingApproval || 0);
+    }
+
+    function renderRemediationsTable(list) {
+      const tbody = document.getElementById('remediationsTableBody');
+      if (!tbody) return;
+
+      if (!list || list.length === 0) {
+        tbody.innerHTML = '<tr><td colspan="8" style="text-align: center; color: var(--text-muted); padding: 40px;">' +
+          'No se han registrado ejecuciones de remediación todavía.' +
+        '</td></tr>';
+        return;
+      }
+
+      tbody.innerHTML = list.map(function(r) {
+        const dateStr = r.createdAt ? new Date(r.createdAt).toLocaleString('es-AR') : '-';
+        const host = r.device ? r.device.hostname : 'Dispositivo';
+        const alertTitle = r.alert ? r.alert.title : (r.rule ? r.rule.name : 'Incidente');
+        
+        let statusBadge = '';
+        if (r.status === 'SUCCESS') {
+          statusBadge = '<span class="status-pill status-online">✓ Éxito</span>';
+        } else if (r.status === 'FAILED') {
+          statusBadge = '<span class="status-pill status-danger" title="' + (r.error || '') + '">✗ Falló</span>';
+        } else if (r.status === 'PENDING_APPROVAL') {
+          statusBadge = '<span class="status-pill status-warning">🛡️ Requiere Autorización</span>';
+        } else if (r.status === 'CIRCUIT_BROKEN') {
+          statusBadge = '<span class="status-pill status-danger" title="' + (r.error || '') + '">🛑 Circuit Breaker</span>';
+        } else if (r.status === 'EXECUTING' || r.status === 'QUEUED') {
+          statusBadge = '<span class="status-pill status-info">⚙️ En Proceso</span>';
+        } else {
+          statusBadge = '<span class="status-pill">' + r.status + '</span>';
+        }
+
+        const modeBadge = r.rule && r.rule.remediationMode === 'AUTO_REMEDIATE'
+          ? '<span class="code-badge" style="background: rgba(16,185,129,0.15); color: #10b981;">AUTO</span>'
+          : '<span class="code-badge" style="background: rgba(245,158,11,0.15); color: #f59e0b;">MANUAL</span>';
+
+        const savedBadge = r.savedIntervention
+          ? '<span style="color: #10b981; font-weight: 700; font-size: 13px;">⚡ Sí</span>'
+          : '<span style="color: var(--text-muted); font-size: 13px;">-</span>';
+
+        let actionBtn = '';
+        if (r.status === 'PENDING_APPROVAL') {
+          actionBtn = '<button class="btn btn-primary btn-sm" onclick="approveRemediation(\\'' + r.id + '\\')">⚡ Autorizar</button>';
+        } else if (r.error) {
+          actionBtn = '<button class="btn btn-secondary btn-sm" onclick="alert(\\'' + (r.error.replace(/'/g, "\\\\'")) + '\\')">Ver Error</button>';
+        } else if (r.output) {
+          actionBtn = '<button class="btn btn-secondary btn-sm" onclick="alert(\\'' + (r.output.replace(/'/g, "\\\\'").slice(0, 300)) + '\\')">Ver Salida</button>';
+        }
+
+        return '<tr>' +
+          '<td><span class="code-font" style="font-size: 11px; color: #38bdf8;">' + dateStr + '</span></td>' +
+          '<td><strong class="code-font" style="color: #fff;">' + host + '</strong></td>' +
+          '<td><span style="font-size: 13px; color: #fff;">' + alertTitle + '</span></td>' +
+          '<td><span class="code-badge">' + r.actionType + '</span></td>' +
+          '<td>' + modeBadge + '</td>' +
+          '<td>' + statusBadge + '</td>' +
+          '<td style="text-align: center;">' + savedBadge + '</td>' +
+          '<td style="text-align: right;">' + actionBtn + '</td>' +
+        '</tr>';
+      }).join('');
+    }
+
+    async function approveRemediation(id) {
+      let token = localStorage.getItem('nl_token');
+      if (!token) return;
+
+      if (!confirm('¿Confirma la autorización y ejecución inmediata de esta remediación técnica?')) {
+        return;
+      }
+
+      try {
+        const res = await fetch('/api/v1/remediations/' + id + '/approve', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': 'Bearer ' + token
+          }
+        });
+
+        const json = await res.json();
+        if (res.ok && json.success) {
+          showToast('Remediación autorizada y enviada al agente');
+          await loadRemediationData();
+          await refreshAlerts(true);
+        } else {
+          showToast(json.message || 'Error al autorizar remediación', 'error');
+        }
+      } catch (err) {
+        showToast('Error de conexión al autorizar remediación', 'error');
       }
     }
 
@@ -3218,6 +3392,10 @@ export function getClientRuntimeScript(): string {
     window.resolveAlert = resolveAlert;
     window.triggerAlertEvaluation = triggerAlertEvaluation;
     window.refreshAlerts = refreshAlerts;
+    window.switchAlertViewTab = switchAlertViewTab;
+    window.refreshAlertsAndRemediations = refreshAlertsAndRemediations;
+    window.loadRemediationData = loadRemediationData;
+    window.approveRemediation = approveRemediation;
     window.renderCustomersTable = renderCustomersTable;
     window.renderCustomersTableFiltered = renderCustomersTableFiltered;
     window.openCustomerWorkspace = openCustomerWorkspace;

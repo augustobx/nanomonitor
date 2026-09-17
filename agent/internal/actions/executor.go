@@ -4,7 +4,9 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -139,6 +141,10 @@ func ExecuteAction(ctx context.Context, action *transport.ActionItem, hook Sched
 
 	case "WINDOWS_UPDATE_SCHEDULE_REBOOT":
 		return executeScheduleReboot(ctx, action)
+
+	// ==================== AUTO-REMEDIACIÓN ====================
+	case "CLEAN_TEMP_FILES":
+		return executeCleanTempFiles(ctx, hook)
 
 	default:
 		return &ExecutionResult{
@@ -393,5 +399,90 @@ func executeScheduleReboot(ctx context.Context, action *transport.ActionItem) *E
 	}
 
 	return runCommand(ctx, 30*time.Second, "shutdown.exe", "/r", "/t", fmt.Sprintf("%d", delaySec), "/c", msg)
+}
+
+func executeCleanTempFiles(ctx context.Context, hook SchedTriggerHook) *ExecutionResult {
+	sysRoot := os.Getenv("SystemRoot")
+	if sysRoot == "" {
+		sysRoot = `C:\Windows`
+	}
+	progData := os.Getenv("ProgramData")
+	if progData == "" {
+		progData = `C:\ProgramData`
+	}
+
+	safeDirs := []string{
+		filepath.Join(sysRoot, "Temp"),
+		filepath.Join(progData, "Microsoft", "Windows", "WER", "ReportQueue"),
+		filepath.Join(progData, "Microsoft", "Windows", "WER", "ReportArchive"),
+		filepath.Join(sysRoot, "SoftwareDistribution", "Download"),
+	}
+
+	var totalFreedBytes int64
+	var totalDeletedFiles int
+	var sb strings.Builder
+	sb.WriteString("Limpieza segura de archivos temporales del sistema (Auto-Remediation):\n\n")
+
+	oneHourAgo := time.Now().Add(-1 * time.Hour)
+
+	for _, dir := range safeDirs {
+		cleanDir := filepath.Clean(dir)
+
+		// Guard rails: strictly verify path prefix to prevent any traversal or deletion of user data
+		isUnderSysRoot := strings.HasPrefix(strings.ToLower(cleanDir), strings.ToLower(sysRoot))
+		isUnderProgData := strings.HasPrefix(strings.ToLower(cleanDir), strings.ToLower(progData))
+		if !isUnderSysRoot && !isUnderProgData {
+			continue
+		}
+
+		entries, err := os.ReadDir(cleanDir)
+		if err != nil {
+			continue
+		}
+
+		dirFreed := int64(0)
+		dirFiles := 0
+
+		for _, entry := range entries {
+			fullPath := filepath.Join(cleanDir, entry.Name())
+			info, err := entry.Info()
+			if err != nil {
+				continue
+			}
+
+			// Only clean files/folders older than 1 hour (skip active locks)
+			if info.ModTime().Before(oneHourAgo) {
+				size := info.Size()
+				err := os.RemoveAll(fullPath)
+				if err == nil {
+					dirFreed += size
+					dirFiles++
+				}
+			}
+		}
+
+		totalFreedBytes += dirFreed
+		totalDeletedFiles += dirFiles
+		sb.WriteString(fmt.Sprintf("• %s: %d elementos eliminados (%.2f MB liberados)\n", cleanDir, dirFiles, float64(dirFreed)/(1024*1024)))
+	}
+
+	totalMB := float64(totalFreedBytes) / (1024 * 1024)
+	sb.WriteString(fmt.Sprintf("\nResultado: %d archivos temporales eliminados, %.2f MB de espacio recuperado.", totalDeletedFiles, totalMB))
+
+	// Trigger immediate inventory to update free space telemetry
+	if hook != nil {
+		hook.TriggerInventory(ctx)
+	}
+
+	return &ExecutionResult{
+		ExitCode: 0,
+		Output:   sb.String(),
+		Result: map[string]interface{}{
+			"success":      true,
+			"deletedFiles": totalDeletedFiles,
+			"freedBytes":   totalFreedBytes,
+			"freedMB":      totalMB,
+		},
+	}
 }
 

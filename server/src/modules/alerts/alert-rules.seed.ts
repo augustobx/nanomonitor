@@ -1,4 +1,4 @@
-import { Severity } from '@prisma/client';
+import { ActionType, RemediationMode, Severity } from '@prisma/client';
 import { db } from '../../lib/db.js';
 import { logger } from '../../lib/logger.js';
 
@@ -15,6 +15,11 @@ export interface PredefinedRule {
     durationMins?: number;
     driveLetter?: string;
   };
+  remediationMode?: RemediationMode;
+  remediationAction?: ActionType;
+  remediationParams?: any;
+  maxAttempts?: number;
+  cooldownSec?: number;
 }
 
 export const PREDEFINED_RULES: PredefinedRule[] = [
@@ -30,6 +35,11 @@ export const PREDEFINED_RULES: PredefinedRule[] = [
       threshold: 10,
       driveLetter: 'C:',
     },
+    remediationMode: RemediationMode.MANUAL_APPROVAL,
+    remediationAction: ActionType.CLEAN_TEMP_FILES,
+    remediationParams: { maxAgeHours: 1 },
+    maxAttempts: 3,
+    cooldownSec: 600,
   },
   {
     code: 'STORAGE_LOW_C',
@@ -43,6 +53,11 @@ export const PREDEFINED_RULES: PredefinedRule[] = [
       threshold: 15,
       driveLetter: 'C:',
     },
+    remediationMode: RemediationMode.MANUAL_APPROVAL,
+    remediationAction: ActionType.CLEAN_TEMP_FILES,
+    remediationParams: { maxAgeHours: 1 },
+    maxAttempts: 3,
+    cooldownSec: 1800,
   },
   {
     code: 'SMART_DISK_PREDFAIL',
@@ -101,6 +116,10 @@ export const PREDEFINED_RULES: PredefinedRule[] = [
     condition: {
       type: 'DEFENDER',
     },
+    remediationMode: RemediationMode.MANUAL_APPROVAL,
+    remediationAction: ActionType.DEFENDER_UPDATE_SIGNATURES,
+    maxAttempts: 3,
+    cooldownSec: 600,
   },
   {
     code: 'FIREWALL_DISABLED',
@@ -187,9 +206,25 @@ export async function ensureDefaultAlertRules(targetTenantId?: string): Promise<
                 cooldownMin: rule.cooldownMin,
                 condition: rule.condition as any,
                 enabled: true,
+                remediationMode: rule.remediationMode || RemediationMode.MONITOR_ONLY,
+                remediationAction: rule.remediationAction || null,
+                remediationParams: rule.remediationParams || undefined,
+                maxAttempts: rule.maxAttempts || 3,
+                cooldownSec: rule.cooldownSec || 300,
               },
             });
             rulesCreated++;
+          } else if (rule.remediationMode && existing.remediationMode === RemediationMode.MONITOR_ONLY && !existing.remediationAction) {
+            await db.alertRule.update({
+              where: { id: existing.id },
+              data: {
+                remediationMode: rule.remediationMode,
+                remediationAction: rule.remediationAction,
+                remediationParams: rule.remediationParams || undefined,
+                maxAttempts: rule.maxAttempts || 3,
+                cooldownSec: rule.cooldownSec || 300,
+              },
+            });
           }
         }
       }

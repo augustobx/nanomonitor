@@ -9,6 +9,7 @@ import {
   cancelActionSchema,
 } from '../../schemas/actions.schema.js';
 import { ActionsService } from './actions.service.js';
+import { RemediationService } from '../remediation/remediation.service.js';
 
 export const deviceActionRoutes: FastifyPluginAsync = async (fastify: FastifyInstance) => {
   // Apply user authentication to all /api/v1/devices/:id/actions endpoints
@@ -216,6 +217,19 @@ export const agentActionRoutes: FastifyPluginAsync = async (fastify: FastifyInst
         error: parsed.data.error,
         result: parsed.data.result,
       });
+
+      // Notify Auto-Remediation engine if action was linked to a remediation execution
+      if (parsed.data.status === 'SUCCESS' || parsed.data.status === 'FAILED') {
+        RemediationService.handleRemoteActionCompletion(
+          actionId,
+          parsed.data.exitCode ?? (parsed.data.status === 'SUCCESS' ? 0 : 1),
+          parsed.data.output,
+          parsed.data.error,
+          parsed.data.result
+        ).catch((err) => {
+          request.log.error({ err, actionId }, 'Failed to process auto-remediation completion');
+        });
+      }
 
       return reply.status(200).send({
         status: 'ok',
