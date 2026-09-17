@@ -1251,7 +1251,7 @@ export function getClientRuntimeScript(): string {
       const tokenStr = tokenObj ? tokenObj.token : ('NL-' + cust.code + '-DEMO');
       const snippet = document.getElementById('cdEnrollCmdSnippet');
       if (snippet) {
-        snippet.textContent = 'irm https://monitor.nanolabs.com.ar/install.ps1 | iex -Token "' + tokenStr + '"';
+        snippet.textContent = 'irm "https://monitor.nanolabs.com.ar/install.ps1?token=' + tokenStr + '" | iex';
       }
 
       // Populate Subtabs
@@ -1559,7 +1559,7 @@ export function getClientRuntimeScript(): string {
       if (!cust) return;
       const tokenObj = cust.enrollmentTokens && cust.enrollmentTokens.length > 0 ? cust.enrollmentTokens[0] : null;
       const tokenStr = tokenObj ? tokenObj.token : ('NL-' + cust.code + '-DEMO');
-      const cmd = 'irm https://monitor.nanolabs.com.ar/install.ps1 | iex -Token "' + tokenStr + '"';
+      const cmd = 'irm "https://monitor.nanolabs.com.ar/install.ps1?token=' + tokenStr + '" | iex';
       navigator.clipboard.writeText(cmd).then(function() {
         showToast('✅ Comando PowerShell copiado al portapapeles');
       }).catch(function() {
@@ -3194,7 +3194,7 @@ export function getClientRuntimeScript(): string {
         const tokenStr = tokenObj ? tokenObj.token : ('NL-' + (cust ? cust.code : 'DEMO') + '-TOKEN');
         const cmdEl = document.getElementById('wPs1Command');
         if (cmdEl) {
-          cmdEl.textContent = 'irm https://monitor.nanolabs.com.ar/install.ps1 | iex -Token "' + tokenStr + '"';
+          cmdEl.textContent = 'irm "https://monitor.nanolabs.com.ar/install.ps1?token=' + tokenStr + '" | iex';
         }
       }
 

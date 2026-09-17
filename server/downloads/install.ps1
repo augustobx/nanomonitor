@@ -12,6 +12,17 @@ param(
 
 $ErrorActionPreference = "Stop"
 
+# Fallback to variable from caller/global scope or environment variable
+if (-not $Token -and (Test-Path Variable:\Token)) {
+    $Token = (Get-Variable -Name Token -ValueOnly -ErrorAction SilentlyContinue)
+}
+if (-not $Token -and $global:Token) {
+    $Token = $global:Token
+}
+if (-not $Token -and $env:NANOMONITOR_TOKEN) {
+    $Token = $env:NANOMONITOR_TOKEN
+}
+
 Write-Host "=====================================================" -ForegroundColor Cyan
 Write-Host "   NanoLabs Control Center - Monitoring Agent Setup  " -ForegroundColor Cyan
 Write-Host "=====================================================" -ForegroundColor Cyan
