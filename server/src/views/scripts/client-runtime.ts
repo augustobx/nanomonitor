@@ -137,6 +137,11 @@ export function getClientRuntimeScript(): string {
     }
 
     function closeLoginModal() {
+      const token = localStorage.getItem('nl_token');
+      if (!token) {
+        showToast('Debes iniciar sesión para acceder al sistema', 'warning');
+        return;
+      }
       const m = document.getElementById('loginModal');
       if (m) m.classList.remove('active');
     }
@@ -160,9 +165,11 @@ export function getClientRuntimeScript(): string {
           localStorage.setItem('nl_token', token);
           if (json.data.user) localStorage.setItem('nl_user', JSON.stringify(json.data.user));
           setLoggedInUI();
-          closeLoginModal();
+          const m = document.getElementById('loginModal');
+          if (m) m.classList.remove('active');
           showToast('Bienvenido a NanoLabs Control Center');
           await fetchLiveDashboard(false);
+          startPolling();
         } else {
           if (errEl) {
             errEl.textContent = json.message || 'Credenciales incorrectas';
@@ -190,8 +197,11 @@ export function getClientRuntimeScript(): string {
           localStorage.setItem('nl_token', token);
           if (json.data.user) localStorage.setItem('nl_user', JSON.stringify(json.data.user));
           setLoggedInUI();
-          closeLoginModal();
+          const m = document.getElementById('loginModal');
+          if (m) m.classList.remove('active');
           showToast('Sesión iniciada: Augusto / NanoLabs Admin');
+          await fetchLiveDashboard(false);
+          startPolling();
           return token;
         }
       } catch (err) {
@@ -200,11 +210,49 @@ export function getClientRuntimeScript(): string {
       return null;
     }
 
+    function startPolling() {
+      stopPolling();
+      pollingTimer = setInterval(function() {
+        if (localStorage.getItem('nl_token')) {
+          fetchLiveDashboard(true);
+        } else {
+          stopPolling();
+        }
+      }, pollingIntervalMs);
+    }
+
+    function stopPolling() {
+      if (pollingTimer) {
+        clearInterval(pollingTimer);
+        pollingTimer = null;
+      }
+    }
+
     function logout() {
+      stopPolling();
       localStorage.removeItem('nl_token');
       localStorage.removeItem('nl_user');
       setLoggedOutUI();
-      showToast('Sesión cerrada');
+      // Clear data from memory
+      currentDevices = [];
+      currentCustomers = [];
+      currentRecentEvents = [];
+      currentAlerts = [];
+      renderDashboard();
+      renderAlertCenter();
+      renderCustomersTable();
+      renderFleetDevices();
+      renderAgentsList();
+      // Close open drawers/modals
+      closeGlobalSearch();
+      closeCreateCustomerModal();
+      closeAlertDetailModal();
+      closeThresholdModal();
+      closeAlertRulesModal();
+      const devDrawer = document.getElementById('deviceDrawer');
+      if (devDrawer) devDrawer.classList.remove('active');
+      openLoginModal();
+      showToast('Sesión cerrada correctamente');
     }
 
     // Navigation Router
@@ -800,7 +848,7 @@ export function getClientRuntimeScript(): string {
 
     async function acknowledgeAlert(alertId) {
       let token = localStorage.getItem('nl_token');
-      if (!token) token = await quickLoginDemo();
+      if (!token) { openLoginModal(); return; }
       try {
         const res = await fetch('/api/v1/alerts/' + alertId + '/ack', {
           method: 'PATCH',
@@ -819,7 +867,7 @@ export function getClientRuntimeScript(): string {
 
     async function resolveAlert(alertId) {
       let token = localStorage.getItem('nl_token');
-      if (!token) token = await quickLoginDemo();
+      if (!token) { openLoginModal(); return; }
       try {
         const res = await fetch('/api/v1/alerts/' + alertId + '/resolve', {
           method: 'PATCH',
@@ -841,7 +889,7 @@ export function getClientRuntimeScript(): string {
       const spinner = document.getElementById('acEvalSpinner');
       if (spinner) spinner.classList.add('spinning');
       let token = localStorage.getItem('nl_token');
-      if (!token) token = await quickLoginDemo();
+      if (!token) { openLoginModal(); return; }
       try {
         const res = await fetch('/api/v1/alerts/evaluate', {
           method: 'POST',
@@ -868,7 +916,7 @@ export function getClientRuntimeScript(): string {
       const icon = document.getElementById('acRefreshIcon');
       if (icon) icon.classList.add('spinning');
       let token = localStorage.getItem('nl_token');
-      if (!token) token = await quickLoginDemo();
+      if (!token) return;
       try {
         const res = await fetch('/api/v1/alerts?limit=100', {
           headers: { 'Authorization': 'Bearer ' + token }
@@ -1179,7 +1227,7 @@ export function getClientRuntimeScript(): string {
       if (!tbody) return;
       tbody.innerHTML = '<tr><td colspan="7" style="text-align: center; color: var(--text-muted); padding: 20px;">Cargando reglas...</td></tr>';
       let token = localStorage.getItem('nl_token');
-      if (!token) token = await quickLoginDemo();
+      if (!token) return;
       try {
         const res = await fetch('/api/v1/alerts/rules?customerId=' + custId, {
           headers: token ? { 'Authorization': 'Bearer ' + token } : {}
@@ -1259,8 +1307,8 @@ export function getClientRuntimeScript(): string {
     async function handleCreateCustomer(e) {
       if (e) e.preventDefault();
       let token = localStorage.getItem('nl_token');
-      if (!token) token = await quickLoginDemo();
       if (!token) {
+        openLoginModal();
         showToast('Debes iniciar sesión para registrar clientes', 'error');
         return;
       }
@@ -1631,7 +1679,7 @@ export function getClientRuntimeScript(): string {
       // 6. Asynchronous Deep Fetch (Full metrics history, full inventories, software & events)
       try {
         let token = localStorage.getItem('nl_token');
-        if (!token) token = await quickLoginDemo();
+        if (!token) return;
         fetch('/api/v1/devices/' + deviceId, {
           headers: token ? { 'Authorization': 'Bearer ' + token } : {}
         }).then(function(res) {
@@ -1747,7 +1795,6 @@ export function getClientRuntimeScript(): string {
     async function recalculateCurrentDeviceHealth() {
       if (!selectedDevice) return;
       let token = localStorage.getItem('nl_token');
-      if (!token) token = await quickLoginDemo();
       if (!token) {
         showToast('Inicia sesión como administrador para recalcular la salud', 'warning');
         openLoginModal();
@@ -1782,7 +1829,6 @@ export function getClientRuntimeScript(): string {
     async function triggerDeviceAlertEvaluation() {
       if (!selectedDevice) return;
       let token = localStorage.getItem('nl_token');
-      if (!token) token = await quickLoginDemo();
       if (!token) {
         showToast('Inicia sesión como administrador para evaluar alertas', 'warning');
         openLoginModal();
@@ -2182,7 +2228,11 @@ export function getClientRuntimeScript(): string {
       if (!targetCustId) return;
 
       let token = localStorage.getItem('nl_token');
-      if (!token) token = await quickLoginDemo();
+      if (!token) {
+        showToast('Inicia sesión para reasignar equipos', 'warning');
+        openLoginModal();
+        return;
+      }
 
       try {
         const res = await fetch('/api/v1/devices/' + selectedDevice.id, {
@@ -2443,7 +2493,7 @@ export function getClientRuntimeScript(): string {
 
       tbody.innerHTML = '<tr><td colspan="7" style="text-align: center; color: var(--text-muted); padding: 32px;">Cargando reglas...</td></tr>';
       let token = localStorage.getItem('nl_token');
-      if (!token) token = await quickLoginDemo();
+      if (!token) return;
 
       const query = targetCustId ? '?customerId=' + targetCustId : '';
       try {
@@ -2515,7 +2565,7 @@ export function getClientRuntimeScript(): string {
 
     async function toggleAlertRule(ruleId, customerId) {
       let token = localStorage.getItem('nl_token');
-      if (!token) token = await quickLoginDemo();
+      if (!token) { openLoginModal(); return; }
       const query = (customerId && customerId !== 'GENERAL') ? '?customerId=' + customerId : '';
       try {
         const res = await fetch('/api/v1/alerts/rules/' + ruleId + '/toggle' + query, {
@@ -2535,7 +2585,7 @@ export function getClientRuntimeScript(): string {
 
     async function revertCustomerRuleOverride(overrideId) {
       let token = localStorage.getItem('nl_token');
-      if (!token) token = await quickLoginDemo();
+      if (!token) { openLoginModal(); return; }
       try {
         const res = await fetch('/api/v1/alerts/rules/customer-override/' + overrideId, {
           method: 'DELETE',
@@ -2588,7 +2638,7 @@ export function getClientRuntimeScript(): string {
       }
 
       let token = localStorage.getItem('nl_token');
-      if (!token) token = await quickLoginDemo();
+      if (!token) { openLoginModal(); return; }
 
       try {
         const res = await fetch('/api/v1/alerts/rules/customer-override', {
@@ -2730,10 +2780,23 @@ export function getClientRuntimeScript(): string {
     }
 
     async function fetchLiveDashboard(silent) {
+      const token = localStorage.getItem('nl_token');
+      if (!token) {
+        setLoggedOutUI();
+        openLoginModal();
+        return;
+      }
       try {
         const res = await fetch('/api/v1/public/live', {
-          headers: { 'Cache-Control': 'no-cache' }
+          headers: {
+            'Authorization': 'Bearer ' + token,
+            'Cache-Control': 'no-cache'
+          }
         });
+        if (res.status === 401) {
+          logout();
+          return;
+        }
         if (res.ok) {
           const json = await res.json();
           if (json) {
@@ -2886,17 +2949,12 @@ export function getClientRuntimeScript(): string {
       const token = localStorage.getItem('nl_token');
       if (token) {
         setLoggedInUI();
+        await fetchLiveDashboard(true);
+        startPolling();
       } else {
-        await quickLoginDemo();
+        setLoggedOutUI();
+        openLoginModal();
       }
-
-      // Initial live fetch
-      await fetchLiveDashboard(true);
-
-      // Start automatic live telemetry polling
-      pollingTimer = setInterval(function() {
-        fetchLiveDashboard(true);
-      }, pollingIntervalMs);
     }
 
     if (document.readyState === 'loading') {

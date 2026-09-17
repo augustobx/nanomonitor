@@ -15,6 +15,7 @@ import { sitesRoutes } from './modules/sites/sites.routes.js';
 import { devicesRoutes } from './modules/devices/devices.routes.js';
 import { alertsRoutes } from './modules/alerts/alerts.routes.js';
 import { ensureDefaultAlertRules } from './modules/alerts/alert-rules.seed.js';
+import { authenticateUser } from './middleware/user-auth.js';
 import { db } from './lib/db.js';
 import { getLandingHtml } from './views/landing.html.js';
 import { generateRandomString } from './lib/crypto.js';
@@ -207,8 +208,8 @@ export async function buildApp(): Promise<FastifyInstance> {
     });
   });
 
-  // Public live data endpoint for real-time dashboard auto-refresh
-  app.get('/api/v1/public/live', async (request, reply) => {
+  // Live data endpoint for real-time dashboard auto-refresh (Protected with authenticateUser)
+  app.get('/api/v1/public/live', { preHandler: [authenticateUser] }, async (request, reply) => {
     let devices: any[] = [];
     let customers: any[] = [];
     let recentEvents: any[] = [];
