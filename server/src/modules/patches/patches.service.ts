@@ -310,50 +310,44 @@ export class PatchesService {
   static async upsertPolicy(tenantId: string, input: UpsertPatchPolicyInput) {
     const customerId = input.customerId || null;
 
-    return db.patchPolicy.upsert({
+    const existing = await db.patchPolicy.findFirst({
       where: {
-        tenantId_customerId: {
-          tenantId,
-          customerId: customerId as any,
-        },
+        tenantId,
+        customerId: customerId,
       },
-      create: {
+    });
+
+    const dataPayload = {
+      name: input.name,
+      description: input.description,
+      isDefault: input.isDefault ?? (customerId === null),
+      criticalApproval: input.criticalApproval as any,
+      securityApproval: input.securityApproval as any,
+      importantApproval: input.importantApproval as any,
+      optionalApproval: input.optionalApproval as any,
+      driverApproval: input.driverApproval as any,
+      featureApproval: input.featureApproval as any,
+      maintenanceDays: input.maintenanceDays,
+      startTime: input.startTime,
+      endTime: input.endTime,
+      timezone: input.timezone,
+      allowReboot: input.allowReboot,
+      rebootDeadlineHours: input.rebootDeadlineHours,
+      notificationDelayMin: input.notificationDelayMin,
+    };
+
+    if (existing) {
+      return db.patchPolicy.update({
+        where: { id: existing.id },
+        data: dataPayload,
+      });
+    }
+
+    return db.patchPolicy.create({
+      data: {
         tenantId,
         customerId,
-        name: input.name,
-        description: input.description,
-        isDefault: input.isDefault ?? (customerId === null),
-        criticalApproval: input.criticalApproval as any,
-        securityApproval: input.securityApproval as any,
-        importantApproval: input.importantApproval as any,
-        optionalApproval: input.optionalApproval as any,
-        driverApproval: input.driverApproval as any,
-        featureApproval: input.featureApproval as any,
-        maintenanceDays: input.maintenanceDays,
-        startTime: input.startTime,
-        endTime: input.endTime,
-        timezone: input.timezone,
-        allowReboot: input.allowReboot,
-        rebootDeadlineHours: input.rebootDeadlineHours,
-        notificationDelayMin: input.notificationDelayMin,
-      },
-      update: {
-        name: input.name,
-        description: input.description,
-        isDefault: input.isDefault,
-        criticalApproval: input.criticalApproval as any,
-        securityApproval: input.securityApproval as any,
-        importantApproval: input.importantApproval as any,
-        optionalApproval: input.optionalApproval as any,
-        driverApproval: input.driverApproval as any,
-        featureApproval: input.featureApproval as any,
-        maintenanceDays: input.maintenanceDays,
-        startTime: input.startTime,
-        endTime: input.endTime,
-        timezone: input.timezone,
-        allowReboot: input.allowReboot,
-        rebootDeadlineHours: input.rebootDeadlineHours,
-        notificationDelayMin: input.notificationDelayMin,
+        ...dataPayload,
       },
     });
   }
