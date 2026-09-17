@@ -63,7 +63,7 @@ export function getClientRuntimeScript(): string {
     function renderAgentVersionBadge(d, compact) {
       const tag = getAgentVersionTag(d);
       const clean = tag.replace(/^v/, '');
-      const isLatest = clean.startsWith('1.1');
+      const isLatest = clean.startsWith('1.2');
       if (compact) {
         if (isLatest) {
           return '<span class="code-badge" style="font-size: 10px; margin-left: 6px; padding: 1px 6px; color: #34d399; border-color: rgba(52,211,153,0.35); background: rgba(52,211,153,0.1);" title="Agente actualizado a la última versión (' + tag + ')">' + tag + '</span>';

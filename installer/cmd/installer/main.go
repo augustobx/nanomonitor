@@ -26,9 +26,20 @@ var (
 	shell32  = windows.NewLazySystemDLL("shell32.dll")
 	kernel32 = windows.NewLazySystemDLL("kernel32.dll")
 
-	messageBox   = user32.NewProc("MessageBoxW")
-	shellExecute = shell32.NewProc("ShellExecuteW")
+	messageBox       = user32.NewProc("MessageBoxW")
+	shellExecute     = shell32.NewProc("ShellExecuteW")
+	getConsoleWindow = kernel32.NewProc("GetConsoleWindow")
+	showWindow       = user32.NewProc("ShowWindow")
+	freeConsole      = kernel32.NewProc("FreeConsole")
 )
+
+func detachAndHideConsole() {
+	hwnd, _, _ := getConsoleWindow.Call()
+	if hwnd != 0 {
+		showWindow.Call(hwnd, 0) // SW_HIDE = 0
+	}
+	freeConsole.Call()
+}
 
 const (
 	MB_OK              = 0x00000000
@@ -71,6 +82,10 @@ func main() {
 				*keyFlag = strings.Trim(parts[1], `"' `)
 			}
 		}
+	}
+
+	if !*silentFlag {
+		detachAndHideConsole()
 	}
 
 	// Ensure elevation (Administrator)
@@ -260,7 +275,7 @@ func doInstall(token, apiURL string, silent bool) {
 	pTray, _ := windows.UTF16PtrFromString(trayDest)
 	pDir, _ := windows.UTF16PtrFromString(DefaultInstallDir)
 	pOp, _ := windows.UTF16PtrFromString("open")
-	shellExecute.Call(0, uintptr(unsafe.Pointer(pOp)), uintptr(unsafe.Pointer(pTray)), 0, uintptr(unsafe.Pointer(pDir)), SW_SHOWNORMAL)
+	shellExecute.Call(0, uintptr(unsafe.Pointer(pOp)), uintptr(unsafe.Pointer(pTray)), 0, uintptr(unsafe.Pointer(pDir)), SW_HIDE)
 
 	// 10. Success notice
 	if !silent {
