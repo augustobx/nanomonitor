@@ -248,7 +248,7 @@ export function getClientRuntimeScript(): string {
       closeCreateCustomerModal();
       closeAlertDetailModal();
       closeThresholdModal();
-      closeAlertRulesModal();
+      closeActionOutputModal();
       const devDrawer = document.getElementById('deviceDrawer');
       if (devDrawer) devDrawer.classList.remove('active');
       openLoginModal();
