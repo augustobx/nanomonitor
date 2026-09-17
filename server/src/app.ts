@@ -14,6 +14,7 @@ import { customersRoutes } from './modules/customers/customers.routes.js';
 import { sitesRoutes } from './modules/sites/sites.routes.js';
 import { devicesRoutes } from './modules/devices/devices.routes.js';
 import { alertsRoutes } from './modules/alerts/alerts.routes.js';
+import { deviceActionRoutes, agentActionRoutes } from './modules/actions/actions.routes.js';
 import { ensureDefaultAlertRules } from './modules/alerts/alert-rules.seed.js';
 import { authenticateUser } from './middleware/user-auth.js';
 import { db } from './lib/db.js';
@@ -404,15 +405,18 @@ export async function buildApp(): Promise<FastifyInstance> {
   // 1. Agent Direct Endpoints (compatibility with Go agent default paths)
   await app.register(enrollmentRoutes, { prefix: '/enrollment' });
   await app.register(agentRoutes, { prefix: '/agent' });
+  await app.register(agentActionRoutes, { prefix: '/agent/actions' });
 
   // 2. Versioned API Endpoints
   await app.register(authRoutes, { prefix: '/api/v1/auth' });
   await app.register(enrollmentRoutes, { prefix: '/api/v1/enrollment' });
   await app.register(agentRoutes, { prefix: '/api/v1/agent' });
+  await app.register(agentActionRoutes, { prefix: '/api/v1/agent/actions' });
   await app.register(tenantsRoutes, { prefix: '/api/v1/tenants' });
   await app.register(customersRoutes, { prefix: '/api/v1/customers' });
   await app.register(sitesRoutes, { prefix: '/api/v1/sites' });
   await app.register(devicesRoutes, { prefix: '/api/v1/devices' });
+  await app.register(deviceActionRoutes, { prefix: '/api/v1/devices' });
   await app.register(alertsRoutes, { prefix: '/api/v1/alerts' });
 
   // Centralized Error Handler

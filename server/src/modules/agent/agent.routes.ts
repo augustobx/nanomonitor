@@ -90,9 +90,25 @@ export const agentRoutes: FastifyPluginAsync = async (fastify: FastifyInstance) 
       },
     });
 
+    // Check for pending actions as heartbeat piggybacking fallback (non-blocking)
+    let pendingActionsCount = 0;
+    try {
+      pendingActionsCount = await db.remoteAction.count({
+        where: {
+          deviceId,
+          tenantId,
+          status: { in: ['PENDING', 'QUEUED'] },
+          expiresAt: { gt: new Date() },
+        },
+      });
+    } catch {
+      // Non-blocking fallback
+    }
+
     return reply.status(200).send({
       status: 'ok',
       serverTime: new Date().toISOString(),
+      pendingActions: pendingActionsCount,
     });
   });
 

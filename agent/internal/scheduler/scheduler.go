@@ -8,6 +8,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/nanolabs/nanomonitor/agent/internal/actions"
 	"github.com/nanolabs/nanomonitor/agent/internal/buffer"
 	"github.com/nanolabs/nanomonitor/agent/internal/collector"
 	"github.com/nanolabs/nanomonitor/agent/internal/config"
@@ -116,6 +117,14 @@ func (s *Scheduler) Run(ctx context.Context) error {
 			s.collectAndSendInventory(ctx)
 			s.collectAndSendSoftware(ctx)
 		})
+	}()
+
+	// 7. Outbound Remote Actions Poller Loop (continuous outbound long-polling)
+	actionPoller := actions.NewPoller(s.client, s.logger.With("component", "actions"), s)
+	s.wg.Add(1)
+	go func() {
+		defer s.wg.Done()
+		actionPoller.Run(ctx)
 	}()
 
 	// Wait for cancellation
@@ -637,3 +646,43 @@ func (s *Scheduler) flushOfflineBuffer(ctx context.Context) {
 
 	s.logger.Info("offline buffer drain completed", "items_flushed", flushedCount, "remaining", s.buffer.Len())
 }
+
+// ==================== SchedTriggerHook Implementation ====================
+
+// TriggerHeartbeat immediately executes heartbeat and security collection
+func (s *Scheduler) TriggerHeartbeat(ctx context.Context) {
+	s.logger.Info("remotely triggered: executing immediate heartbeat and security check")
+	s.collectAndSendHeartbeatAndSecurity(ctx)
+}
+
+// TriggerMetrics immediately executes performance metrics collection
+func (s *Scheduler) TriggerMetrics(ctx context.Context) {
+	s.logger.Info("remotely triggered: executing immediate metrics collection")
+	s.collectAndSendMetrics(ctx)
+}
+
+// TriggerSecurity immediately executes operational security posture collection
+func (s *Scheduler) TriggerSecurity(ctx context.Context) {
+	s.logger.Info("remotely triggered: executing immediate security posture check")
+	s.collectAndSendHeartbeatAndSecurity(ctx)
+}
+
+// TriggerInventory immediately executes general hardware and software inventory
+func (s *Scheduler) TriggerInventory(ctx context.Context) {
+	s.logger.Info("remotely triggered: executing immediate hardware and software inventory")
+	s.collectAndSendInventory(ctx)
+	s.collectAndSendSoftware(ctx)
+}
+
+// TriggerSmart immediately executes physical disk SMART health check
+func (s *Scheduler) TriggerSmart(ctx context.Context) {
+	s.logger.Info("remotely triggered: executing immediate SMART disk check")
+	s.collectAndSendSmart(ctx)
+}
+
+// TriggerWindowsUpdate immediately executes Windows Update inspection
+func (s *Scheduler) TriggerWindowsUpdate(ctx context.Context) {
+	s.logger.Info("remotely triggered: executing immediate Windows Update inspection")
+	s.collectAndSendWindowsUpdate(ctx)
+}
+

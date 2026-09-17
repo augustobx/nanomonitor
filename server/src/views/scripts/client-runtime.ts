@@ -1709,15 +1709,289 @@ export function getClientRuntimeScript(): string {
       }
     }
 
+    let cachedDeviceActions = [];
+    let actionsAutoRefreshTimer = null;
+
     function switchDeviceSubTab(tab) {
-      const tabs = ['resumen', 'rendimiento', 'hardware', 'discos', 'red', 'seguridad', 'software', 'eventos', 'alertas', 'agente'];
+      const tabs = ['resumen', 'rendimiento', 'hardware', 'discos', 'red', 'seguridad', 'software', 'eventos', 'alertas', 'agente', 'acciones'];
       tabs.forEach(function(t) {
         const btn = document.getElementById('dTab' + t.charAt(0).toUpperCase() + t.slice(1));
         const view = document.getElementById('dView' + t.charAt(0).toUpperCase() + t.slice(1));
         if (btn) btn.classList.toggle('active', t === tab);
         if (view) view.style.display = (t === tab) ? 'flex' : 'none';
       });
+      if (tab === 'acciones') {
+        loadCurrentDeviceActions();
+      } else {
+        stopActionsAutoRefresh();
+      }
     }
+
+    function stopActionsAutoRefresh() {
+      if (actionsAutoRefreshTimer) {
+        clearTimeout(actionsAutoRefreshTimer);
+        actionsAutoRefreshTimer = null;
+      }
+    }
+
+    async function loadCurrentDeviceActions() {
+      if (!selectedDeviceId) return;
+      const tbody = document.getElementById('dActionsTableBody');
+      const token = localStorage.getItem('nl_token');
+      if (!token) return;
+
+      try {
+        const res = await fetch('/api/v1/devices/' + selectedDeviceId + '/actions?limit=50', {
+          headers: { 'Authorization': 'Bearer ' + token }
+        });
+        if (!res.ok) {
+          if (tbody) tbody.innerHTML = '<tr><td colspan="7" style="text-align: center; color: #ef4444; padding: 24px;">Error al cargar acciones</td></tr>';
+          return;
+        }
+        const json = await res.json();
+        const actions = (json && json.data) || [];
+        cachedDeviceActions = actions;
+
+        const countBadge = document.getElementById('dCountAcciones');
+        if (countBadge) countBadge.textContent = actions.length;
+
+        if (!tbody) return;
+
+        if (actions.length === 0) {
+          tbody.innerHTML = '<tr><td colspan="7" style="text-align: center; color: var(--text-muted); padding: 32px;">No se han ejecutado acciones remotas en este equipo aún.</td></tr>';
+          stopActionsAutoRefresh();
+          return;
+        }
+
+        tbody.innerHTML = actions.map(function(act) {
+          let statusBadge = '';
+          switch (act.status) {
+            case 'PENDING':
+              statusBadge = '<span class="status-pill status-warning">⏳ PENDIENTE</span>';
+              break;
+            case 'QUEUED':
+              statusBadge = '<span class="status-pill status-info">📥 EN COLA</span>';
+              break;
+            case 'DELIVERED':
+              statusBadge = '<span class="status-pill status-info">📦 ENTREGADA</span>';
+              break;
+            case 'RUNNING':
+              statusBadge = '<span class="status-pill" style="background: rgba(56, 189, 248, 0.2); color: #38bdf8;">⚙️ EJECUTANDO</span>';
+              break;
+            case 'SUCCESS':
+              statusBadge = '<span class="status-pill status-online">✅ EXITOSA</span>';
+              break;
+            case 'FAILED':
+              statusBadge = '<span class="status-pill status-danger">❌ FALLIDA</span>';
+              break;
+            case 'EXPIRED':
+              statusBadge = '<span class="status-pill status-offline">⏱️ EXPIRADA</span>';
+              break;
+            case 'CANCELLED':
+              statusBadge = '<span class="status-pill status-offline">🚫 CANCELADA</span>';
+              break;
+            default:
+              statusBadge = '<span class="status-pill status-offline">' + act.status + '</span>';
+          }
+
+          let durationStr = '-';
+          if (act.startedAt && act.finishedAt) {
+            const ms = new Date(act.finishedAt).getTime() - new Date(act.startedAt).getTime();
+            durationStr = ms < 1000 ? ms + 'ms' : (ms / 1000).toFixed(1) + 's';
+          } else if (act.finishedAt) {
+            durationStr = new Date(act.finishedAt).toLocaleTimeString();
+          } else if (act.status === 'RUNNING') {
+            durationStr = 'En curso...';
+          }
+
+          const requestedAtStr = act.requestedAt ? new Date(act.requestedAt).toLocaleString() : '-';
+          const exitCodeStr = act.exitCode !== null && act.exitCode !== undefined ? act.exitCode : '-';
+
+          let opsHtml = '<div style="display: flex; gap: 6px; justify-content: flex-end;">';
+          if (act.output || act.error) {
+            opsHtml += '<button class="btn btn-secondary btn-sm" onclick="showActionOutputModal(\\'' + act.id + '\\')">📋 Salida</button>';
+          }
+          if (act.status === 'PENDING' || act.status === 'QUEUED' || act.status === 'DELIVERED') {
+            opsHtml += '<button class="btn btn-sm" style="background: rgba(239, 68, 68, 0.15); color: #fca5a5; border: 1px solid rgba(239, 68, 68, 0.3);" onclick="cancelDeviceAction(\\'' + act.id + '\\')">Cancelar</button>';
+          }
+          opsHtml += '</div>';
+
+          return '<tr>' +
+            '<td><strong style="color: #fff;">' + formatActionTypeName(act.actionType) + '</strong>' +
+              (act.parameters && Object.keys(act.parameters).length > 0 ? '<div style="font-size: 11px; color: var(--text-secondary); font-family: monospace;">' + JSON.stringify(act.parameters) + '</div>' : '') +
+            '</td>' +
+            '<td>' + statusBadge + '</td>' +
+            '<td><span style="color: var(--text-secondary); font-size: 12px;">' + (act.requestedBy || 'Operador') + '</span></td>' +
+            '<td><span style="font-size: 12px; color: var(--text-muted);">' + requestedAtStr + '</span></td>' +
+            '<td><span style="font-size: 12px; color: #fff;">' + durationStr + '</span></td>' +
+            '<td><span class="code-badge">' + exitCodeStr + '</span></td>' +
+            '<td style="text-align: right;">' + opsHtml + '</td>' +
+          '</tr>';
+        }).join('');
+
+        // If any action is pending, queued, delivered or running, auto-refresh in 3s
+        const hasActiveActions = actions.some(function(a) {
+          return a.status === 'PENDING' || a.status === 'QUEUED' || a.status === 'DELIVERED' || a.status === 'RUNNING';
+        });
+
+        stopActionsAutoRefresh();
+        if (hasActiveActions) {
+          actionsAutoRefreshTimer = setTimeout(loadCurrentDeviceActions, 3000);
+        }
+      } catch (err) {
+        console.error('Failed to load device actions:', err);
+      }
+    }
+
+    function formatActionTypeName(type) {
+      switch (type) {
+        case 'REBOOT_DEVICE': return '🔄 Reiniciar Dispositivo';
+        case 'SHUTDOWN_DEVICE': return '🛑 Apagar Dispositivo';
+        case 'FORCE_HEARTBEAT': return '💓 Forzar Heartbeat';
+        case 'FORCE_METRICS': return '📈 Forzar Métricas';
+        case 'FORCE_SECURITY_SCAN': return '🛡️ Forzar Seguridad';
+        case 'FORCE_INVENTORY': return '📦 Forzar Inventario';
+        case 'FORCE_SMART_CHECK': return '💾 Forzar SMART';
+        case 'FORCE_WINDOWS_UPDATE': return '🪟 Forzar Windows Update';
+        case 'DEFENDER_UPDATE_SIGNATURES': return '📥 Actualizar Defender';
+        case 'DEFENDER_QUICK_SCAN': return '⚡ Quick Scan Defender';
+        case 'DEFENDER_FULL_SCAN': return '🔍 Full Scan Defender';
+        case 'FLUSH_DNS': return '🧹 Flush DNS';
+        case 'RENEW_DHCP': return '🔄 Renew DHCP';
+        case 'WINDOWS_SFC_SCAN': return '📜 SFC /scannow';
+        case 'WINDOWS_DISM_CHECK': return '🩺 DISM CheckHealth';
+        case 'WINDOWS_CHKDSK_SCAN': return '🔍 CHKDSK Diagnóstico';
+        case 'QUERY_SERVICES': return '📋 Consultar Servicios';
+        case 'RESTART_SERVICE': return '🔧 Reiniciar Servicio';
+        default: return type;
+      }
+    }
+
+    async function triggerAction(actionType, parameters) {
+      if (!selectedDeviceId) return;
+      const token = localStorage.getItem('nl_token');
+      if (!token) { openLoginModal(); return; }
+
+      try {
+        showToast('Encolando acción ' + actionType + '...', 'info');
+        const res = await fetch('/api/v1/devices/' + selectedDeviceId + '/actions', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': 'Bearer ' + token
+          },
+          body: JSON.stringify({
+            actionType: actionType,
+            parameters: parameters || {},
+            expiresInMinutes: 15
+          })
+        });
+
+        const json = await res.json();
+        if (!res.ok) {
+          showToast(json.message || 'Error al ejecutar acción', 'error');
+          return;
+        }
+
+        showToast('Acción encolada: ' + actionType, 'success');
+        await loadCurrentDeviceActions();
+      } catch (err) {
+        showToast('Error de red al despachar acción', 'error');
+      }
+    }
+
+    function confirmAndTriggerAction(actionType, actionLabel, isDestructive) {
+      if (!selectedDevice) return;
+      if (isDestructive) {
+        const msg = '⚠️ ADVERTENCIA DE ACCIÓN CRÍTICA\n\n' +
+          'Acción: ' + actionLabel + '\n' +
+          'Dispositivo: ' + (selectedDevice.hostname || selectedDeviceId) + '\n\n' +
+          'Esta operación afectará la operatividad del equipo de inmediato.\n' +
+          '¿Está completamente seguro de que desea proceder?';
+        if (!confirm(msg)) {
+          return;
+        }
+      }
+      triggerAction(actionType);
+    }
+
+    function triggerRestartSelectedService() {
+      const select = document.getElementById('actionServiceSelect');
+      const serviceName = select ? select.value : 'Spooler';
+      if (!confirm('¿Desea reiniciar el servicio Windows "' + serviceName + '" en el equipo ' + (selectedDevice ? selectedDevice.hostname : '') + '?')) {
+        return;
+      }
+      triggerAction('RESTART_SERVICE', { serviceName: serviceName });
+    }
+
+    async function cancelDeviceAction(actionId) {
+      if (!selectedDeviceId) return;
+      const token = localStorage.getItem('nl_token');
+      if (!token) return;
+
+      if (!confirm('¿Desea cancelar esta acción remota pendiente?')) return;
+
+      try {
+        const res = await fetch('/api/v1/devices/' + selectedDeviceId + '/actions/' + actionId + '/cancel', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': 'Bearer ' + token
+          },
+          body: JSON.stringify({ reason: 'Cancelado manualmente por el operador' })
+        });
+        if (res.ok) {
+          showToast('Acción cancelada con éxito');
+          await loadCurrentDeviceActions();
+        } else {
+          const json = await res.json();
+          showToast(json.message || 'Error al cancelar acción', 'error');
+        }
+      } catch (err) {
+        showToast('Error de red al cancelar', 'error');
+      }
+    }
+
+    function showActionOutputModal(actionId) {
+      const act = cachedDeviceActions.find(function(x) { return x.id === actionId; });
+      if (!act) return;
+
+      const modal = document.getElementById('modalActionOutput');
+      if (!modal) return;
+
+      setVal('modalActionTitle', 'Salida: ' + formatActionTypeName(act.actionType));
+      setVal('modalActionStatus', act.status);
+      setVal('modalActionExitCode', act.exitCode !== null && act.exitCode !== undefined ? act.exitCode : 'N/A');
+
+      let durationStr = '-';
+      if (act.startedAt && act.finishedAt) {
+        const ms = new Date(act.finishedAt).getTime() - new Date(act.startedAt).getTime();
+        durationStr = ms < 1000 ? ms + 'ms' : (ms / 1000).toFixed(1) + 's';
+      }
+      setVal('modalActionDuration', durationStr);
+
+      const consoleEl = document.getElementById('modalActionConsole');
+      if (consoleEl) {
+        consoleEl.textContent = act.output || '(Sin salida de consola registrada)';
+      }
+
+      const errorBox = document.getElementById('modalActionErrorBox');
+      const errorEl = document.getElementById('modalActionError');
+      if (act.error) {
+        if (errorBox) errorBox.style.display = 'flex';
+        if (errorEl) errorEl.textContent = act.error;
+      } else {
+        if (errorBox) errorBox.style.display = 'none';
+      }
+
+      modal.style.display = 'flex';
+    }
+
+    function closeActionOutputModal() {
+      const modal = document.getElementById('modalActionOutput');
+      if (modal) modal.style.display = 'none';
+    }
+
 
     function backFromDeviceWorkspace() {
       if (deviceWorkspaceOrigin === 'customer-detail' && currentActiveCustomerId) {
@@ -2914,6 +3188,13 @@ export function getClientRuntimeScript(): string {
     window.handleThresholdSubmit = handleThresholdSubmit;
     window.saveNotificationSettings = saveNotificationSettings;
     window.updatePollingInterval = updatePollingInterval;
+    window.triggerAction = triggerAction;
+    window.confirmAndTriggerAction = confirmAndTriggerAction;
+    window.triggerRestartSelectedService = triggerRestartSelectedService;
+    window.loadCurrentDeviceActions = loadCurrentDeviceActions;
+    window.cancelDeviceAction = cancelDeviceAction;
+    window.showActionOutputModal = showActionOutputModal;
+    window.closeActionOutputModal = closeActionOutputModal;
 
     // Keyboard Shortcuts (Ctrl+K, Esc)
     window.addEventListener('keydown', function(e) {
@@ -2926,6 +3207,7 @@ export function getClientRuntimeScript(): string {
         closeCreateCustomerModal();
         closeAlertDetailModal();
         closeThresholdModal();
+        closeActionOutputModal();
       }
     });
 

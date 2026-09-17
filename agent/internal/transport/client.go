@@ -105,6 +105,65 @@ func (c *Client) SendEvents(ctx context.Context, payload interface{}) (*Response
 	return c.sendAuthenticatedJSON(ctx, "POST", "/agent/events", payload)
 }
 
+// ActionItem represents an action received from the server
+type ActionItem struct {
+	ID          string                 `json:"id"`
+	ActionType  string                 `json:"actionType"`
+	Parameters  map[string]interface{} `json:"parameters"`
+	IssuedAt    string                 `json:"issuedAt"`
+	ExpiresAt   string                 `json:"expiresAt"`
+	RequestedBy string                 `json:"requestedBy"`
+}
+
+// PollActionsResponse is the API response for /agent/actions/poll
+type PollActionsResponse struct {
+	Status     string       `json:"status"`
+	Actions    []ActionItem `json:"actions"`
+	ServerTime string       `json:"serverTime"`
+}
+
+// ActionStatusReport is sent by the agent when updating status or reporting completion
+type ActionStatusReport struct {
+	Status     string                 `json:"status"`
+	StartedAt  string                 `json:"startedAt,omitempty"`
+	FinishedAt string                 `json:"finishedAt,omitempty"`
+	ExitCode   *int                   `json:"exitCode,omitempty"`
+	Output     string                 `json:"output,omitempty"`
+	Error      string                 `json:"error,omitempty"`
+	Result     map[string]interface{} `json:"result,omitempty"`
+}
+
+// PollActions queries the server for pending remote actions
+func (c *Client) PollActions(ctx context.Context, waitSeconds int) ([]ActionItem, error) {
+	path := fmt.Sprintf("/agent/actions/poll?wait=%d", waitSeconds*1000)
+	resp, err := c.sendAuthenticatedJSON(ctx, "POST", path, map[string]interface{}{})
+	if err != nil {
+		return nil, err
+	}
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("polling actions returned status: %d", resp.StatusCode)
+	}
+
+	var pollResp PollActionsResponse
+	if err := json.Unmarshal(resp.Body, &pollResp); err != nil {
+		return nil, fmt.Errorf("unmarshaling poll response: %w", err)
+	}
+	return pollResp.Actions, nil
+}
+
+// ReportActionStatus reports the status or completion of an action
+func (c *Client) ReportActionStatus(ctx context.Context, actionID string, report *ActionStatusReport) error {
+	path := fmt.Sprintf("/agent/actions/%s/status", actionID)
+	resp, err := c.sendAuthenticatedJSON(ctx, "POST", path, report)
+	if err != nil {
+		return err
+	}
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("reporting action status returned: %d", resp.StatusCode)
+	}
+	return nil
+}
+
 // Enroll sends an enrollment request (no agent auth, uses token auth)
 func (c *Client) Enroll(ctx context.Context, req *EnrollRequest) (*EnrollResponse, error) {
 	body, err := json.Marshal(req)

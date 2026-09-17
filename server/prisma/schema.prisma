@@ -92,6 +92,38 @@ enum NotificationStatus {
   FAILED
 }
 
+enum ActionType {
+  REBOOT_DEVICE
+  SHUTDOWN_DEVICE
+  FORCE_HEARTBEAT
+  FORCE_METRICS
+  FORCE_SECURITY_SCAN
+  FORCE_INVENTORY
+  FORCE_SMART_CHECK
+  FORCE_WINDOWS_UPDATE
+  DEFENDER_UPDATE_SIGNATURES
+  DEFENDER_QUICK_SCAN
+  DEFENDER_FULL_SCAN
+  FLUSH_DNS
+  RENEW_DHCP
+  WINDOWS_SFC_SCAN
+  WINDOWS_DISM_CHECK
+  WINDOWS_CHKDSK_SCAN
+  QUERY_SERVICES
+  RESTART_SERVICE
+}
+
+enum ActionStatus {
+  PENDING
+  QUEUED
+  DELIVERED
+  RUNNING
+  SUCCESS
+  FAILED
+  EXPIRED
+  CANCELLED
+}
+
 model Tenant {
   id           String       @id @default(uuid()) @db.Uuid
   name         String
@@ -114,6 +146,7 @@ model Tenant {
   alerts           Alert[]
   incidents        Incident[]
   notifications    Notification[]
+  remoteActions    RemoteAction[]
 
   @@map("tenants")
 }
@@ -138,6 +171,7 @@ model Customer {
   alerts           Alert[]
   alertRules       AlertRule[]
   incidents        Incident[]
+  remoteActions    RemoteAction[]
 
   @@unique([tenantId, code])
   @@index([tenantId])
@@ -203,6 +237,7 @@ model Device {
   incidents          Incident[]
   healthScores       HealthScore[]
   enrolledViaTokens  EnrollmentToken[]   @relation("UsedByDevice")
+  remoteActions      RemoteAction[]
 
   @@index([tenantId, customerId])
   @@index([tenantId, status])
@@ -543,6 +578,7 @@ model User {
   assignedIncidents   Incident[]     @relation("AssignedIncidents")
   incidentNotes       IncidentNote[]
   notifications       Notification[]
+  requestedActions    RemoteAction[]
 
   @@unique([tenantId, email])
   @@index([tenantId])
@@ -623,3 +659,40 @@ model AgentUpdate {
 
   @@map("agent_updates")
 }
+
+model RemoteAction {
+  id            String       @id @default(uuid()) @db.Uuid
+  tenantId      String       @db.Uuid
+  customerId    String       @db.Uuid
+  deviceId      String       @db.Uuid
+  actionType    ActionType
+  parameters    Json?
+  status        ActionStatus @default(PENDING)
+  requestedById String?      @db.Uuid
+  requestedBy   String
+  requestedAt   DateTime     @default(now())
+  expiresAt     DateTime
+  deliveredAt   DateTime?
+  startedAt     DateTime?
+  finishedAt    DateTime?
+  exitCode      Int?
+  output        String?      @db.Text
+  error         String?      @db.Text
+  result        Json?
+  source        String       @default("DASHBOARD")
+  auditMetadata Json?
+  createdAt     DateTime     @default(now())
+  updatedAt     DateTime     @updatedAt
+
+  tenant          Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  customer        Customer @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  device          Device   @relation(fields: [deviceId], references: [id], onDelete: Cascade)
+  requestedByUser User?    @relation(fields: [requestedById], references: [id], onDelete: SetNull)
+
+  @@index([tenantId, deviceId, status])
+  @@index([tenantId, status])
+  @@index([deviceId, createdAt(sort: Desc)])
+  @@index([expiresAt])
+  @@map("remote_actions")
+}
+

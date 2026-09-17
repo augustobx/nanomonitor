@@ -67,3 +67,99 @@ export function requireRole(allowedRoles: UserRole[]) {
     }
   };
 }
+
+export type ActionPermission =
+  | 'VIEW_DEVICE'
+  | 'RUN_SAFE_ACTION'
+  | 'RUN_SECURITY_ACTION'
+  | 'RUN_SYSTEM_ACTION'
+  | 'RUN_REBOOT'
+  | 'ADMIN_ACTIONS';
+
+export const ROLE_PERMISSIONS: Record<UserRole, ActionPermission[]> = {
+  SUPER_ADMIN: [
+    'VIEW_DEVICE',
+    'RUN_SAFE_ACTION',
+    'RUN_SECURITY_ACTION',
+    'RUN_SYSTEM_ACTION',
+    'RUN_REBOOT',
+    'ADMIN_ACTIONS',
+  ],
+  ADMIN: [
+    'VIEW_DEVICE',
+    'RUN_SAFE_ACTION',
+    'RUN_SECURITY_ACTION',
+    'RUN_SYSTEM_ACTION',
+    'RUN_REBOOT',
+    'ADMIN_ACTIONS',
+  ],
+  TECHNICIAN: [
+    'VIEW_DEVICE',
+    'RUN_SAFE_ACTION',
+    'RUN_SECURITY_ACTION',
+    'RUN_SYSTEM_ACTION',
+  ],
+  VIEWER: ['VIEW_DEVICE'],
+  CLIENT: ['VIEW_DEVICE'],
+};
+
+export function hasPermission(role: UserRole, permission: ActionPermission): boolean {
+  return ROLE_PERMISSIONS[role]?.includes(permission) ?? false;
+}
+
+export function getRequiredPermissionForAction(actionType: string): ActionPermission {
+  switch (actionType) {
+    case 'REBOOT_DEVICE':
+    case 'SHUTDOWN_DEVICE':
+      return 'RUN_REBOOT';
+
+    case 'DEFENDER_UPDATE_SIGNATURES':
+    case 'DEFENDER_QUICK_SCAN':
+    case 'DEFENDER_FULL_SCAN':
+      return 'RUN_SECURITY_ACTION';
+
+    case 'WINDOWS_SFC_SCAN':
+    case 'WINDOWS_DISM_CHECK':
+    case 'WINDOWS_CHKDSK_SCAN':
+    case 'RESTART_SERVICE':
+      return 'RUN_SYSTEM_ACTION';
+
+    case 'FORCE_HEARTBEAT':
+    case 'FORCE_METRICS':
+    case 'FORCE_SECURITY_SCAN':
+    case 'FORCE_INVENTORY':
+    case 'FORCE_SMART_CHECK':
+    case 'FORCE_WINDOWS_UPDATE':
+    case 'FLUSH_DNS':
+    case 'RENEW_DHCP':
+    case 'QUERY_SERVICES':
+    default:
+      return 'RUN_SAFE_ACTION';
+  }
+}
+
+export function requireActionPermission(permissionOrResolver: ActionPermission | ((req: FastifyRequest) => ActionPermission)) {
+  return async (request: FastifyRequest, reply: FastifyReply) => {
+    if (!request.user) {
+      return reply.status(401).send({
+        statusCode: 401,
+        error: 'Unauthorized',
+        message: 'Authentication required',
+      });
+    }
+
+    const permission =
+      typeof permissionOrResolver === 'function'
+        ? permissionOrResolver(request)
+        : permissionOrResolver;
+
+    if (!hasPermission(request.user.role, permission)) {
+      return reply.status(403).send({
+        statusCode: 403,
+        error: 'Forbidden',
+        message: `Insufficient permissions. Required permission: ${permission}`,
+      });
+    }
+  };
+}
+
