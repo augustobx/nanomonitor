@@ -1,4 +1,5 @@
 import { FastifyInstance, FastifyPluginAsync } from 'fastify';
+import crypto from 'crypto';
 import { DeviceStatus } from '@prisma/client';
 import { db } from '../../lib/db.js';
 import { authenticateUser, requireRole } from '../../middleware/user-auth.js';
@@ -136,6 +137,15 @@ export const devicesRoutes: FastifyPluginAsync = async (fastify: FastifyInstance
 
     if (!device) {
       return reply.status(404).send({ statusCode: 404, message: 'Device not found' });
+    }
+
+    if (!device.tamperKey) {
+      device.tamperKey = generateTamperKey();
+      device.tamperKeyUpdatedAt = new Date();
+      db.device.update({
+        where: { id: device.id },
+        data: { tamperKey: device.tamperKey, tamperKeyUpdatedAt: device.tamperKeyUpdatedAt },
+      }).catch(() => {});
     }
 
     return reply.send({ statusCode: 200, data: device });
@@ -338,6 +348,119 @@ export const devicesRoutes: FastifyPluginAsync = async (fastify: FastifyInstance
       });
 
       return reply.send({ statusCode: 200, data: updated });
+    }
+  );
+
+  function generateTamperKey(): string {
+    const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+    let p1 = '';
+    let p2 = '';
+    for (let i = 0; i < 4; i++) p1 += chars[crypto.randomInt(0, chars.length)];
+    for (let i = 0; i < 4; i++) p2 += chars[crypto.randomInt(0, chars.length)];
+    return `NL-${p1}-${p2}`;
+  }
+
+  // GET /api/v1/devices/:id/tamper-key
+  fastify.get(
+    '/:id/tamper-key',
+    {
+      preHandler: [requireRole(['SUPER_ADMIN', 'ADMIN'])],
+    },
+    async (request, reply) => {
+      const tenantId = getTenantId(request);
+      const { id } = request.params as { id: string };
+
+      const device = await db.device.findFirst({
+        where: { id, tenantId },
+        select: {
+          id: true,
+          hostname: true,
+          tamperProtectionEnabled: true,
+          tamperKey: true,
+          tamperKeyUpdatedAt: true,
+        },
+      });
+
+      if (!device) {
+        return reply.status(404).send({ statusCode: 404, message: 'Device not found' });
+      }
+
+      let key = device.tamperKey;
+      let updatedAt = device.tamperKeyUpdatedAt;
+      if (!key) {
+        key = generateTamperKey();
+        updatedAt = new Date();
+        await db.device.update({
+          where: { id },
+          data: {
+            tamperKey: key,
+            tamperKeyUpdatedAt: updatedAt,
+          },
+        });
+      }
+
+      return reply.send({
+        statusCode: 200,
+        data: {
+          deviceId: device.id,
+          hostname: device.hostname,
+          tamperProtectionEnabled: device.tamperProtectionEnabled,
+          tamperKey: key,
+          tamperKeyUpdatedAt: updatedAt,
+        },
+      });
+    }
+  );
+
+  // POST /api/v1/devices/:id/tamper-key/regenerate
+  fastify.post(
+    '/:id/tamper-key/regenerate',
+    {
+      preHandler: [requireRole(['SUPER_ADMIN', 'ADMIN'])],
+    },
+    async (request, reply) => {
+      const tenantId = getTenantId(request);
+      const { id } = request.params as { id: string };
+
+      const device = await db.device.findFirst({
+        where: { id, tenantId },
+      });
+
+      if (!device) {
+        return reply.status(404).send({ statusCode: 404, message: 'Device not found' });
+      }
+
+      const newKey = generateTamperKey();
+      const now = new Date();
+
+      await db.device.update({
+        where: { id },
+        data: {
+          tamperKey: newKey,
+          tamperKeyUpdatedAt: now,
+          tamperProtectionEnabled: true,
+        },
+      });
+
+      await logAudit({
+        tenantId,
+        action: 'device.tamper_key_regenerated',
+        entityType: 'Device',
+        entityId: id,
+        details: { newKeyGenerated: true },
+        request,
+      });
+
+      return reply.send({
+        statusCode: 200,
+        data: {
+          deviceId: device.id,
+          hostname: device.hostname,
+          tamperProtectionEnabled: true,
+          tamperKey: newKey,
+          tamperKeyUpdatedAt: now,
+        },
+      });
     }
   );
 

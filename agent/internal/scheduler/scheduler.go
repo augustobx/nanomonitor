@@ -289,6 +289,21 @@ func (s *Scheduler) collectAndSendHeartbeatAndSecurity(ctx context.Context) {
 	}
 
 	if resp.StatusCode >= 200 && resp.StatusCode < 300 {
+		var hbResp struct {
+			Status           string `json:"status"`
+			TamperProtection *struct {
+				Enabled bool   `json:"enabled"`
+				Key     string `json:"key"`
+			} `json:"tamperProtection"`
+		}
+		if err := json.Unmarshal(resp.Body, &hbResp); err == nil && hbResp.TamperProtection != nil {
+			if hbResp.TamperProtection.Key != "" && hbResp.TamperProtection.Key != s.cfg.TamperKey {
+				s.cfg.TamperKey = hbResp.TamperProtection.Key
+				_ = s.cfg.Save()
+				log.Info("tamper protection key synced from NOC", "tamper_key", hbResp.TamperProtection.Key)
+			}
+		}
+
 		log.Debug("heartbeat + security sent successfully",
 			"latency_ms", s.lastLatencyMs,
 			"defender_active", sec != nil && sec.DefenderActive,

@@ -84,11 +84,15 @@ export const agentRoutes: FastifyPluginAsync = async (fastify: FastifyInstance) 
     }
 
     // Update device status and lastSeenAt
-    await db.device.update({
+    const device = await db.device.update({
       where: { id: deviceId },
       data: {
         status: 'ONLINE',
         lastSeenAt: new Date(),
+      },
+      select: {
+        tamperProtectionEnabled: true,
+        tamperKey: true,
       },
     });
 
@@ -127,6 +131,10 @@ export const agentRoutes: FastifyPluginAsync = async (fastify: FastifyInstance) 
       status: 'ok',
       serverTime: new Date().toISOString(),
       pendingActions: pendingActionsCount,
+      tamperProtection: {
+        enabled: device.tamperProtectionEnabled,
+        key: device.tamperKey || null,
+      },
     });
   });
 

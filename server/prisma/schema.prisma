@@ -306,6 +306,9 @@ model Device {
   lastSeenAt   DateTime?
   rebootState  DeviceRebootState @default(NONE)
   rebootScheduledAt DateTime?
+  tamperProtectionEnabled Boolean @default(true)
+  tamperKey    String?
+  tamperKeyUpdatedAt DateTime?
   enrolledAt   DateTime     @default(now())
   createdAt    DateTime     @default(now())
   updatedAt    DateTime     @updatedAt

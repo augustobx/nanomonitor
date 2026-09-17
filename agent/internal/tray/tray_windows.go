@@ -1,6 +1,7 @@
 package tray
 
 import (
+	"encoding/json"
 	"fmt"
 	"math"
 	"os"
@@ -93,6 +94,7 @@ const (
 	SW_HIDE         = 0
 	MB_OK           = 0x00000000
 	MB_ICONINFO     = 0x00000040
+	MB_ICONWARNING  = 0x00000030
 )
 
 const (
@@ -163,9 +165,12 @@ type TrayApp struct {
 	cfg         *config.Config
 	hostname    string
 	serviceName string
-	hIcon       windows.Handle
-	greenIcon   windows.Handle
-	redIcon     windows.Handle
+	hIcon           windows.Handle
+	greenIcon       windows.Handle
+	redIcon         windows.Handle
+	amberIcon       windows.Handle
+	activeActionId  string
+	isActionRunning bool
 }
 
 var instance *TrayApp
@@ -200,6 +205,7 @@ func (app *TrayApp) Run() error {
 	// Create dynamic colored circle icons
 	app.greenIcon = createCircleIcon(16, 185, 129) // Emerald Green #10b981
 	app.redIcon = createCircleIcon(239, 68, 68)    // Crimson Red #ef4444
+	app.amberIcon = createCircleIcon(245, 158, 11) // Amber Maintenance #f59e0b
 
 	if app.isServiceRunning() {
 		app.hIcon = app.greenIcon
@@ -252,7 +258,17 @@ func (app *TrayApp) Run() error {
 	go func() {
 		for {
 			time.Sleep(15 * time.Second)
-			app.updateTooltip()
+			if !app.isActionRunning {
+				app.updateTooltip()
+			}
+		}
+	}()
+
+	// Periodic check for active maintenance actions
+	go func() {
+		for {
+			time.Sleep(1500 * time.Millisecond)
+			app.checkActiveActions()
 		}
 	}()
 
@@ -317,6 +333,79 @@ func (app *TrayApp) isServiceRunning() bool {
 		return false
 	}
 	return status.State == svc.Running
+}
+
+func (app *TrayApp) checkActiveActions() {
+	stateFile := `C:\ProgramData\NanoLabs\NanoMonitor\active_action.json`
+	data, err := os.ReadFile(stateFile)
+	if err != nil {
+		return
+	}
+
+	type actionState struct {
+		ActionID   string `json:"actionId"`
+		ActionType string `json:"actionType"`
+		Title      string `json:"title"`
+		Status     string `json:"status"`
+		StartedAt  string `json:"startedAt"`
+		FinishedAt string `json:"finishedAt"`
+		ExitCode   int    `json:"exitCode"`
+		Error      string `json:"error"`
+	}
+
+	var state actionState
+	if err := json.Unmarshal(data, &state); err != nil {
+		return
+	}
+
+	if state.Status == "RUNNING" {
+		if app.activeActionId != state.ActionID {
+			app.activeActionId = state.ActionID
+			app.isActionRunning = true
+
+			// Switch to Amber maintenance icon
+			app.nid.HIcon = app.amberIcon
+			tip := fmt.Sprintf("NanoLabs v%s: %s (⚙️ Mantenimiento en Curso)", version.Version, app.hostname)
+			if len(tip) > 120 {
+				tip = tip[:120]
+			}
+			copy(app.nid.SzTip[:], windows.StringToUTF16(tip))
+			app.nid.UFlags = NIF_TIP | NIF_ICON
+			shellNotifyIcon.Call(NIM_MODIFY, uintptr(unsafe.Pointer(&app.nid)))
+
+			// Native Windows Toast / Balloon Notification
+			app.ShowNotification("🛠️ NanoLabs Soporte Remoto", fmt.Sprintf("Mantenimiento en curso:\n%s", state.Title))
+		}
+	} else if state.Status == "COMPLETED" || state.Status == "FAILED" {
+		if app.isActionRunning && app.activeActionId == state.ActionID {
+			app.isActionRunning = false
+
+			if state.Status == "COMPLETED" {
+				app.ShowNotification("✓ NanoLabs Soporte Remoto", fmt.Sprintf("Tarea finalizada con éxito:\n%s", state.Title))
+			} else {
+				app.ShowNotification("⚠️ NanoLabs Soporte Remoto", fmt.Sprintf("Tarea finalizada con advertencias:\n%s", state.Title))
+			}
+
+			// Restore normal green icon and status
+			app.updateTooltip()
+		}
+	}
+}
+
+func (app *TrayApp) handleExit() {
+	// If Tamper Protection is enabled in config
+	if app.cfg != nil && app.cfg.TamperKey != "" {
+		pTitle, _ := windows.UTF16PtrFromString("Tamper Protection — NanoLabs Control Center")
+		pText, _ := windows.UTF16PtrFromString(
+			"Acceso Denegado: La aplicación de bandeja está protegida contra cierre no autorizado.\n\n" +
+				"Para desinstalar o cerrar el agente en este equipo, debe solicitar la Clave de Desbloqueo al Administrador del NOC desde el portal web.",
+		)
+		messageBox.Call(uintptr(app.hwnd), uintptr(unsafe.Pointer(pText)), uintptr(unsafe.Pointer(pTitle)), uintptr(MB_OK|MB_ICONWARNING))
+		return
+	}
+
+	destroyWindow.Call(uintptr(app.hwnd))
+	postQuitMessage.Call(0)
 }
 
 func (app *TrayApp) showContextMenu() {
@@ -412,8 +501,7 @@ func wndProc(hWnd windows.HWND, msg uint32, wParam, lParam uintptr) uintptr {
 		case IDM_ABOUT:
 			instance.handleAbout()
 		case IDM_EXIT:
-			destroyWindow.Call(uintptr(instance.hwnd))
-			postQuitMessage.Call(0)
+			instance.handleExit()
 		}
 		return 0
 

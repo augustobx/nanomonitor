@@ -1759,6 +1759,7 @@ export function getClientRuntimeScript(): string {
     async function openDeviceWorkspace(deviceId) {
       selectedDeviceId = deviceId;
       deviceWorkspaceOrigin = currentActiveView;
+      resetDeviceTamperKeyView();
       const d = (currentDevices || []).find(function(x) { return x.id === deviceId; });
       if (!d) {
         showToast('Equipo no encontrado en la memoria local', 'error');
@@ -2812,6 +2813,20 @@ export function getClientRuntimeScript(): string {
       }).join('');
     }
 
+    let isTamperKeyRevealed = false;
+    let currentDeviceTamperKey = null;
+
+    function resetDeviceTamperKeyView() {
+      isTamperKeyRevealed = false;
+      currentDeviceTamperKey = null;
+      const disp = document.getElementById('dTamperKeyDisplay');
+      if (disp) disp.innerText = '••••-••••-••••';
+      const btn = document.getElementById('btnRevealTamperKey');
+      if (btn) btn.innerHTML = '👁️ Revelar Clave';
+      const updatedText = document.getElementById('dTamperKeyUpdatedText');
+      if (updatedText) updatedText.innerText = '';
+    }
+
     function renderDeviceAgentSubtab(d) {
       const g = document.getElementById('dAgentMetaGrid');
       if (!g) return;
@@ -2842,6 +2857,27 @@ export function getClientRuntimeScript(): string {
           html += '<option value="' + c.id + '"' + (isCurrent ? ' selected' : '') + '>' + c.name + ' (' + c.code + ')' + (isCurrent ? ' (Actual)' : '') + '</option>';
         });
         sel.innerHTML = html;
+      }
+
+      // Tamper Protection Status Card
+      const badge = document.getElementById('dTamperProtectionBadge');
+      if (badge) {
+        const enabled = d.tamperProtectionEnabled !== false;
+        badge.innerText = enabled ? '● PROTEGIDO' : '○ DESACTIVADO';
+        badge.style.background = enabled ? 'rgba(16, 185, 129, 0.15)' : 'rgba(239, 68, 68, 0.15)';
+        badge.style.color = enabled ? '#34d399' : '#f87171';
+        badge.style.border = enabled ? '1px solid rgba(16, 185, 129, 0.3)' : '1px solid rgba(239, 68, 68, 0.3)';
+      }
+      if (d.tamperKey) {
+        currentDeviceTamperKey = d.tamperKey;
+      }
+      const updatedText = document.getElementById('dTamperKeyUpdatedText');
+      if (updatedText) {
+        if (d.tamperKeyUpdatedAt) {
+          updatedText.innerText = '(Últ. cambio: ' + new Date(d.tamperKeyUpdatedAt).toLocaleDateString('es-AR') + ')';
+        } else {
+          updatedText.innerText = '';
+        }
       }
     }
 
@@ -2885,6 +2921,115 @@ export function getClientRuntimeScript(): string {
       }).catch(function() {
         prompt('Diagnóstico JSON:', str);
       });
+    }
+
+    async function fetchDeviceTamperKey(deviceId) {
+      const token = localStorage.getItem('nl_token');
+      if (!token) return null;
+      try {
+        const res = await fetch('/api/v1/devices/' + deviceId + '/tamper-key', {
+          headers: { 'Authorization': 'Bearer ' + token }
+        });
+        if (!res.ok) return null;
+        const json = await res.json();
+        if (json && json.data && json.data.tamperKey) {
+          return json.data.tamperKey;
+        }
+      } catch (err) {
+        console.error('Error fetching tamper key:', err);
+      }
+      return null;
+    }
+
+    async function toggleDeviceTamperKey() {
+      if (!selectedDevice) return;
+      const disp = document.getElementById('dTamperKeyDisplay');
+      const btn = document.getElementById('btnRevealTamperKey');
+      if (!disp || !btn) return;
+
+      if (isTamperKeyRevealed) {
+        disp.innerText = '••••-••••-••••';
+        btn.innerHTML = '👁️ Revelar Clave';
+        isTamperKeyRevealed = false;
+      } else {
+        if (!currentDeviceTamperKey) {
+          btn.disabled = true;
+          btn.innerText = 'Cargando...';
+          const key = await fetchDeviceTamperKey(selectedDevice.id);
+          btn.disabled = false;
+          if (key) {
+            currentDeviceTamperKey = key;
+          } else {
+            showToast('No se pudo obtener la clave de protección', 'error');
+            btn.innerHTML = '👁️ Revelar Clave';
+            return;
+          }
+        }
+        disp.innerText = currentDeviceTamperKey;
+        btn.innerHTML = '🙈 Ocultar Clave';
+        isTamperKeyRevealed = true;
+      }
+    }
+
+    async function copyDeviceTamperKey() {
+      if (!selectedDevice) return;
+      let key = currentDeviceTamperKey;
+      if (!key) {
+        key = await fetchDeviceTamperKey(selectedDevice.id);
+        if (key) currentDeviceTamperKey = key;
+      }
+      if (!key) {
+        showToast('No se pudo obtener la clave para copiar', 'error');
+        return;
+      }
+      navigator.clipboard.writeText(key).then(function() {
+        showToast('🔑 Clave de Desbloqueo copiada (' + key + ')');
+      }).catch(function() {
+        prompt('Clave de Desbloqueo:', key);
+      });
+    }
+
+    async function confirmRegenerateTamperKey() {
+      if (!selectedDevice) return;
+      const confirmMsg = '¿Estás seguro de regenerar la Clave de Desbloqueo para este equipo?\n\n' +
+        '⚠️ La clave actual quedará invalidada de inmediato y el agente en la máquina se actualizará en el próximo heartbeat.\n' +
+        'Cualquier intento de desinstalación con la clave anterior será rechazado.';
+      if (!confirm(confirmMsg)) return;
+
+      const token = localStorage.getItem('nl_token');
+      if (!token) {
+        showToast('Inicia sesión para regenerar claves', 'warning');
+        openLoginModal();
+        return;
+      }
+
+      try {
+        const res = await fetch('/api/v1/devices/' + selectedDevice.id + '/tamper-key/regenerate', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + token }
+        });
+        if (res.ok) {
+          const json = await res.json();
+          const newKey = json.data && json.data.tamperKey;
+          if (newKey) {
+            currentDeviceTamperKey = newKey;
+            isTamperKeyRevealed = true;
+            const disp = document.getElementById('dTamperKeyDisplay');
+            if (disp) disp.innerText = newKey;
+            const btn = document.getElementById('btnRevealTamperKey');
+            if (btn) btn.innerHTML = '🙈 Ocultar Clave';
+            const updatedText = document.getElementById('dTamperKeyUpdatedText');
+            if (updatedText) updatedText.innerText = '(Actualizada recién)';
+            showToast('✅ Nueva clave de desbloqueo generada: ' + newKey);
+          } else {
+            showToast('Clave regenerada correctamente');
+          }
+        } else {
+          showToast('Error al regenerar clave de protección', 'error');
+        }
+      } catch (err) {
+        showToast('Error de conexión al regenerar clave', 'error');
+      }
     }
 
     function openRemoteActionsFromNav() {
@@ -3563,6 +3708,9 @@ export function getClientRuntimeScript(): string {
     window.exportCurrentDeviceSoftwareCsv = exportCurrentDeviceSoftwareCsv;
     window.handleMoveDevice = handleMoveDevice;
     window.copyDeviceDiagnostic = copyDeviceDiagnostic;
+    window.toggleDeviceTamperKey = toggleDeviceTamperKey;
+    window.copyDeviceTamperKey = copyDeviceTamperKey;
+    window.confirmRegenerateTamperKey = confirmRegenerateTamperKey;
     window.switchAgentsTab = switchAgentsTab;
     window.renderAgentsList = renderAgentsList;
     window.filterAgentsByCustomer = filterAgentsByCustomer;

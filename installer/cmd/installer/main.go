@@ -50,12 +50,13 @@ func main() {
 	var (
 		tokenFlag     = flag.String("token", "", "Token de enrolamiento del cliente")
 		apiURLFlag    = flag.String("api-url", "https://monitor.nanolabs.com.ar", "URL del servidor central")
+		keyFlag       = flag.String("key", "", "Clave de desbloqueo de Tamper Protection")
 		silentFlag    = flag.Bool("silent", false, "Modo silencioso / desatendido")
 		uninstallFlag = flag.Bool("uninstall", false, "Desinstalar NanoLabs Monitor")
 	)
 	flag.Parse()
 
-	// Check for /silent or /VERYSILENT in raw args (Inno Setup / standard Windows installer compatibility)
+	// Check for /silent, /uninstall, or -key in raw args
 	for _, arg := range os.Args[1:] {
 		lower := strings.ToLower(arg)
 		if lower == "/silent" || lower == "/verysilent" || lower == "-s" || lower == "/s" {
@@ -63,6 +64,12 @@ func main() {
 		}
 		if lower == "/uninstall" || lower == "-u" {
 			*uninstallFlag = true
+		}
+		if strings.HasPrefix(lower, "-key=") || strings.HasPrefix(lower, "/key=") {
+			parts := strings.SplitN(arg, "=", 2)
+			if len(parts) == 2 {
+				*keyFlag = strings.Trim(parts[1], `"' `)
+			}
 		}
 	}
 
@@ -78,7 +85,7 @@ func main() {
 	}
 
 	if *uninstallFlag {
-		doUninstall(*silentFlag)
+		doUninstall(*keyFlag, *silentFlag)
 		os.Exit(0)
 	}
 
@@ -241,6 +248,9 @@ func doInstall(token, apiURL string, silent bool) {
 		k.Close()
 	}
 
+	// 7b. Configure Windows Service auto-restart watchdog on crash or taskkill
+	_ = exec.Command("sc.exe", "failure", ServiceName, "reset=", "0", "actions=", "restart/1000/restart/2000/restart/5000").Run()
+
 	// 8. Start Windows Service
 	_ = exec.Command("sc.exe", "start", ServiceName).Run()
 
@@ -254,7 +264,7 @@ func doInstall(token, apiURL string, silent bool) {
 	if !silent {
 		promptDialog("NanoLabs Monitor",
 			"¡Instalación completada exitosamente!\n\n"+
-				"• El servicio de monitoreo está en ejecución continua.\n"+
+				"• El servicio de monitoreo está en ejecución continua con auto-recuperación activa.\n"+
 				"• El icono de estado se encuentra activo en la bandeja del sistema (junto al reloj).\n"+
 				"• El equipo comenzará a reportar telemetría al NOC.",
 			MB_OK|MB_ICONINFORMATION)
@@ -262,7 +272,46 @@ func doInstall(token, apiURL string, silent bool) {
 	os.Exit(0)
 }
 
-func doUninstall(silent bool) {
+func readConfigTamperKey(path string) string {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return ""
+	}
+	lines := strings.Split(string(data), "\n")
+	for _, line := range lines {
+		line = strings.TrimSpace(line)
+		if strings.HasPrefix(line, "tamperKey:") {
+			parts := strings.SplitN(line, ":", 2)
+			if len(parts) == 2 {
+				val := strings.TrimSpace(parts[1])
+				return strings.Trim(val, `"' `)
+			}
+		}
+	}
+	return ""
+}
+
+func doUninstall(key string, silent bool) {
+	// Check if Tamper Protection is enabled in config.yaml
+	configPath := filepath.Join(DefaultDataDir, "config.yaml")
+	storedKey := readConfigTamperKey(configPath)
+
+	if storedKey != "" {
+		// Tamper Protection is ACTIVE!
+		if key == "" && !silent {
+			psScript := `Add-Type -AssemblyName Microsoft.VisualBasic; [Microsoft.VisualBasic.Interaction]::InputBox('Este equipo cuenta con Protección Anti-Sabotaje (Tamper Protection).' + [char]10 + [char]10 + 'Ingrese la Clave de Desbloqueo provista en el portal NanoLabs:', 'Desinstalación Protegida — NanoLabs', '')`
+			cmd := exec.Command("powershell.exe", "-NoProfile", "-NonInteractive", "-Command", psScript)
+			if out, err := cmd.Output(); err == nil {
+				key = strings.TrimSpace(string(out))
+			}
+		}
+
+		if strings.TrimSpace(key) != storedKey {
+			showError("Acceso Denegado: Clave de desbloqueo incorrecta o ausente.\n\nLa desinstalación ha sido cancelada por Tamper Protection. Solicite la clave de autorización al administrador del NOC en el portal web.", silent)
+			os.Exit(1)
+		}
+	}
+
 	if !silent {
 		res := promptDialog("NanoLabs Monitor — Desinstalación",
 			"¿Está seguro de que desea desinstalar completamente NanoLabs Monitor de este equipo?",

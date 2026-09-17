@@ -421,6 +421,51 @@ export function getDeviceDetailViewHtml(): string {
             </div>
           </div>
         </div>
+
+        <!-- Tamper Protection & Service Watchdog Card -->
+        <div class="section-card" style="border: 1px solid rgba(239, 68, 68, 0.3); background: linear-gradient(180deg, rgba(239, 68, 68, 0.05) 0%, rgba(15, 23, 42, 0.5) 100%);">
+          <div class="section-header" style="display: flex; justify-content: space-between; align-items: center;">
+            <div class="section-title">
+              <span style="color: #f87171; display: flex; align-items: center; gap: 8px;">
+                🛡️ Protección contra Manipulación (Tamper Protection)
+              </span>
+            </div>
+            <span class="status-pill" id="dTamperProtectionBadge" style="background: rgba(16, 185, 129, 0.15); color: #34d399; border: 1px solid rgba(16, 185, 129, 0.3);">
+              ● PROTEGIDO
+            </span>
+          </div>
+          <div class="section-body" style="display: flex; flex-direction: column; gap: 14px;">
+            <div style="font-size: 13px; color: var(--text-secondary); line-height: 1.5;">
+              Impide que usuarios con privilegios de Administrador local o malware desinstalen el servicio de Windows o cierren el agente en la bandeja del sistema sin autorización previa del portal NOC. El servicio de Windows cuenta además con política de auto-reinicio inmediato ante terminación forzada (<code style="color: #38bdf8;">sc failure</code>).
+            </div>
+            <div style="display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 12px; background: var(--bg-surface-subtle); padding: 14px 18px; border-radius: var(--radius-sm); border: 1px solid var(--border-subtle);">
+              <div>
+                <div style="font-size: 11px; font-weight: 700; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.5px;">Clave de Desbloqueo / Desinstalación</div>
+                <div style="display: flex; align-items: center; gap: 10px; margin-top: 4px;">
+                  <span style="font-family: monospace; font-size: 16px; font-weight: 800; color: #38bdf8; letter-spacing: 1px;" id="dTamperKeyDisplay">
+                    ••••-••••-••••
+                  </span>
+                  <span id="dTamperKeyUpdatedText" style="font-size: 11px; color: var(--text-muted);"></span>
+                </div>
+              </div>
+              <div style="display: flex; gap: 8px; flex-wrap: wrap;">
+                <button class="btn btn-secondary btn-sm" id="btnRevealTamperKey" onclick="toggleDeviceTamperKey()" title="Mostrar u ocultar clave de desbloqueo">
+                  👁️ Revelar Clave
+                </button>
+                <button class="btn btn-secondary btn-sm" onclick="copyDeviceTamperKey()" title="Copiar clave al portapapeles">
+                  📋 Copiar
+                </button>
+                <button class="btn btn-secondary btn-sm" style="color: #f87171;" onclick="confirmRegenerateTamperKey()" title="Generar una nueva clave de protección invalidando la anterior">
+                  🔄 Regenerar Clave
+                </button>
+              </div>
+            </div>
+            <div style="font-size: 12px; color: var(--text-muted); line-height: 1.4; background: rgba(37, 99, 235, 0.08); border: 1px solid rgba(37, 99, 235, 0.2); padding: 10px 14px; border-radius: var(--radius-sm);">
+              💡 <strong>Instrucciones para Técnicos:</strong> Para desinstalar en la PC del cliente, ejecute en PowerShell como Administrador:<br/>
+              <code style="color: #93c5fd; font-family: monospace;">NanoMonitor-Setup.exe -uninstall -key="&lt;CLAVE&gt;"</code> o ejecute el desinstalador con doble clic e ingrese la clave cuando Windows la solicite.
+            </div>
+          </div>
+        </div>
       </div>
 
       <!-- SUBTAB 11: ACCIONES REMOTAS -->

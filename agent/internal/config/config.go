@@ -35,6 +35,9 @@ type Config struct {
 	// This field is only used during initial enrollment
 	AgentSecret string `yaml:"agentSecret,omitempty"`
 
+	// Tamper Protection key
+	TamperKey string `yaml:"tamperKey,omitempty"`
+
 	// Intervals (in seconds)
 	HeartbeatInterval     int `yaml:"heartbeatInterval"`
 	SecurityInterval      int `yaml:"securityInterval"`

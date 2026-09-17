@@ -118,8 +118,14 @@ func (p *Poller) processAction(ctx context.Context, action *transport.ActionItem
 		p.logger.Warn("failed to report RUNNING status to server", "error", err)
 	}
 
+	// Publish action start to local IPC state file for nanotray notifications
+	_ = PublishActionStart(action)
+
 	// 2. Execute local action
 	result := ExecuteAction(ctx, action, p.hook)
+
+	// Publish action end to local IPC state file
+	_ = PublishActionEnd(action.ID, action.ActionType, result.ExitCode, result.Error)
 
 	// 3. Report final outcome
 	finishedAt := time.Now().UTC().Format(time.RFC3339)
