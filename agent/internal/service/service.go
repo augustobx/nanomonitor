@@ -136,6 +136,7 @@ func Install(execPath string) error {
 		{Type: mgr.ServiceRestart, Delay: 60 * time.Second},
 	}, 86400) // Reset failure count after 24 hours
 	if err != nil {
+		_ = s.Delete()
 		return fmt.Errorf("setting recovery actions: %w", err)
 	}
 
