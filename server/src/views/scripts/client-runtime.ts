@@ -1903,10 +1903,10 @@ export function getClientRuntimeScript(): string {
     function confirmAndTriggerAction(actionType, actionLabel, isDestructive) {
       if (!selectedDevice) return;
       if (isDestructive) {
-        const msg = '⚠️ ADVERTENCIA DE ACCIÓN CRÍTICA\n\n' +
-          'Acción: ' + actionLabel + '\n' +
-          'Dispositivo: ' + (selectedDevice.hostname || selectedDeviceId) + '\n\n' +
-          'Esta operación afectará la operatividad del equipo de inmediato.\n' +
+        const msg = '⚠️ ADVERTENCIA DE ACCIÓN CRÍTICA\\n\\n' +
+          'Acción: ' + actionLabel + '\\n' +
+          'Dispositivo: ' + (selectedDevice.hostname || selectedDeviceId) + '\\n\\n' +
+          'Esta operación afectará la operatividad del equipo de inmediato.\\n' +
           '¿Está completamente seguro de que desea proceder?';
         if (!confirm(msg)) {
           return;
