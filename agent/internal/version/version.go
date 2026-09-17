@@ -12,8 +12,6 @@ var (
 
 // Info returns a formatted version string
 func Info() string {
-	if Commit != "unknown" && BuildDate != "unknown" {
-		return Version + " (" + Commit + ", " + BuildDate + ")"
-	}
-	return "v" + Version
+	return "v" + Version + " (commit: " + Commit + ", built: " + BuildDate + ")"
 }
+

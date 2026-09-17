@@ -1,0 +1,95 @@
+import { z } from 'zod';
+
+export const PATCH_CATEGORIES = [
+  'CRITICAL',
+  'SECURITY',
+  'IMPORTANT',
+  'OPTIONAL',
+  'DRIVER',
+  'FEATURE_UPDATE',
+  'OTHER',
+] as const;
+
+export const PATCH_SEVERITIES = [
+  'CRITICAL',
+  'IMPORTANT',
+  'MODERATE',
+  'LOW',
+  'UNSPECIFIED',
+] as const;
+
+export const PATCH_APPROVAL_RULES = ['AUTO', 'MANUAL', 'IGNORE'] as const;
+
+export const PATCH_STATUSES = [
+  'MISSING',
+  'PENDING_DOWNLOAD',
+  'DOWNLOADED',
+  'INSTALLING',
+  'INSTALLED',
+  'FAILED',
+  'SUPERSEDED',
+] as const;
+
+export type PatchCategory = (typeof PATCH_CATEGORIES)[number];
+export type PatchSeverity = (typeof PATCH_SEVERITIES)[number];
+export type PatchApprovalRule = (typeof PATCH_APPROVAL_RULES)[number];
+export type PatchStatus = (typeof PATCH_STATUSES)[number];
+
+export const upsertPatchPolicySchema = z.object({
+  customerId: z.string().uuid().nullable().optional(),
+  name: z.string().min(2).max(100),
+  description: z.string().max(500).optional(),
+  isDefault: z.boolean().optional().default(false),
+  criticalApproval: z.enum(PATCH_APPROVAL_RULES).default('AUTO'),
+  securityApproval: z.enum(PATCH_APPROVAL_RULES).default('AUTO'),
+  importantApproval: z.enum(PATCH_APPROVAL_RULES).default('MANUAL'),
+  optionalApproval: z.enum(PATCH_APPROVAL_RULES).default('IGNORE'),
+  driverApproval: z.enum(PATCH_APPROVAL_RULES).default('MANUAL'),
+  featureApproval: z.enum(PATCH_APPROVAL_RULES).default('MANUAL'),
+  maintenanceDays: z.array(z.string()).default(['Sunday']),
+  startTime: z.string().regex(/^([01]\d|2[0-3]):([0-5]\d)$/).default('02:00'),
+  endTime: z.string().regex(/^([01]\d|2[0-3]):([0-5]\d)$/).default('05:00'),
+  timezone: z.string().default('America/Argentina/Buenos_Aires'),
+  allowReboot: z.boolean().default(false),
+  rebootDeadlineHours: z.number().int().min(1).max(168).default(24),
+  notificationDelayMin: z.number().int().min(1).max(120).default(15),
+});
+
+export type UpsertPatchPolicyInput = z.infer<typeof upsertPatchPolicySchema>;
+
+export const patchItemReportSchema = z.object({
+  kbArticleId: z.string().min(2).max(50),
+  title: z.string().min(1).max(500),
+  description: z.string().max(2000).optional(),
+  category: z.enum(PATCH_CATEGORIES).default('OTHER'),
+  severity: z.enum(PATCH_SEVERITIES).default('UNSPECIFIED'),
+  status: z.enum(PATCH_STATUSES).default('MISSING'),
+  sizeBytes: z.number().int().nonnegative().nullable().optional(),
+  publishedAt: z.string().datetime().nullable().optional(),
+  installedAt: z.string().datetime().nullable().optional(),
+  requiresReboot: z.boolean().default(false),
+});
+
+export const reportDevicePatchesSchema = z.object({
+  patches: z.array(patchItemReportSchema),
+  rebootPending: z.boolean().default(false),
+  rebootReason: z.string().optional(),
+  scannedAt: z.string().datetime().optional(),
+});
+
+export type ReportDevicePatchesInput = z.infer<typeof reportDevicePatchesSchema>;
+
+export const installPatchesRequestSchema = z.object({
+  mode: z.enum(['SELECTED_KBS', 'CRITICAL_ONLY', 'SECURITY_ONLY', 'ALL_APPROVED']).default('SELECTED_KBS'),
+  kbArticleIds: z.array(z.string().min(2)).optional().default([]),
+  allowReboot: z.boolean().optional().default(false),
+});
+
+export type InstallPatchesRequestInput = z.infer<typeof installPatchesRequestSchema>;
+
+export const scheduleRebootRequestSchema = z.object({
+  delayMinutes: z.number().int().min(1).max(1440).default(15),
+  message: z.string().max(255).optional().default('NanoLabs Control Center: Reinicio programado para aplicar actualizaciones de seguridad.'),
+});
+
+export type ScheduleRebootRequestInput = z.infer<typeof scheduleRebootRequestSchema>;

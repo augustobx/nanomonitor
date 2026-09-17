@@ -75,6 +75,9 @@ export function getDeviceDetailViewHtml(): string {
           <button class="subnav-tab-btn" id="dTabAcciones" onclick="switchDeviceSubTab('acciones')">
             🚀 Acciones Remotas (<span id="dCountAcciones">0</span>)
           </button>
+          <button class="subnav-tab-btn" id="dTabParches" onclick="switchDeviceSubTab('parches')">
+            🛡️ Parches (<span id="dCountParches">0</span>)
+          </button>
         </div>
       </div>
 
@@ -548,6 +551,112 @@ export function getDeviceDetailViewHtml(): string {
                 <tr>
                   <td colspan="7" style="text-align: center; color: var(--text-muted); padding: 24px;">
                     Cargando historial de acciones...
+                  </td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+
+      </div>
+
+      <!-- SUBTAB 12: PARCHES & WINDOWS UPDATE -->
+      <div id="dViewParches" style="display: none; flex-direction: column; gap: 20px;">
+        
+        <!-- Reboot Alert Banner (if pending reboot) -->
+        <div id="dPatchRebootAlertBanner" style="display: none; background: rgba(59, 130, 246, 0.12); border: 1px solid rgba(59, 130, 246, 0.3); border-radius: var(--radius-md); padding: 14px 20px; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 12px;">
+          <div style="display: flex; align-items: center; gap: 12px;">
+            <span style="font-size: 24px;">🔄</span>
+            <div>
+              <div style="font-size: 14px; font-weight: 700; color: #fff;">Reinicio del Sistema Requerido</div>
+              <div style="font-size: 12px; color: var(--text-secondary);" id="dPatchRebootReasonText">
+                Se completó la instalación de actualizaciones y se requiere reiniciar el equipo para aplicar los cambios.
+              </div>
+            </div>
+          </div>
+          <button class="btn btn-primary btn-sm" onclick="openScheduleRebootModalForCurrentDevice()">
+            🔄 Programar Reinicio
+          </button>
+        </div>
+
+        <!-- 4 KPI cards for device patches -->
+        <div class="kpi-grid">
+          <div class="kpi-card">
+            <div class="kpi-title"><span>Parches Pendientes</span><span>📦</span></div>
+            <div class="kpi-number" id="dPatchKpiPending" style="color: var(--color-warning);">0</div>
+            <div class="kpi-desc">Esperando aprobación o instalación</div>
+          </div>
+          <div class="kpi-card">
+            <div class="kpi-title"><span>Críticos & Seguridad</span><span>🚨</span></div>
+            <div class="kpi-number" id="dPatchKpiCritical" style="color: var(--color-danger);">0</div>
+            <div class="kpi-desc">Prioridad máxima</div>
+          </div>
+          <div class="kpi-card">
+            <div class="kpi-title"><span>Instalados</span><span>✅</span></div>
+            <div class="kpi-number" id="dPatchKpiInstalled" style="color: var(--color-success);">0</div>
+            <div class="kpi-desc">Aplicados en este equipo</div>
+          </div>
+          <div class="kpi-card">
+            <div class="kpi-title"><span>Estado de Reinicio</span><span>🔄</span></div>
+            <div class="kpi-number" id="dPatchKpiRebootState" style="font-size: 18px; line-height: 28px;">AL DÍA</div>
+            <div class="kpi-desc" id="dPatchKpiRebootDesc">Sin reinicios pendientes</div>
+          </div>
+        </div>
+
+        <!-- Actions Toolbar -->
+        <div class="section-card">
+          <div style="padding: 14px 20px; border-bottom: 1px solid var(--border-subtle); display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 12px;">
+            <div style="display: flex; align-items: center; gap: 10px; flex-wrap: wrap;">
+              <input type="text" id="dPatchSearchInput" class="form-input" placeholder="Filtrar por KB o título..." style="width: 220px; font-size: 13px;" oninput="filterDevicePatchesTable()" />
+              <select id="dPatchFilterCategory" class="form-select" style="width: 170px; font-size: 13px;" onchange="filterDevicePatchesTable()">
+                <option value="ALL">Todas las categorías</option>
+                <option value="CRITICAL">Críticos</option>
+                <option value="SECURITY">Seguridad</option>
+                <option value="IMPORTANT">Importantes</option>
+                <option value="DRIVER">Drivers</option>
+              </select>
+              <select id="dPatchFilterStatus" class="form-select" style="width: 170px; font-size: 13px;" onchange="filterDevicePatchesTable()">
+                <option value="ALL">Todos los estados</option>
+                <option value="MISSING">Pendientes de instalación</option>
+                <option value="INSTALLED">Instalados</option>
+                <option value="FAILED">Con error</option>
+              </select>
+            </div>
+
+            <div style="display: flex; align-items: center; gap: 8px; flex-wrap: wrap;">
+              <button class="btn btn-secondary btn-sm" onclick="triggerDevicePatchScan()" title="Ejecutar escaneo de actualizaciones en el equipo">
+                🔍 Escanear Ahora
+              </button>
+              <button class="btn btn-secondary btn-sm" onclick="triggerDeviceInstallAutoApproved()" title="Instalar todas las actualizaciones críticas y de seguridad aprobadas">
+                ⚡ Instalar Aprobados
+              </button>
+              <button class="btn btn-primary btn-sm" onclick="triggerDeviceInstallSelected()" id="btnInstallSelectedPatches" disabled title="Instalar parches seleccionados con checkbox">
+                📦 Instalar Seleccionados (<span id="dSelectedPatchesCount">0</span>)
+              </button>
+            </div>
+          </div>
+
+          <div class="table-container" style="max-height: 550px; overflow-y: auto;">
+            <table class="data-table">
+              <thead>
+                <tr>
+                  <th style="width: 38px; text-align: center;">
+                    <input type="checkbox" id="chkSelectAllPatches" onchange="toggleSelectAllDevicePatches(this.checked)" />
+                  </th>
+                  <th>Artículo KB</th>
+                  <th>Título de Actualización</th>
+                  <th>Categoría</th>
+                  <th>Severidad</th>
+                  <th>Tamaño</th>
+                  <th>Reinicio</th>
+                  <th>Estado</th>
+                  <th style="text-align: right;">Acciones</th>
+                </tr>
+              </thead>
+              <tbody id="dPatchesTableBody">
+                <tr>
+                  <td colspan="9" style="text-align: center; color: var(--text-secondary); padding: 32px;">
+                    Cargando parches del equipo...
                   </td>
                 </tr>
               </tbody>

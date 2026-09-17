@@ -261,6 +261,7 @@ export function getClientRuntimeScript(): string {
         'customer-detail': 'viewCustomerDetail',
         'devices': 'viewDevices',
         'device-detail': 'viewDeviceDetail',
+        'patches': 'viewPatches',
         'agents': 'viewAgents',
         'platform': 'viewPlatform',
         'settings': 'viewSettings'
@@ -273,6 +274,7 @@ export function getClientRuntimeScript(): string {
         'customer-detail': 'navItemCustomers',
         'devices': 'navItemDevices',
         'device-detail': 'navItemDevices',
+        'patches': 'navItemPatches',
         'agents': 'navItemAgents',
         'platform': 'navItemPlatform',
         'settings': 'navItemSettings'
@@ -309,6 +311,8 @@ export function getClientRuntimeScript(): string {
         renderCustomersTable();
       } else if (tab === 'devices') {
         renderFleetDevices();
+      } else if (tab === 'patches') {
+        renderPatchesView();
       } else if (tab === 'agents') {
         renderAgentsList();
         populateWizardCustomerSelect();
@@ -363,6 +367,10 @@ export function getClientRuntimeScript(): string {
         if (actions) {
           actions.innerHTML = '<button class="btn btn-secondary btn-sm" onclick="backFromDeviceWorkspace()">← Volver</button>';
         }
+      } else if (tab === 'patches') {
+        trail.innerHTML = '<span class="breadcrumb-link" onclick="switchNavTab(\\'dashboard\\')">NOC</span>' +
+          '<span class="breadcrumb-separator">/</span><span class="breadcrumb-active">Gestión de Parches</span>';
+        if (actions) actions.innerHTML = '<button class="btn btn-secondary btn-sm" onclick="loadPatchesCompliance(true)">🔄 Refrescar</button>';
       } else if (tab === 'agents') {
         trail.innerHTML = '<span class="breadcrumb-link" onclick="switchNavTab(\\'dashboard\\')">NOC</span>' +
           '<span class="breadcrumb-separator">/</span><span class="breadcrumb-active">Agentes & Enrolamiento</span>';
@@ -1716,7 +1724,7 @@ export function getClientRuntimeScript(): string {
     let actionsAutoRefreshTimer = null;
 
     function switchDeviceSubTab(tab) {
-      const tabs = ['resumen', 'rendimiento', 'hardware', 'discos', 'red', 'seguridad', 'software', 'eventos', 'alertas', 'agente', 'acciones'];
+      const tabs = ['resumen', 'rendimiento', 'hardware', 'discos', 'red', 'seguridad', 'software', 'eventos', 'alertas', 'agente', 'acciones', 'parches'];
       tabs.forEach(function(t) {
         const btn = document.getElementById('dTab' + t.charAt(0).toUpperCase() + t.slice(1));
         const view = document.getElementById('dView' + t.charAt(0).toUpperCase() + t.slice(1));
@@ -1727,6 +1735,9 @@ export function getClientRuntimeScript(): string {
         loadCurrentDeviceActions();
       } else {
         stopActionsAutoRefresh();
+      }
+      if (tab === 'parches') {
+        loadCurrentDevicePatches();
       }
     }
 
@@ -3237,6 +3248,786 @@ export function getClientRuntimeScript(): string {
     window.cancelDeviceAction = cancelDeviceAction;
     window.showActionOutputModal = showActionOutputModal;
     window.closeActionOutputModal = closeActionOutputModal;
+
+    // ==========================================
+    // FASE 2: GESTIÓN DE PARCHES & WINDOWS UPDATE
+    // ==========================================
+    let cachedFleetPatches = [];
+    let cachedPatchPolicies = [];
+    let cachedPatchHistory = [];
+    let cachedCurrentDevicePatches = [];
+    let selectedPatchKBs = new Set();
+    let currentPatchesSubTab = 'flota';
+
+    function switchPatchesSubTab(subTab) {
+      currentPatchesSubTab = subTab;
+      const tabs = ['flota', 'politicas', 'historial'];
+      tabs.forEach(function(t) {
+        const btn = document.getElementById('pTab' + t.charAt(0).toUpperCase() + t.slice(1));
+        const view = document.getElementById('pView' + t.charAt(0).toUpperCase() + t.slice(1));
+        if (btn) btn.classList.toggle('active', t === subTab);
+        if (view) view.style.display = (t === subTab) ? 'flex' : 'none';
+      });
+
+      if (subTab === 'flota') {
+        loadPatchesCompliance();
+      } else if (subTab === 'politicas') {
+        loadPatchPolicies();
+      } else if (subTab === 'historial') {
+        loadPatchHistory();
+      }
+    }
+
+    function renderPatchesView() {
+      switchPatchesSubTab('flota');
+    }
+
+    async function loadPatchesCompliance(force) {
+      const tbody = document.getElementById('pFleetTableBody');
+      const token = localStorage.getItem('nl_token');
+      if (!token) return;
+
+      try {
+        const res = await fetch('/api/v1/patches/compliance', {
+          headers: { 'Authorization': 'Bearer ' + token }
+        });
+        if (!res.ok) {
+          if (tbody) tbody.innerHTML = '<tr><td colspan="8" style="text-align: center; color: #ef4444; padding: 24px;">Error al cargar cumplimiento de parches</td></tr>';
+          return;
+        }
+        const json = await res.json();
+        const data = (json && json.data) || {};
+
+        // Update KPIs
+        const compliancePct = (data.complianceRate != null) ? Math.round(data.complianceRate) : 100;
+        const compEl = document.getElementById('kpiPatchCompliancePct');
+        if (compEl) {
+          compEl.textContent = compliancePct + '%';
+          compEl.style.color = compliancePct >= 90 ? 'var(--color-success)' : (compliancePct >= 70 ? 'var(--color-warning)' : 'var(--color-danger)');
+        }
+
+        setVal('kpiPatchDevicesUpToDate', (data.compliantDevices || 0) + ' / ' + (data.totalDevices || 0));
+        setVal('kpiPatchTotalMissing', data.totalMissingPatches || 0);
+        setVal('kpiPatchTotalCritical', data.totalCriticalOrSecurityMissing || 0);
+        setVal('kpiPatchRebootPending', data.totalPendingReboot || 0);
+        setVal('pCountDevices', (data.deviceBreakdown || []).length);
+
+        // Sidebar badge
+        const sbBadge = document.getElementById('sbPatchesBadge');
+        if (sbBadge) {
+          const countAlert = (data.totalCriticalOrSecurityMissing || 0) + (data.totalPendingReboot || 0);
+          if (countAlert > 0) {
+            sbBadge.style.display = 'inline-flex';
+            sbBadge.textContent = countAlert;
+          } else {
+            sbBadge.style.display = 'none';
+          }
+        }
+
+        cachedFleetPatches = data.deviceBreakdown || [];
+        renderPatchesFleetTable(cachedFleetPatches);
+
+        if (force) showToast('Cumplimiento de parches actualizado');
+      } catch (err) {
+        console.error('Error loading patch compliance:', err);
+      }
+    }
+
+    function renderPatchesFleetTable(devices) {
+      const tbody = document.getElementById('pFleetTableBody');
+      if (!tbody) return;
+
+      if (!devices || devices.length === 0) {
+        tbody.innerHTML = '<tr><td colspan="8" style="text-align: center; color: var(--text-secondary); padding: 32px;">No se encontraron equipos registrados.</td></tr>';
+        return;
+      }
+
+      let html = '';
+      devices.forEach(function(d) {
+        const isUpToDate = d.isCompliant;
+        const hasCritical = (d.missingCriticalOrSecurity || 0) > 0;
+        const needsReboot = d.rebootState === 'REBOOT_REQUIRED';
+        const isOnline = d.status === 'ONLINE';
+
+        let statusBadge = isUpToDate 
+          ? '<span class="badge badge-success">AL DÍA</span>' 
+          : '<span class="badge badge-warning">' + (d.missingCount || 0) + ' PENDIENTES</span>';
+
+        let critBadge = hasCritical
+          ? '<span class="badge badge-danger">🚨 ' + d.missingCriticalOrSecurity + ' CRÍTICOS</span>'
+          : '<span style="color: var(--text-muted); font-size: 12px;">0</span>';
+
+        let rebootBadge = needsReboot
+          ? '<span class="badge" style="background: rgba(239, 68, 68, 0.15); color: #ef4444; border: 1px solid rgba(239, 68, 68, 0.3);">⚠️ REQUERIDO</span>'
+          : '<span style="color: var(--text-muted); font-size: 12px;">OK</span>';
+
+        let lastScanText = d.lastScanAt ? new Date(d.lastScanAt).toLocaleString() : 'Sin escaneo';
+
+        html += '<tr>' +
+          '<td>' +
+            '<div style="display: flex; align-items: center; gap: 8px;">' +
+              '<span style="font-weight: 700; color: #fff; cursor: pointer;" onclick="openDeviceWorkspace(\\'' + d.deviceId + '\\'); switchDeviceSubTab(\\'parches\\');">' + (d.hostname || 'Equipo') + '</span>' +
+              '<span class="badge badge-info" style="font-size: 10px;">' + getAgentVersionTag(d) + '</span>' +
+            '</div>' +
+            '<div style="font-size: 11px; color: var(--text-secondary); margin-top: 2px;">' + (d.ipAddress || '-') + '</div>' +
+          '</td>' +
+          '<td>' +
+            '<div style="color: #fff; font-size: 13px;">' + (d.customerName || 'NanoLabs') + '</div>' +
+          '</td>' +
+          '<td>' +
+            '<span class="status-pill ' + (isOnline ? 'status-online' : 'status-offline') + '">' + (isOnline ? 'ONLINE' : 'OFFLINE') + '</span>' +
+          '</td>' +
+          '<td>' + statusBadge + '</td>' +
+          '<td>' + critBadge + '</td>' +
+          '<td>' + rebootBadge + '</td>' +
+          '<td style="font-size: 12px; color: var(--text-secondary);">' + lastScanText + '</td>' +
+          '<td style="text-align: right;">' +
+            '<div style="display: inline-flex; gap: 6px;">' +
+              '<button class="btn btn-secondary btn-sm" onclick="triggerDevicePatchScanById(\\'' + d.deviceId + '\\')" title="Escanear Windows Update">🔍 Escanear</button>' +
+              '<button class="btn btn-primary btn-sm" onclick="openDeviceWorkspace(\\'' + d.deviceId + '\\'); switchDeviceSubTab(\\'parches\\');" title="Ver catálogo de parches">📦 Ver Parches</button>' +
+            '</div>' +
+          '</td>' +
+        '</tr>';
+      });
+
+      tbody.innerHTML = html;
+    }
+
+    function filterPatchesFleetTable() {
+      const q = (document.getElementById('pSearchFleetInput')?.value || '').toLowerCase().trim();
+      const compliance = document.getElementById('pFilterComplianceSelect')?.value || 'ALL';
+
+      const filtered = (cachedFleetPatches || []).filter(function(d) {
+        const host = (d.hostname || '').toLowerCase();
+        const cust = (d.customerName || '').toLowerCase();
+        const ip = (d.ipAddress || '').toLowerCase();
+
+        const matchesQuery = !q || host.includes(q) || cust.includes(q) || ip.includes(q);
+        if (!matchesQuery) return false;
+
+        if (compliance === 'NEEDS_PATCHES') return (d.missingCount || 0) > 0;
+        if (compliance === 'CRITICAL') return (d.missingCriticalOrSecurity || 0) > 0;
+        if (compliance === 'REBOOT_REQUIRED') return d.rebootState === 'REBOOT_REQUIRED';
+        if (compliance === 'UP_TO_DATE') return d.isCompliant;
+        return true;
+      });
+
+      renderPatchesFleetTable(filtered);
+    }
+
+    async function triggerGlobalFleetPatchScan() {
+      const onlineDevices = (currentDevices || []).filter(function(d) { return d.status === 'ONLINE'; });
+      if (onlineDevices.length === 0) {
+        showToast('No hay equipos online para escanear en este momento', 'warning');
+        return;
+      }
+
+      showToast('Encolando escaneo de parches en ' + onlineDevices.length + ' equipos online...');
+      let count = 0;
+      for (const d of onlineDevices) {
+        try {
+          await triggerDevicePatchScanById(d.id, true);
+          count++;
+        } catch (e) {}
+      }
+      showToast('Escaneo iniciado en ' + count + ' equipos');
+    }
+
+    async function triggerDevicePatchScanById(deviceId, silent) {
+      const token = localStorage.getItem('nl_token');
+      if (!token) return;
+
+      try {
+        const res = await fetch('/api/v1/devices/' + deviceId + '/patches/scan', {
+          method: 'POST',
+          headers: { 'Authorization': 'Bearer ' + token, 'Content-Type': 'application/json' },
+          body: JSON.stringify({})
+        });
+        if (!res.ok) {
+          const err = await res.json();
+          if (!silent) showToast(err.message || 'Error al solicitar escaneo', 'error');
+          return;
+        }
+        if (!silent) showToast('Escaneo de parches encolado en el equipo');
+      } catch (e) {
+        if (!silent) showToast('Error de comunicación con el servidor', 'error');
+      }
+    }
+
+    async function loadPatchPolicies() {
+      const container = document.getElementById('pPoliciesContainer');
+      const token = localStorage.getItem('nl_token');
+      if (!token || !container) return;
+
+      try {
+        const res = await fetch('/api/v1/patches/policies', {
+          headers: { 'Authorization': 'Bearer ' + token }
+        });
+        if (!res.ok) {
+          container.innerHTML = '<div style="color: #ef4444; padding: 20px;">Error al cargar políticas de parcheo.</div>';
+          return;
+        }
+        const json = await res.json();
+        const policies = (json && json.data) || [];
+        cachedPatchPolicies = policies;
+        setVal('pCountPolicies', policies.length);
+
+        if (policies.length === 0) {
+          container.innerHTML = '<div style="text-align: center; color: var(--text-secondary); padding: 32px;">No hay políticas configuradas aún. Configure la política global predeterminada.</div>';
+          return;
+        }
+
+        let html = '<div style="display: grid; grid-template-columns: repeat(auto-fill, minmax(360px, 1fr)); gap: 16px;">';
+        policies.forEach(function(p) {
+          const isGlobal = !p.customerId;
+          const custName = p.customer ? p.customer.name : (isGlobal ? '🌐 Política Global Predeterminada' : 'Cliente Específico');
+
+          function ruleBadge(rule) {
+            if (rule === 'AUTO_APPROVE') return '<span class="badge badge-success">🟢 Auto</span>';
+            if (rule === 'MANUAL_APPROVE') return '<span class="badge badge-warning">🟡 Manual</span>';
+            return '<span class="badge badge-secondary">⚪ Ignorar</span>';
+          }
+
+          html += '<div class="section-card" style="padding: 16px; border: 1px solid var(--border-subtle); display: flex; flex-direction: column; gap: 12px;">' +
+            '<div style="display: flex; justify-content: space-between; align-items: flex-start;">' +
+              '<div>' +
+                '<h4 style="margin: 0; font-size: 15px; font-weight: 700; color: #fff;">' + custName + '</h4>' +
+                '<div style="font-size: 11px; color: var(--text-secondary); margin-top: 2px;">' + (isGlobal ? 'Aplica a toda la flota sin política específica' : 'Política dedicada por cliente') + '</div>' +
+              '</div>' +
+              '<span class="badge ' + (isGlobal ? 'badge-info' : 'badge-primary') + '">' + (isGlobal ? 'GLOBAL' : 'CLIENTE') + '</span>' +
+            '</div>' +
+
+            '<div style="display: grid; grid-template-columns: 1fr 1fr; gap: 8px; font-size: 12px; background: var(--bg-surface-subtle); padding: 10px; border-radius: var(--radius-sm);">' +
+              '<div>Críticos: ' + ruleBadge(p.criticalRule) + '</div>' +
+              '<div>Seguridad: ' + ruleBadge(p.securityRule) + '</div>' +
+              '<div>Importantes: ' + ruleBadge(p.importantRule) + '</div>' +
+              '<div>Drivers: ' + ruleBadge(p.driverRule) + '</div>' +
+              '<div style="grid-column: span 2;">Features: ' + ruleBadge(p.featureRule) + '</div>' +
+            '</div>' +
+
+            '<div style="font-size: 12px; color: var(--text-secondary); display: flex; flex-direction: column; gap: 4px;">' +
+              '<div>⏰ Ventana Cron: <code style="color: #60a5fa;">' + (p.maintenanceWindowCron || 'Sin programar') + '</code> (' + (p.maintenanceWindowDurationMins || 120) + ' min)</div>' +
+              '<div>🔄 Auto Reinicio: <strong style="color: ' + (p.autoReboot ? '#4ade80' : 'var(--text-muted)') + ';">' + (p.autoReboot ? 'Activado' : 'Desactivado (Manual)') + '</strong> (Gracia: ' + (p.rebootGracePeriodMins || 15) + 'm)</div>' +
+            '</div>' +
+
+            '<div style="margin-top: auto; display: flex; justify-content: flex-end; gap: 8px; border-top: 1px solid var(--border-subtle); padding-top: 10px;">' +
+              '<button class="btn btn-secondary btn-sm" onclick="openPatchPolicyModal(\\'' + (p.customerId || '') + '\\')">⚙️ Editar</button>' +
+            '</div>' +
+          '</div>';
+        });
+        html += '</div>';
+
+        container.innerHTML = html;
+      } catch (e) {
+        console.error('Error loading policies:', e);
+      }
+    }
+
+    function openPatchPolicyModal(customerId) {
+      const modal = document.getElementById('patchPolicyModal');
+      const errBox = document.getElementById('patchPolicyModalError');
+      if (errBox) errBox.style.display = 'none';
+
+      // Populate customer select
+      const select = document.getElementById('policyCustomerSelect');
+      if (select) {
+        let opts = '<option value="">🌐 Política Global Predeterminada (Toda la Empresa)</option>';
+        (currentCustomers || []).forEach(function(c) {
+          opts += '<option value="' + c.id + '">' + c.name + '</option>';
+        });
+        select.innerHTML = opts;
+        select.value = customerId || '';
+      }
+
+      // Find existing policy if available
+      const existing = (cachedPatchPolicies || []).find(function(p) {
+        if (!customerId) return !p.customerId;
+        return p.customerId === customerId;
+      });
+
+      if (existing) {
+        setVal('ruleCritical', existing.criticalRule || 'AUTO_APPROVE');
+        setVal('ruleSecurity', existing.securityRule || 'AUTO_APPROVE');
+        setVal('ruleImportant', existing.importantRule || 'MANUAL_APPROVE');
+        setVal('ruleDrivers', existing.driverRule || 'MANUAL_APPROVE');
+        setVal('ruleFeature', existing.featureRule || 'MANUAL_APPROVE');
+        const cronInput = document.getElementById('policyCron');
+        if (cronInput) cronInput.value = existing.maintenanceWindowCron || '0 3 * * 0';
+        const durInput = document.getElementById('policyDuration');
+        if (durInput) durInput.value = existing.maintenanceWindowDurationMins || 120;
+        const rebSelect = document.getElementById('policyAutoReboot');
+        if (rebSelect) rebSelect.value = String(!!existing.autoReboot);
+        const graceInput = document.getElementById('policyGracePeriod');
+        if (graceInput) graceInput.value = existing.rebootGracePeriodMins || 15;
+      } else {
+        const cronInput = document.getElementById('policyCron');
+        if (cronInput) cronInput.value = '0 3 * * 0';
+      }
+
+      if (modal) modal.classList.add('active');
+    }
+
+    function closePatchPolicyModal() {
+      const modal = document.getElementById('patchPolicyModal');
+      if (modal) modal.classList.remove('active');
+    }
+
+    async function savePatchPolicy(e) {
+      if (e) e.preventDefault();
+      const token = localStorage.getItem('nl_token');
+      if (!token) return;
+
+      const customerId = document.getElementById('policyCustomerSelect')?.value || null;
+      const criticalRule = document.getElementById('ruleCritical')?.value || 'AUTO_APPROVE';
+      const securityRule = document.getElementById('ruleSecurity')?.value || 'AUTO_APPROVE';
+      const importantRule = document.getElementById('ruleImportant')?.value || 'MANUAL_APPROVE';
+      const driverRule = document.getElementById('ruleDrivers')?.value || 'MANUAL_APPROVE';
+      const featureRule = document.getElementById('ruleFeature')?.value || 'MANUAL_APPROVE';
+      const maintenanceWindowCron = document.getElementById('policyCron')?.value || '0 3 * * 0';
+      const maintenanceWindowDurationMins = parseInt(document.getElementById('policyDuration')?.value || '120', 10);
+      const autoReboot = document.getElementById('policyAutoReboot')?.value === 'true';
+      const rebootGracePeriodMins = parseInt(document.getElementById('policyGracePeriod')?.value || '15', 10);
+
+      const errBox = document.getElementById('patchPolicyModalError');
+      if (errBox) errBox.style.display = 'none';
+
+      try {
+        const res = await fetch('/api/v1/patches/policies', {
+          method: 'POST',
+          headers: { 'Authorization': 'Bearer ' + token, 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            customerId: customerId,
+            criticalRule: criticalRule,
+            securityRule: securityRule,
+            importantRule: importantRule,
+            driverRule: driverRule,
+            featureRule: featureRule,
+            maintenanceWindowCron: maintenanceWindowCron,
+            maintenanceWindowDurationMins: maintenanceWindowDurationMins,
+            autoReboot: autoReboot,
+            rebootGracePeriodMins: rebootGracePeriodMins
+          })
+        });
+
+        if (!res.ok) {
+          const err = await res.json();
+          if (errBox) {
+            errBox.textContent = err.message || 'Error al guardar política';
+            errBox.style.display = 'block';
+          }
+          return;
+        }
+
+        closePatchPolicyModal();
+        showToast('Política de parches guardada exitosamente');
+        await loadPatchPolicies();
+      } catch (err) {
+        if (errBox) {
+          errBox.textContent = 'Error de conexión con el servidor';
+          errBox.style.display = 'block';
+        }
+      }
+    }
+
+    async function loadPatchHistory() {
+      const tbody = document.getElementById('pHistoryTableBody');
+      const token = localStorage.getItem('nl_token');
+      if (!token || !tbody) return;
+
+      try {
+        const res = await fetch('/api/v1/patches/history?limit=100', {
+          headers: { 'Authorization': 'Bearer ' + token }
+        });
+        if (!res.ok) {
+          tbody.innerHTML = '<tr><td colspan="8" style="text-align: center; color: #ef4444; padding: 24px;">Error al cargar historial</td></tr>';
+          return;
+        }
+        const json = await res.json();
+        const history = (json && json.data) || [];
+        cachedPatchHistory = history;
+
+        if (history.length === 0) {
+          tbody.innerHTML = '<tr><td colspan="8" style="text-align: center; color: var(--text-secondary); padding: 32px;">No se registran instalaciones de parches todavía.</td></tr>';
+          return;
+        }
+
+        let html = '';
+        history.forEach(function(h) {
+          const isSuccess = h.resultStatus === 'SUCCESS';
+          const resBadge = isSuccess
+            ? '<span class="badge badge-success">EXITOSA</span>'
+            : '<span class="badge badge-danger">FALLIDA</span>';
+
+          const devHost = h.device ? h.device.hostname : 'Dispositivo';
+          const appliedDate = h.appliedAt ? new Date(h.appliedAt).toLocaleString() : '-';
+
+          html += '<tr>' +
+            '<td style="font-size: 12px; color: var(--text-secondary);">' + appliedDate + '</td>' +
+            '<td style="font-weight: 600; color: #fff;">' + devHost + '</td>' +
+            '<td><code style="color: #60a5fa;">' + (h.kbArticleId || '-') + '</code></td>' +
+            '<td style="max-width: 260px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;" title="' + (h.title || '') + '">' + (h.title || '-') + '</td>' +
+            '<td>' + resBadge + '</td>' +
+            '<td>' + (h.rebootRequired ? '<span style="color: #ef4444;">Sí</span>' : '<span style="color: var(--text-muted);">No</span>') + '</td>' +
+            '<td style="font-size: 12px;">' + (h.technician ? h.technician.email : 'POLÍTICA_AUTO') + '</td>' +
+            '<td style="font-size: 11px; color: var(--text-secondary); max-width: 200px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">' + (h.details || ('Code ' + h.exitCode)) + '</td>' +
+          '</tr>';
+        });
+
+        tbody.innerHTML = html;
+      } catch (e) {
+        console.error('Error loading patch history:', e);
+      }
+    }
+
+    // ==========================================
+    // DEVICE DETAIL WORKSPACE: PARCHES SUBTAB
+    // ==========================================
+    async function loadCurrentDevicePatches() {
+      if (!selectedDeviceId) return;
+      const tbody = document.getElementById('dPatchesTableBody');
+      const token = localStorage.getItem('nl_token');
+      if (!token) return;
+
+      selectedPatchKBs.clear();
+      updateSelectedPatchesUI();
+
+      try {
+        const res = await fetch('/api/v1/devices/' + selectedDeviceId + '/patches', {
+          headers: { 'Authorization': 'Bearer ' + token }
+        });
+        if (!res.ok) {
+          if (tbody) tbody.innerHTML = '<tr><td colspan="9" style="text-align: center; color: #ef4444; padding: 24px;">Error al cargar parches del equipo</td></tr>';
+          return;
+        }
+        const json = await res.json();
+        const data = (json && json.data) || {};
+        const patches = data.patches || [];
+        cachedCurrentDevicePatches = patches;
+
+        // Counters & KPIs
+        const missing = patches.filter(function(p) { return p.status === 'MISSING' || p.status === 'DOWNLOADING'; });
+        const critical = missing.filter(function(p) { return p.category === 'CRITICAL' || p.category === 'SECURITY' || p.severity === 'CRITICAL' || p.severity === 'IMPORTANT'; });
+        const installed = patches.filter(function(p) { return p.status === 'INSTALLED'; });
+
+        setVal('dPatchKpiPending', missing.length);
+        setVal('dPatchKpiCritical', critical.length);
+        setVal('dPatchKpiInstalled', installed.length);
+        setVal('dCountParches', missing.length);
+
+        // Reboot banner & KPI
+        const devRebootState = data.device ? data.device.rebootState : 'NO_REBOOT_REQUIRED';
+        const rebootBanner = document.getElementById('dPatchRebootAlertBanner');
+        const rebootKpi = document.getElementById('dPatchKpiRebootState');
+        const rebootKpiDesc = document.getElementById('dPatchKpiRebootDesc');
+
+        if (devRebootState === 'REBOOT_REQUIRED') {
+          if (rebootBanner) rebootBanner.style.display = 'flex';
+          if (rebootKpi) {
+            rebootKpi.textContent = 'REQUERIDO';
+            rebootKpi.style.color = '#ef4444';
+          }
+          if (rebootKpiDesc) rebootKpiDesc.textContent = 'Reinicio pendiente por parches';
+        } else if (devRebootState === 'REBOOT_SCHEDULED') {
+          if (rebootBanner) rebootBanner.style.display = 'flex';
+          if (rebootKpi) {
+            rebootKpi.textContent = 'PROGRAMADO';
+            rebootKpi.style.color = '#60a5fa';
+          }
+          if (rebootKpiDesc) rebootKpiDesc.textContent = 'Reinicio ordenado en cola';
+        } else {
+          if (rebootBanner) rebootBanner.style.display = 'none';
+          if (rebootKpi) {
+            rebootKpi.textContent = 'AL DÍA';
+            rebootKpi.style.color = 'var(--color-success)';
+          }
+          if (rebootKpiDesc) rebootKpiDesc.textContent = 'Sin reinicios pendientes';
+        }
+
+        renderDevicePatchesTable(cachedCurrentDevicePatches);
+      } catch (e) {
+        console.error('Error loading device patches:', e);
+      }
+    }
+
+    function renderDevicePatchesTable(patches) {
+      const tbody = document.getElementById('dPatchesTableBody');
+      if (!tbody) return;
+
+      if (!patches || patches.length === 0) {
+        tbody.innerHTML = '<tr><td colspan="9" style="text-align: center; color: var(--text-secondary); padding: 32px;">No se encontraron actualizaciones en el inventario. Ejecute "Escanear Ahora" para consultar Windows Update.</td></tr>';
+        return;
+      }
+
+      function categoryBadge(cat) {
+        if (cat === 'CRITICAL') return '<span class="badge badge-danger">CRÍTICO</span>';
+        if (cat === 'SECURITY') return '<span class="badge badge-warning">SEGURIDAD</span>';
+        if (cat === 'IMPORTANT') return '<span class="badge badge-info">IMPORTANTE</span>';
+        if (cat === 'DRIVER') return '<span class="badge" style="background: #8b5cf6; color: #fff;">DRIVER</span>';
+        return '<span class="badge badge-secondary">' + (cat || 'OTRO') + '</span>';
+      }
+
+      function severityBadge(sev) {
+        if (sev === 'CRITICAL') return '<span style="color: #ef4444; font-weight: 700;">CRÍTICA</span>';
+        if (sev === 'IMPORTANT') return '<span style="color: #f59e0b; font-weight: 700;">IMPORTANTE</span>';
+        if (sev === 'MODERATE') return '<span style="color: #38bdf8;">MODERADA</span>';
+        return '<span style="color: var(--text-muted);">' + (sev || 'N/A') + '</span>';
+      }
+
+      function statusBadge(st) {
+        if (st === 'MISSING') return '<span class="badge badge-warning">PENDIENTE</span>';
+        if (st === 'INSTALLED') return '<span class="badge badge-success">INSTALADO</span>';
+        if (st === 'DOWNLOADING') return '<span class="badge badge-info">DESCARGANDO</span>';
+        if (st === 'FAILED') return '<span class="badge badge-danger">ERROR</span>';
+        if (st === 'PENDING_REBOOT') return '<span class="badge" style="background: #3b82f6; color: #fff;">REINICIO</span>';
+        return '<span class="badge badge-secondary">' + st + '</span>';
+      }
+
+      function formatBytes(bytes) {
+        if (!bytes || bytes <= 0) return '-';
+        const mb = bytes / (1024 * 1024);
+        if (mb >= 1024) return (mb / 1024).toFixed(1) + ' GB';
+        return Math.round(mb) + ' MB';
+      }
+
+      let html = '';
+      patches.forEach(function(p) {
+        const isMissing = p.status === 'MISSING';
+        const isChecked = selectedPatchKBs.has(p.kbArticleId);
+
+        html += '<tr>' +
+          '<td style="text-align: center;">' +
+            (isMissing ? '<input type="checkbox" onchange="toggleSelectPatchKB(\\'' + p.kbArticleId + '\\', this.checked)" ' + (isChecked ? 'checked' : '') + ' />' : '-') +
+          '</td>' +
+          '<td><code style="color: #60a5fa; font-weight: 700;">' + (p.kbArticleId || '-') + '</code></td>' +
+          '<td style="max-width: 320px;" title="' + (p.title || '') + '">' +
+            '<div style="font-weight: 600; color: #fff; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">' + (p.title || '-') + '</div>' +
+          '</td>' +
+          '<td>' + categoryBadge(p.category) + '</td>' +
+          '<td>' + severityBadge(p.severity) + '</td>' +
+          '<td style="font-size: 12px; color: var(--text-secondary);">' + formatBytes(p.sizeBytes) + '</td>' +
+          '<td style="text-align: center;">' + (p.requiresReboot ? '<span style="color: #ef4444; font-weight: 700;">Sí</span>' : '<span style="color: var(--text-muted);">No</span>') + '</td>' +
+          '<td>' + statusBadge(p.status) + '</td>' +
+          '<td style="text-align: right;">' +
+            (isMissing 
+              ? '<button class="btn btn-secondary btn-sm" onclick="triggerSinglePatchInstall(\\'' + p.kbArticleId + '\\')" title="Instalar esta actualización">Instalar</button>'
+              : '<span style="font-size: 11px; color: var(--text-muted);">Listo</span>') +
+          '</td>' +
+        '</tr>';
+      });
+
+      tbody.innerHTML = html;
+    }
+
+    function filterDevicePatchesTable() {
+      const q = (document.getElementById('dPatchSearchInput')?.value || '').toLowerCase().trim();
+      const cat = document.getElementById('dPatchFilterCategory')?.value || 'ALL';
+      const st = document.getElementById('dPatchFilterStatus')?.value || 'ALL';
+
+      const filtered = (cachedCurrentDevicePatches || []).filter(function(p) {
+        const kb = (p.kbArticleId || '').toLowerCase();
+        const title = (p.title || '').toLowerCase();
+        const matchesQuery = !q || kb.includes(q) || title.includes(q);
+        if (!matchesQuery) return false;
+
+        if (cat !== 'ALL' && p.category !== cat) return false;
+        if (st !== 'ALL' && p.status !== st) return false;
+
+        return true;
+      });
+
+      renderDevicePatchesTable(filtered);
+    }
+
+    function toggleSelectPatchKB(kb, isChecked) {
+      if (isChecked) {
+        selectedPatchKBs.add(kb);
+      } else {
+        selectedPatchKBs.delete(kb);
+      }
+      updateSelectedPatchesUI();
+    }
+
+    function toggleSelectAllDevicePatches(checked) {
+      const missing = (cachedCurrentDevicePatches || []).filter(function(p) { return p.status === 'MISSING'; });
+      if (checked) {
+        missing.forEach(function(p) { selectedPatchKBs.add(p.kbArticleId); });
+      } else {
+        selectedPatchKBs.clear();
+      }
+      updateSelectedPatchesUI();
+      renderDevicePatchesTable(cachedCurrentDevicePatches);
+    }
+
+    function updateSelectedPatchesUI() {
+      const count = selectedPatchKBs.size;
+      setVal('dSelectedPatchesCount', count);
+      const btn = document.getElementById('btnInstallSelectedPatches');
+      if (btn) btn.disabled = (count === 0);
+    }
+
+    async function triggerDevicePatchScan() {
+      if (!selectedDeviceId) return;
+      await triggerDevicePatchScanById(selectedDeviceId, false);
+      showToast('Escaneo iniciado en el equipo. Las actualizaciones se sincronizarán al finalizar.');
+    }
+
+    async function triggerDeviceInstallAutoApproved() {
+      if (!selectedDeviceId) return;
+      const token = localStorage.getItem('nl_token');
+      if (!token) return;
+
+      if (!confirm('¿Desea instalar todas las actualizaciones críticas y de seguridad pendientes según la política vigente?')) {
+        return;
+      }
+
+      try {
+        const res = await fetch('/api/v1/devices/' + selectedDeviceId + '/patches/install', {
+          method: 'POST',
+          headers: { 'Authorization': 'Bearer ' + token, 'Content-Type': 'application/json' },
+          body: JSON.stringify({ autoApproveOnly: true })
+        });
+        if (!res.ok) {
+          const err = await res.json();
+          showToast(err.message || 'Error al ordenar instalación', 'error');
+          return;
+        }
+        showToast('Orden de instalación de parches críticos encolada exitosamente');
+        switchDeviceSubTab('acciones');
+      } catch (e) {
+        showToast('Error de comunicación con el servidor', 'error');
+      }
+    }
+
+    async function triggerDeviceInstallSelected() {
+      if (!selectedDeviceId || selectedPatchKBs.size === 0) return;
+      const token = localStorage.getItem('nl_token');
+      if (!token) return;
+
+      const kbs = Array.from(selectedPatchKBs);
+      if (!confirm('¿Desea instalar ' + kbs.length + ' parches seleccionados en este equipo?')) {
+        return;
+      }
+
+      try {
+        const res = await fetch('/api/v1/devices/' + selectedDeviceId + '/patches/install', {
+          method: 'POST',
+          headers: { 'Authorization': 'Bearer ' + token, 'Content-Type': 'application/json' },
+          body: JSON.stringify({ kbArticleIds: kbs })
+        });
+        if (!res.ok) {
+          const err = await res.json();
+          showToast(err.message || 'Error al solicitar instalación', 'error');
+          return;
+        }
+        showToast('Instalación encolada para: ' + kbs.join(', '));
+        selectedPatchKBs.clear();
+        updateSelectedPatchesUI();
+        switchDeviceSubTab('acciones');
+      } catch (e) {
+        showToast('Error de comunicación con el servidor', 'error');
+      }
+    }
+
+    async function triggerSinglePatchInstall(kbArticleId) {
+      if (!selectedDeviceId || !kbArticleId) return;
+      const token = localStorage.getItem('nl_token');
+      if (!token) return;
+
+      try {
+        const res = await fetch('/api/v1/devices/' + selectedDeviceId + '/patches/install', {
+          method: 'POST',
+          headers: { 'Authorization': 'Bearer ' + token, 'Content-Type': 'application/json' },
+          body: JSON.stringify({ kbArticleIds: [kbArticleId] })
+        });
+        if (!res.ok) {
+          const err = await res.json();
+          showToast(err.message || 'Error al ordenar instalación de ' + kbArticleId, 'error');
+          return;
+        }
+        showToast('Instalación encolada para ' + kbArticleId);
+        switchDeviceSubTab('acciones');
+      } catch (e) {
+        showToast('Error de comunicación con el servidor', 'error');
+      }
+    }
+
+    function openScheduleRebootModalForCurrentDevice() {
+      if (!selectedDevice) return;
+      setVal('rebootModalHostname', selectedDevice.hostname || 'Equipo');
+      const errBox = document.getElementById('rebootModalError');
+      if (errBox) errBox.style.display = 'none';
+
+      const m = document.getElementById('scheduleRebootModal');
+      if (m) m.classList.add('active');
+    }
+
+    function closeScheduleRebootModal() {
+      const m = document.getElementById('scheduleRebootModal');
+      if (m) m.classList.remove('active');
+    }
+
+    async function submitScheduleReboot(e) {
+      if (e) e.preventDefault();
+      if (!selectedDeviceId) return;
+      const token = localStorage.getItem('nl_token');
+      if (!token) return;
+
+      const delayMins = parseInt(document.getElementById('rebootDelayMinutes')?.value || '5', 10);
+      const msg = document.getElementById('rebootMessage')?.value || 'Reinicio programado por NanoMonitor RMM';
+
+      const errBox = document.getElementById('rebootModalError');
+      if (errBox) errBox.style.display = 'none';
+
+      try {
+        const res = await fetch('/api/v1/devices/' + selectedDeviceId + '/patches/reboot', {
+          method: 'POST',
+          headers: { 'Authorization': 'Bearer ' + token, 'Content-Type': 'application/json' },
+          body: JSON.stringify({ delayMinutes: delayMins, message: msg })
+        });
+
+        if (!res.ok) {
+          const err = await res.json();
+          if (errBox) {
+            errBox.textContent = err.message || 'Error al programar reinicio';
+            errBox.style.display = 'block';
+          }
+          return;
+        }
+
+        closeScheduleRebootModal();
+        showToast('Reinicio programado en ' + delayMins + ' minutos');
+        switchDeviceSubTab('acciones');
+      } catch (err) {
+        if (errBox) {
+          errBox.textContent = 'Error de conexión con el servidor';
+          errBox.style.display = 'block';
+        }
+      }
+    }
+
+    // Export Phase 2 functions to window
+    window.switchPatchesSubTab = switchPatchesSubTab;
+    window.renderPatchesView = renderPatchesView;
+    window.loadPatchesCompliance = loadPatchesCompliance;
+    window.filterPatchesFleetTable = filterPatchesFleetTable;
+    window.triggerGlobalFleetPatchScan = triggerGlobalFleetPatchScan;
+    window.triggerDevicePatchScanById = triggerDevicePatchScanById;
+    window.loadPatchPolicies = loadPatchPolicies;
+    window.openPatchPolicyModal = openPatchPolicyModal;
+    window.closePatchPolicyModal = closePatchPolicyModal;
+    window.savePatchPolicy = savePatchPolicy;
+    window.loadPatchHistory = loadPatchHistory;
+    window.loadCurrentDevicePatches = loadCurrentDevicePatches;
+    window.filterDevicePatchesTable = filterDevicePatchesTable;
+    window.toggleSelectPatchKB = toggleSelectPatchKB;
+    window.toggleSelectAllDevicePatches = toggleSelectAllDevicePatches;
+    window.triggerDevicePatchScan = triggerDevicePatchScan;
+    window.triggerDeviceInstallAutoApproved = triggerDeviceInstallAutoApproved;
+    window.triggerDeviceInstallSelected = triggerDeviceInstallSelected;
+    window.triggerSinglePatchInstall = triggerSinglePatchInstall;
+    window.openScheduleRebootModalForCurrentDevice = openScheduleRebootModalForCurrentDevice;
+    window.closeScheduleRebootModal = closeScheduleRebootModal;
+    window.submitScheduleReboot = submitScheduleReboot;
 
     // Keyboard Shortcuts (Ctrl+K, Esc)
     window.addEventListener('keydown', function(e) {

@@ -101,6 +101,10 @@ enum ActionType {
   FORCE_INVENTORY
   FORCE_SMART_CHECK
   FORCE_WINDOWS_UPDATE
+  WINDOWS_UPDATE_SCAN
+  WINDOWS_UPDATE_INSTALL_KB
+  WINDOWS_UPDATE_INSTALL_APPROVED
+  WINDOWS_UPDATE_SCHEDULE_REBOOT
   DEFENDER_UPDATE_SIGNATURES
   DEFENDER_QUICK_SCAN
   DEFENDER_FULL_SCAN
@@ -122,6 +126,47 @@ enum ActionStatus {
   FAILED
   EXPIRED
   CANCELLED
+}
+
+enum PatchCategory {
+  CRITICAL
+  SECURITY
+  IMPORTANT
+  OPTIONAL
+  DRIVER
+  FEATURE_UPDATE
+  OTHER
+}
+
+enum PatchSeverity {
+  CRITICAL
+  IMPORTANT
+  MODERATE
+  LOW
+  UNSPECIFIED
+}
+
+enum PatchApprovalRule {
+  AUTO
+  MANUAL
+  IGNORE
+}
+
+enum PatchStatus {
+  MISSING
+  PENDING_DOWNLOAD
+  DOWNLOADED
+  INSTALLING
+  INSTALLED
+  FAILED
+  SUPERSEDED
+}
+
+enum DeviceRebootState {
+  NONE
+  REBOOT_REQUIRED
+  REBOOT_SCHEDULED
+  REBOOT_COMPLETED
 }
 
 model Tenant {
@@ -147,6 +192,9 @@ model Tenant {
   incidents        Incident[]
   notifications    Notification[]
   remoteActions    RemoteAction[]
+  patchPolicies    PatchPolicy[]
+  devicePatches    DevicePatch[]
+  patchHistory     PatchHistory[]
 
   @@map("tenants")
 }
@@ -172,6 +220,7 @@ model Customer {
   alertRules       AlertRule[]
   incidents        Incident[]
   remoteActions    RemoteAction[]
+  patchPolicies    PatchPolicy[]
 
   @@unique([tenantId, code])
   @@index([tenantId])
@@ -219,6 +268,8 @@ model Device {
   timezone     String?
   status       DeviceStatus @default(OFFLINE)
   lastSeenAt   DateTime?
+  rebootState  DeviceRebootState @default(NONE)
+  rebootScheduledAt DateTime?
   enrolledAt   DateTime     @default(now())
   createdAt    DateTime     @default(now())
   updatedAt    DateTime     @updatedAt
@@ -238,6 +289,8 @@ model Device {
   healthScores       HealthScore[]
   enrolledViaTokens  EnrollmentToken[]   @relation("UsedByDevice")
   remoteActions      RemoteAction[]
+  patches            DevicePatch[]
+  patchHistory       PatchHistory[]
 
   @@index([tenantId, customerId])
   @@index([tenantId, status])
@@ -695,4 +748,90 @@ model RemoteAction {
   @@index([expiresAt])
   @@map("remote_actions")
 }
+
+model PatchPolicy {
+  id                  String            @id @default(uuid()) @db.Uuid
+  tenantId            String            @db.Uuid
+  customerId          String?           @db.Uuid
+  name                String
+  description         String?
+  isDefault           Boolean           @default(false)
+  
+  criticalApproval    PatchApprovalRule @default(AUTO)
+  securityApproval    PatchApprovalRule @default(AUTO)
+  importantApproval   PatchApprovalRule @default(MANUAL)
+  optionalApproval    PatchApprovalRule @default(IGNORE)
+  driverApproval      PatchApprovalRule @default(MANUAL)
+  featureApproval     PatchApprovalRule @default(MANUAL)
+  
+  maintenanceDays     String[]          @default(["Sunday"])
+  startTime           String            @default("02:00")
+  endTime             String            @default("05:00")
+  timezone            String            @default("America/Argentina/Buenos_Aires")
+  allowReboot         Boolean           @default(false)
+  rebootDeadlineHours Int               @default(24)
+  notificationDelayMin Int              @default(15)
+
+  createdAt           DateTime          @default(now())
+  updatedAt           DateTime          @updatedAt
+
+  tenant              Tenant            @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  customer            Customer?         @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  patchHistory        PatchHistory[]
+
+  @@unique([tenantId, customerId])
+  @@map("patch_policies")
+}
+
+model DevicePatch {
+  id              String         @id @default(uuid()) @db.Uuid
+  tenantId        String         @db.Uuid
+  deviceId        String         @db.Uuid
+  kbArticleId     String
+  title           String
+  description     String?
+  category        PatchCategory  @default(OTHER)
+  severity        PatchSeverity  @default(UNSPECIFIED)
+  status          PatchStatus    @default(MISSING)
+  sizeBytes       BigInt?
+  publishedAt     DateTime?
+  installedAt     DateTime?
+  requiresReboot  Boolean        @default(false)
+  lastScannedAt   DateTime       @default(now())
+  createdAt       DateTime       @default(now())
+  updatedAt       DateTime       @updatedAt
+
+  tenant          Tenant         @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  device          Device         @relation(fields: [deviceId], references: [id], onDelete: Cascade)
+
+  @@unique([deviceId, kbArticleId])
+  @@index([tenantId, status])
+  @@index([deviceId, category])
+  @@map("device_patches")
+}
+
+model PatchHistory {
+  id              String        @id @default(uuid()) @db.Uuid
+  tenantId        String        @db.Uuid
+  deviceId        String        @db.Uuid
+  policyId        String?       @db.Uuid
+  kbArticleId     String
+  title           String
+  actionType      String        @default("INSTALL")
+  status          String
+  exitCode        Int?
+  errorDetails    String?
+  source          String        @default("AUTO_POLICY")
+  appliedBy       String?
+  appliedAt       DateTime      @default(now())
+
+  tenant          Tenant        @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  device          Device        @relation(fields: [deviceId], references: [id], onDelete: Cascade)
+  policy          PatchPolicy?  @relation(fields: [policyId], references: [id], onDelete: SetNull)
+
+  @@index([tenantId, deviceId])
+  @@index([kbArticleId])
+  @@map("patch_history")
+}
+
 

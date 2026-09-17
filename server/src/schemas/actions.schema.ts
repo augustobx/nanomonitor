@@ -35,6 +35,10 @@ export const ACTION_TYPES = [
   'WINDOWS_CHKDSK_SCAN',
   'QUERY_SERVICES',
   'RESTART_SERVICE',
+  'WINDOWS_UPDATE_SCAN',
+  'WINDOWS_UPDATE_INSTALL_KB',
+  'WINDOWS_UPDATE_INSTALL_APPROVED',
+  'WINDOWS_UPDATE_SCHEDULE_REBOOT',
 ] as const;
 
 export type ActionTypeEnum = (typeof ACTION_TYPES)[number];
@@ -59,6 +63,15 @@ export const createActionSchema = z
           code: z.ZodIssueCode.custom,
           path: ['parameters', 'serviceName'],
           message: `Service "${serviceName}" is not in the allowed whitelist (${ALLOWED_SERVICES_WHITELIST.join(', ')})`,
+        });
+      }
+    } else if (data.actionType === 'WINDOWS_UPDATE_INSTALL_KB') {
+      const kbs = data.parameters?.kbArticleIds;
+      if (!Array.isArray(kbs) || kbs.length === 0) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ['parameters', 'kbArticleIds'],
+          message: 'kbArticleIds array with at least one KB is required for WINDOWS_UPDATE_INSTALL_KB',
         });
       }
     }

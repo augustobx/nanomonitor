@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/nanolabs/nanomonitor/agent/internal/patch"
 	"github.com/nanolabs/nanomonitor/agent/internal/transport"
 )
 
@@ -128,6 +129,16 @@ func ExecuteAction(ctx context.Context, action *transport.ActionItem, hook Sched
 
 	case "RESTART_SERVICE":
 		return executeRestartService(ctx, action)
+
+	// ==================== PARCHES Y ACTUALIZACIONES ====================
+	case "WINDOWS_UPDATE_SCAN":
+		return executePatchScan(ctx, hook)
+
+	case "WINDOWS_UPDATE_INSTALL_KB", "WINDOWS_UPDATE_INSTALL_APPROVED":
+		return executePatchInstall(ctx, action, hook)
+
+	case "WINDOWS_UPDATE_SCHEDULE_REBOOT":
+		return executeScheduleReboot(ctx, action)
 
 	default:
 		return &ExecutionResult{
@@ -273,3 +284,114 @@ func runCommand(ctx context.Context, timeout time.Duration, name string, args ..
 		Error:    strings.TrimSpace(errorStr),
 	}
 }
+
+func executePatchScan(ctx context.Context, hook SchedTriggerHook) *ExecutionResult {
+	res, err := patch.ScanWindowsUpdates(ctx, 10*time.Minute)
+	if err != nil {
+		return &ExecutionResult{
+			ExitCode: 1,
+			Error:    err.Error(),
+		}
+	}
+
+	if hook != nil {
+		hook.TriggerWindowsUpdate(ctx)
+	}
+
+	summary := fmt.Sprintf("Escaneo de parches completado en %d ms. Actualizaciones encontradas: %d. Reinicio pendiente: %v",
+		res.ScanDurationMs, len(res.Patches), res.RebootPending)
+	if res.RebootReason != "" {
+		summary += " (" + res.RebootReason + ")"
+	}
+
+	return &ExecutionResult{
+		ExitCode: 0,
+		Output:   summary,
+		Result: map[string]interface{}{
+			"patches":        res.Patches,
+			"rebootPending":  res.RebootPending,
+			"rebootReason":   res.RebootReason,
+			"scanDurationMs": res.ScanDurationMs,
+		},
+	}
+}
+
+func executePatchInstall(ctx context.Context, action *transport.ActionItem, hook SchedTriggerHook) *ExecutionResult {
+	var targetKBs []string
+	if rawKBs, ok := action.Parameters["kbArticleIds"]; ok {
+		switch v := rawKBs.(type) {
+		case []interface{}:
+			for _, item := range v {
+				if s, ok := item.(string); ok && strings.TrimSpace(s) != "" {
+					targetKBs = append(targetKBs, strings.TrimSpace(s))
+				}
+			}
+		case []string:
+			targetKBs = v
+		case string:
+			if strings.TrimSpace(v) != "" {
+				targetKBs = append(targetKBs, strings.TrimSpace(v))
+			}
+		}
+	}
+
+	if len(targetKBs) == 0 {
+		return &ExecutionResult{
+			ExitCode: 1,
+			Error:    "Se requiere al menos un KB (kbArticleIds) para la instalación dirigida",
+		}
+	}
+
+	res, err := patch.InstallTargetKBs(ctx, targetKBs, 45*time.Minute)
+	if err != nil {
+		return &ExecutionResult{
+			ExitCode: 1,
+			Error:    err.Error(),
+		}
+	}
+
+	if hook != nil {
+		hook.TriggerWindowsUpdate(ctx)
+	}
+
+	exitCode := 0
+	if !res.Success {
+		exitCode = 1
+	}
+
+	return &ExecutionResult{
+		ExitCode: exitCode,
+		Output:   res.Details,
+		Result: map[string]interface{}{
+			"success":        res.Success,
+			"resultCode":     res.ResultCode,
+			"rebootRequired": res.RebootRequired,
+			"installedCount": res.InstalledCount,
+			"targetKBs":      res.TargetKBs,
+		},
+	}
+}
+
+func executeScheduleReboot(ctx context.Context, action *transport.ActionItem) *ExecutionResult {
+	delaySec := 300 // default 5 minutos
+	if rawDelay, ok := action.Parameters["delaySeconds"]; ok {
+		switch v := rawDelay.(type) {
+		case float64:
+			if int(v) >= 10 {
+				delaySec = int(v)
+			}
+		case int:
+			if v >= 10 {
+				delaySec = v
+			}
+		}
+	}
+
+	msg := "Reinicio programado por NanoMonitor RMM para aplicar actualizaciones críticas del sistema."
+	if rawMsg, ok := action.Parameters["message"].(string); ok && strings.TrimSpace(rawMsg) != "" {
+		msg = strings.TrimSpace(rawMsg)
+	}
+
+	return runCommand(ctx, 30*time.Second, "shutdown.exe", "/r", "/t", fmt.Sprintf("%d", delaySec), "/c", msg)
+}
+

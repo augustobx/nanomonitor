@@ -9,6 +9,7 @@ import { getAlertsViewHtml } from './modules/alerts.view.js';
 import { getCustomersViewHtml } from './modules/customers.view.js';
 import { getDevicesViewHtml } from './modules/devices.view.js';
 import { getDeviceDetailViewHtml } from './modules/device-detail.view.js';
+import { getPatchesViewHtml } from './modules/patches.view.js';
 import { getAgentsViewHtml } from './modules/agents.view.js';
 import { getPlatformViewHtml } from './modules/platform.view.js';
 import { getSettingsViewHtml } from './modules/settings.view.js';
@@ -73,13 +74,16 @@ ${themeCss}
       <!-- 5. Ficha del Equipo (Device Workspace) View -->
       ${getDeviceDetailViewHtml()}
 
-      <!-- 6. Agentes & Enrolamiento View -->
+      <!-- 6. Gestión de Parches View -->
+      ${getPatchesViewHtml()}
+
+      <!-- 7. Agentes & Enrolamiento View -->
       ${getAgentsViewHtml()}
 
-      <!-- 7. Plataforma View -->
+      <!-- 8. Plataforma View -->
       ${getPlatformViewHtml()}
 
-      <!-- 8. Configuración View -->
+      <!-- 9. Configuración View -->
       ${getSettingsViewHtml()}
     </main>
 

@@ -47,6 +47,12 @@ export function getSidebarHtml(): string {
           <span class="nav-item-label">Acciones Remotas</span>
         </a>
 
+        <a class="nav-item" id="navItemPatches" onclick="switchNavTab('patches')" title="Gestión de Parches & Windows Update">
+          <span class="nav-item-icon">🛡️</span>
+          <span class="nav-item-label">Parches</span>
+          <span class="nav-item-badge" id="sbPatchesBadge" style="display: none; background: #f59e0b;">0</span>
+        </a>
+
         <div class="sidebar-nav-section-title" style="margin-top: 12px;">Sistema</div>
 
         <a class="nav-item" id="navItemPlatform" onclick="switchNavTab('platform')" title="Infraestructura y Servicios">
