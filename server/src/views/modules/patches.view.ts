@@ -99,18 +99,18 @@ export function getPatchesViewHtml(): string {
             </div>
           </div>
 
-          <div class="table-container" style="max-height: 600px; overflow-y: auto;">
-            <table class="noc-table patch-fleet-table">
+          <div class="table-responsive" style="max-height: 600px; overflow-y: auto; width: 100%;">
+            <table class="noc-table patch-fleet-table" style="width: 100% !important; table-layout: fixed; border-collapse: collapse;">
               <thead>
                 <tr>
-                  <th>Equipo / Hostname</th>
-                  <th>Cliente & Sede</th>
-                  <th>Estado Agente</th>
-                  <th>Parches Faltantes</th>
-                  <th>Críticos / Seg.</th>
-                  <th>Reinicio</th>
-                  <th>Último Escaneo</th>
-                  <th style="text-align: right;">Acciones</th>
+                  <th style="width: 22%; min-width: 210px; padding: 12px 16px;">Equipo / Hostname</th>
+                  <th style="width: 15%; min-width: 140px; padding: 12px 16px;">Cliente & Sede</th>
+                  <th style="width: 11%; min-width: 110px; padding: 12px 16px;">Estado Agente</th>
+                  <th style="width: 12%; min-width: 120px; padding: 12px 16px;">Parches Faltantes</th>
+                  <th style="width: 11%; min-width: 110px; padding: 12px 16px;">Críticos / Seg.</th>
+                  <th style="width: 10%; min-width: 100px; padding: 12px 16px;">Reinicio</th>
+                  <th style="width: 10%; min-width: 110px; padding: 12px 16px;">Último Escaneo</th>
+                  <th style="width: 9%; min-width: 180px; padding: 12px 16px; text-align: right;">Acciones</th>
                 </tr>
               </thead>
               <tbody id="pFleetTableBody">
