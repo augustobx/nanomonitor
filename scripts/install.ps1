@@ -137,6 +137,15 @@ if (-not $started) {
     exit 1
 }
 
+# Require a stable RUNNING state, not a transient start immediately followed by a crash.
+Start-Sleep -Seconds 3
+$svc = Get-Service -Name "NanoLabsAgent" -ErrorAction SilentlyContinue
+if (-not $svc -or $svc.Status -ne 'Running') {
+    Write-Host "[!] NanoLabsAgent arranco pero no permanecio RUNNING de forma estable." -ForegroundColor Red
+    Write-Host "    Revise: Visor de eventos > Registros de Windows > Sistema > Service Control Manager." -ForegroundColor Yellow
+    exit 1
+}
+
 # Validate automatic + delayed startup. The agent must survive Windows reboot without user intervention.
 $svcConfig = Get-CimInstance Win32_Service -Filter "Name='NanoLabsAgent'" -ErrorAction SilentlyContinue
 if (-not $svcConfig) {
