@@ -42,6 +42,11 @@ export function getSidebarHtml(): string {
           <span class="nav-item-label">Agentes</span>
         </a>
 
+        <a class="nav-item" id="navItemActions" onclick="switchNavTab('devices'); showToast('💡 Haz clic en 🚀 Acciones sobre cualquier equipo para ejecutar comandos remotos');" title="Acciones Remotas RMM">
+          <span class="nav-item-icon">🚀</span>
+          <span class="nav-item-label">Acciones Remotas</span>
+        </a>
+
         <div class="sidebar-nav-section-title" style="margin-top: 12px;">Sistema</div>
 
         <a class="nav-item" id="navItemPlatform" onclick="switchNavTab('platform')" title="Infraestructura y Servicios">

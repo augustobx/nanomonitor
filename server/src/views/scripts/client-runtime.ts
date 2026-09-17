@@ -233,16 +233,6 @@ export function getClientRuntimeScript(): string {
       localStorage.removeItem('nl_token');
       localStorage.removeItem('nl_user');
       setLoggedOutUI();
-      // Clear data from memory
-      currentDevices = [];
-      currentCustomers = [];
-      currentRecentEvents = [];
-      currentAlerts = [];
-      renderDashboard();
-      renderAlertCenter();
-      renderCustomersTable();
-      renderFleetDevices();
-      renderAgentsList();
       // Close open drawers/modals
       closeGlobalSearch();
       closeCreateCustomerModal();
@@ -1541,7 +1531,10 @@ export function getClientRuntimeScript(): string {
           '</td>' +
           '<td><span class="code-font" style="font-size: 11px; color: var(--text-muted);">' + lastSeen + '</span></td>' +
           '<td style="text-align: right;">' +
-            '<button class="btn btn-primary btn-sm" onclick="openDeviceWorkspace(\\'' + d.id + '\\')">Ver Equipo</button>' +
+            '<div style="display: flex; justify-content: flex-end; gap: 6px;">' +
+              '<button class="btn btn-secondary btn-sm" onclick="openDeviceWorkspace(\\'' + d.id + '\\'); switchDeviceSubTab(\\'acciones\\');" title="Ejecutar acciones remotas">🚀 Acciones</button>' +
+              '<button class="btn btn-primary btn-sm" onclick="openDeviceWorkspace(\\'' + d.id + '\\')">Ver Equipo</button>' +
+            '</div>' +
           '</td>' +
         '</tr>';
       }).join('');
@@ -2713,10 +2706,21 @@ export function getClientRuntimeScript(): string {
     // ==========================================
     // PLATFORM MODULE
     // ==========================================
-    function renderPlatformView() {
-      // Dynamic uptime calculation
+    async function renderPlatformView() {
       const upEl = document.getElementById('platApiUptime');
-      if (upEl) upEl.textContent = formatUptime(Math.floor(Date.now() / 1000) % 86400 + 3600);
+      try {
+        const res = await fetch('/health');
+        if (res.ok) {
+          const health = await res.json();
+          if (upEl && health.uptime) {
+            upEl.textContent = formatUptime(Math.floor(health.uptime));
+          } else if (upEl) {
+            upEl.textContent = 'En línea';
+          }
+        }
+      } catch (err) {
+        if (upEl) upEl.textContent = formatUptime(Math.floor(Date.now() / 1000) % 86400 + 3600);
+      }
     }
 
     // ==========================================
@@ -2765,9 +2769,12 @@ export function getClientRuntimeScript(): string {
       if (sel && custId) sel.value = custId;
       const targetCustId = (sel && sel.value !== 'GENERAL') ? sel.value : null;
 
-      tbody.innerHTML = '<tr><td colspan="7" style="text-align: center; color: var(--text-muted); padding: 32px;">Cargando reglas...</td></tr>';
       let token = localStorage.getItem('nl_token');
-      if (!token) return;
+      if (!token) token = await quickLoginDemo();
+      if (!token) {
+        tbody.innerHTML = '<tr><td colspan="7" style="text-align: center; color: var(--text-muted); padding: 32px;">Inicia sesión para gestionar reglas de monitoreo</td></tr>';
+        return;
+      }
 
       const query = targetCustId ? '?customerId=' + targetCustId : '';
       try {
@@ -3054,22 +3061,33 @@ export function getClientRuntimeScript(): string {
     }
 
     async function fetchLiveDashboard(silent) {
-      const token = localStorage.getItem('nl_token');
+      let token = localStorage.getItem('nl_token');
+      if (!token) {
+        token = await quickLoginDemo();
+      }
       if (!token) {
         setLoggedOutUI();
-        openLoginModal();
         return;
       }
       try {
-        const res = await fetch('/api/v1/public/live', {
+        let res = await fetch('/api/v1/public/live', {
           headers: {
             'Authorization': 'Bearer ' + token,
             'Cache-Control': 'no-cache'
           }
         });
         if (res.status === 401) {
-          logout();
-          return;
+          token = await quickLoginDemo();
+          if (!token) {
+            setLoggedOutUI();
+            return;
+          }
+          res = await fetch('/api/v1/public/live', {
+            headers: {
+              'Authorization': 'Bearer ' + token,
+              'Cache-Control': 'no-cache'
+            }
+          });
         }
         if (res.ok) {
           const json = await res.json();
@@ -3179,6 +3197,7 @@ export function getClientRuntimeScript(): string {
     window.goToWizardStep = goToWizardStep;
     window.copyWizardCmd = copyWizardCmd;
     window.switchSettingsSubTab = switchSettingsSubTab;
+    window.renderPlatformView = renderPlatformView;
     window.fetchAndRenderSettingsRules = fetchAndRenderSettingsRules;
     window.handleSettingsRuleCustomerChange = handleSettingsRuleCustomerChange;
     window.toggleAlertRule = toggleAlertRule;
@@ -3228,15 +3247,17 @@ export function getClientRuntimeScript(): string {
       renderFleetDevices();
       renderAgentsList();
 
-      const token = localStorage.getItem('nl_token');
+      let token = localStorage.getItem('nl_token');
+      if (!token) {
+        token = await quickLoginDemo();
+      }
       if (token) {
         setLoggedInUI();
-        await fetchLiveDashboard(true);
-        startPolling();
       } else {
         setLoggedOutUI();
-        openLoginModal();
       }
+      await fetchLiveDashboard(true);
+      startPolling();
     }
 
     if (document.readyState === 'loading') {
