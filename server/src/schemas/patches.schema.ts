@@ -35,25 +35,56 @@ export type PatchSeverity = (typeof PATCH_SEVERITIES)[number];
 export type PatchApprovalRule = (typeof PATCH_APPROVAL_RULES)[number];
 export type PatchStatus = (typeof PATCH_STATUSES)[number];
 
-export const upsertPatchPolicySchema = z.object({
-  customerId: z.string().uuid().nullable().optional(),
-  name: z.string().min(2).max(100),
-  description: z.string().max(500).optional(),
-  isDefault: z.boolean().optional().default(false),
-  criticalApproval: z.enum(PATCH_APPROVAL_RULES).default('AUTO'),
-  securityApproval: z.enum(PATCH_APPROVAL_RULES).default('AUTO'),
-  importantApproval: z.enum(PATCH_APPROVAL_RULES).default('MANUAL'),
-  optionalApproval: z.enum(PATCH_APPROVAL_RULES).default('IGNORE'),
-  driverApproval: z.enum(PATCH_APPROVAL_RULES).default('MANUAL'),
-  featureApproval: z.enum(PATCH_APPROVAL_RULES).default('MANUAL'),
-  maintenanceDays: z.array(z.string()).default(['Sunday']),
-  startTime: z.string().regex(/^([01]\d|2[0-3]):([0-5]\d)$/).default('02:00'),
-  endTime: z.string().regex(/^([01]\d|2[0-3]):([0-5]\d)$/).default('05:00'),
-  timezone: z.string().default('America/Argentina/Buenos_Aires'),
-  allowReboot: z.boolean().default(false),
-  rebootDeadlineHours: z.number().int().min(1).max(168).default(24),
-  notificationDelayMin: z.number().int().min(1).max(120).default(15),
-});
+export const upsertPatchPolicySchema = z
+  .object({
+    customerId: z.string().uuid().nullable().optional(),
+    name: z.string().min(2).max(100).optional().default('Política de Parches'),
+    description: z.string().max(500).optional(),
+    isDefault: z.boolean().optional().default(false),
+    criticalApproval: z.enum(PATCH_APPROVAL_RULES).optional().default('AUTO'),
+    securityApproval: z.enum(PATCH_APPROVAL_RULES).optional().default('AUTO'),
+    importantApproval: z.enum(PATCH_APPROVAL_RULES).optional().default('MANUAL'),
+    optionalApproval: z.enum(PATCH_APPROVAL_RULES).optional().default('IGNORE'),
+    driverApproval: z.enum(PATCH_APPROVAL_RULES).optional().default('MANUAL'),
+    featureApproval: z.enum(PATCH_APPROVAL_RULES).optional().default('MANUAL'),
+    maintenanceDays: z.array(z.string()).optional().default(['Sunday']),
+    startTime: z.string().regex(/^([01]\d|2[0-3]):([0-5]\d)$/).optional().default('02:00'),
+    endTime: z.string().regex(/^([01]\d|2[0-3]):([0-5]\d)$/).optional().default('05:00'),
+    timezone: z.string().optional().default('America/Argentina/Buenos_Aires'),
+    allowReboot: z.boolean().optional().default(false),
+    rebootDeadlineHours: z.number().int().min(1).max(168).optional().default(24),
+    notificationDelayMin: z.number().int().min(1).max(120).optional().default(15),
+    // Frontend aliases
+    criticalRule: z.string().optional(),
+    securityRule: z.string().optional(),
+    importantRule: z.string().optional(),
+    driverRule: z.string().optional(),
+    featureRule: z.string().optional(),
+    maintenanceWindowCron: z.string().optional(),
+    maintenanceWindowDurationMins: z.number().optional(),
+    autoReboot: z.boolean().optional(),
+    rebootGracePeriodMins: z.number().optional(),
+  })
+  .transform((data) => {
+    function normRule(val?: string, fallback: PatchApprovalRule = 'MANUAL'): PatchApprovalRule {
+      if (!val) return fallback;
+      if (val === 'AUTO_APPROVE' || val === 'AUTO') return 'AUTO';
+      if (val === 'IGNORE') return 'IGNORE';
+      return 'MANUAL';
+    }
+
+    return {
+      ...data,
+      name: data.name || (data.customerId ? 'Política de Cliente' : 'Política Global Predeterminada'),
+      criticalApproval: normRule(data.criticalRule, data.criticalApproval),
+      securityApproval: normRule(data.securityRule, data.securityApproval),
+      importantApproval: normRule(data.importantRule, data.importantApproval),
+      driverApproval: normRule(data.driverRule, data.driverApproval),
+      featureApproval: normRule(data.featureRule, data.featureApproval),
+      allowReboot: data.autoReboot ?? data.allowReboot,
+      notificationDelayMin: data.rebootGracePeriodMins ?? data.notificationDelayMin,
+    };
+  });
 
 export type UpsertPatchPolicyInput = z.infer<typeof upsertPatchPolicySchema>;
 
