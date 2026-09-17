@@ -251,6 +251,10 @@ func doInstall(token, apiURL string, silent bool) {
 	// 6. Install Windows Service
 	// Try uninstalling old registration first to ensure fresh binary path
 	_ = exec.Command(agentDest, "-uninstall").Run()
+	if err := waitForServiceRemoval(15 * time.Second); err != nil {
+		showError(fmt.Sprintf("No se pudo retirar completamente la instalación anterior:\n%v", err), silent)
+		os.Exit(1)
+	}
 	installCmd := exec.Command(agentDest, "-install", "-api-url="+apiURL)
 	if token != "" {
 		installCmd.Args = append(installCmd.Args, "-token="+token)
@@ -359,6 +363,7 @@ func ensureServiceRunning(timeout time.Duration) error {
 
 	deadline := time.Now().Add(timeout)
 	var lastState svc.State
+	var stableSince time.Time
 	for time.Now().Before(deadline) {
 		status, err = s.Query()
 		if err != nil {
@@ -366,15 +371,49 @@ func ensureServiceRunning(timeout time.Duration) error {
 		}
 		lastState = status.State
 		if status.State == svc.Running {
-			return nil
-		}
-		if status.State == svc.Stopped {
-			return fmt.Errorf("el servicio volvió a STOPPED durante el arranque")
+			if stableSince.IsZero() {
+				stableSince = time.Now()
+			}
+			if time.Since(stableSince) >= 3*time.Second {
+				return nil
+			}
+		} else {
+			stableSince = time.Time{}
+			if status.State == svc.Stopped {
+				return fmt.Errorf("el servicio volvió a STOPPED durante el arranque")
+			}
 		}
 		time.Sleep(500 * time.Millisecond)
 	}
 
-	return fmt.Errorf("timeout esperando RUNNING; último estado SCM=%v", lastState)
+	return fmt.Errorf("timeout esperando RUNNING estable; último estado SCM=%v", lastState)
+}
+
+func waitForServiceRemoval(timeout time.Duration) error {
+	m, err := mgr.Connect()
+	if err != nil {
+		return fmt.Errorf("conectando con Service Control Manager: %w", err)
+	}
+	defer m.Disconnect()
+
+	deadline := time.Now().Add(timeout)
+	for time.Now().Before(deadline) {
+		s, openErr := m.OpenService(ServiceName)
+		if openErr == nil {
+			s.Close()
+			time.Sleep(300 * time.Millisecond)
+			continue
+		}
+		if openErr == windows.ERROR_SERVICE_DOES_NOT_EXIST {
+			return nil
+		}
+		if openErr == windows.ERROR_SERVICE_MARKED_FOR_DELETE {
+			time.Sleep(300 * time.Millisecond)
+			continue
+		}
+		return fmt.Errorf("consultando retiro del servicio: %w", openErr)
+	}
+	return fmt.Errorf("timeout esperando que Windows elimine el servicio anterior")
 }
 
 func safeWriteBinary(destPath string, data []byte) error {
