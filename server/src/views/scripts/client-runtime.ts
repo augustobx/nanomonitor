@@ -52,6 +52,13 @@ export function getClientRuntimeScript(): string {
       return m + 'm';
     }
 
+    function getAgentVersionTag(d) {
+      if (!d) return 'v1.1.0';
+      const v = (d.agent && d.agent.agentVersion) ? d.agent.agentVersion : (d.agentVersion ? d.agentVersion : '1.1.0');
+      const clean = String(v).trim().replace(/^v/, '');
+      return 'v' + clean;
+    }
+
     // Telemetry & Data Model Resolvers
     function getDeviceMetricsCpu(d) {
       if (!d) return null;
@@ -1513,7 +1520,10 @@ export function getClientRuntimeScript(): string {
           '<td>' +
             '<div style="display: flex; align-items: center; gap: 8px;">' +
               '<span style="font-size: 14px;">💻</span>' +
-              '<strong class="code-font" style="color: #fff; cursor: pointer;" onclick="openDeviceWorkspace(\\'' + d.id + '\\')">' + host + '</strong>' +
+              '<div>' +
+                '<strong class="code-font" style="color: #fff; cursor: pointer;" onclick="openDeviceWorkspace(\'' + d.id + '\')">' + host + '</strong>' +
+                '<span class="code-badge" style="font-size: 10px; margin-left: 6px; padding: 1px 5px; color: #60a5fa; border-color: rgba(96,165,250,0.3);">' + getAgentVersionTag(d) + '</span>' +
+              '</div>' +
             '</div>' +
           '</td>' +
           '<td><span style="color: var(--text-secondary);">' + custName + '</span> <span style="font-size: 11px; color: var(--text-muted);">(' + siteName + ')</span></td>' +
@@ -1592,7 +1602,7 @@ export function getClientRuntimeScript(): string {
       setVal('dRamSummary', ramTotalGb);
 
       // Agent Version
-      setVal('dAgentVersion', d.agentVersion || (d.agent ? d.agent.agentVersion : 'v0.1.0'));
+      setVal('dAgentVersion', getAgentVersionTag(d));
 
       // 2. Metrics & Operational Cards
       const cpuVal = getDeviceMetricsCpu(d);
@@ -2462,7 +2472,7 @@ export function getClientRuntimeScript(): string {
       g.innerHTML = 
         '<div style="background: var(--bg-surface-subtle); border: 1px solid var(--border-subtle); border-radius: var(--radius-md); padding: 12px 14px;">' +
           '<div style="font-size: 11px; color: var(--text-muted);">Versión del Agente</div>' +
-          '<div style="font-size: 14px; font-weight: 700; color: #60a5fa;" class="code-font">' + (d.agentVersion || agent.agentVersion || 'v0.1.0') + '</div>' +
+          '<div style="font-size: 14px; font-weight: 700; color: #60a5fa;" class="code-font">' + getAgentVersionTag(d) + '</div>' +
         '</div>' +
 
         '<div style="background: var(--bg-surface-subtle); border: 1px solid var(--border-subtle); border-radius: var(--radius-md); padding: 12px 14px;">' +
@@ -2577,7 +2587,7 @@ export function getClientRuntimeScript(): string {
         const host = d.hostname || 'Equipo';
         const custName = d.customer ? d.customer.name : '-';
         const siteName = d.site ? d.site.name : 'Principal';
-        const ver = d.agentVersion || (d.agent ? d.agent.agentVersion : 'v0.1.0');
+        const ver = getAgentVersionTag(d);
         const lastSeen = d.lastSeenAt ? new Date(d.lastSeenAt).toLocaleString('es-AR') : 'Nunca';
 
         return '<tr>' +
@@ -2618,7 +2628,7 @@ export function getClientRuntimeScript(): string {
         const host = d.hostname || 'Equipo';
         const custName = d.customer ? d.customer.name : '-';
         const siteName = d.site ? d.site.name : 'Principal';
-        const ver = d.agentVersion || 'v0.1.0';
+        const ver = getAgentVersionTag(d);
         const lastSeen = d.lastSeenAt ? new Date(d.lastSeenAt).toLocaleString('es-AR') : 'Nunca';
 
         return '<tr>' +

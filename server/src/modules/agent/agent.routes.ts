@@ -90,6 +90,18 @@ export const agentRoutes: FastifyPluginAsync = async (fastify: FastifyInstance) 
       },
     });
 
+    // Automatically sync agentVersion from live heartbeat telemetry
+    if (agentVersion) {
+      const cleanVer = agentVersion.replace(/^v/, '').trim();
+      await db.agent.updateMany({
+        where: { deviceId },
+        data: {
+          agentVersion: cleanVer,
+          lastAuthAt: new Date(),
+        },
+      });
+    }
+
     // Check for pending actions as heartbeat piggybacking fallback (non-blocking)
     let pendingActionsCount = 0;
     try {

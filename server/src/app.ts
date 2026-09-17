@@ -184,7 +184,7 @@ export async function buildApp(): Promise<FastifyInstance> {
       const html = getLandingHtml({
         uptimeSeconds: Math.floor(process.uptime()),
         serverTime: new Date().toISOString(),
-        version: '0.1.0',
+        version: '1.1.0',
         env: config.NODE_ENV,
         devices,
         customers,
@@ -201,7 +201,7 @@ export async function buildApp(): Promise<FastifyInstance> {
 
     return reply.send({
       name: 'NanoLabs Control Center',
-      version: '0.1.0',
+      version: '1.1.0',
       status: 'operational',
       health: '/health',
       docs: 'https://monitor.nanolabs.com.ar',

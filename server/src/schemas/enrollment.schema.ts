@@ -11,6 +11,7 @@ export const registerAgentSchema = z.object({
   token: z.string().min(5),
   hostname: z.string().min(1).max(255),
   hardwareId: z.string().nullable().optional(),
+  agentVersion: z.string().nullable().optional(),
   osInfo: z
     .record(z.any())
     .nullable()

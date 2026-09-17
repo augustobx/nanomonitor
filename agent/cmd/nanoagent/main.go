@@ -252,10 +252,11 @@ func handleEnrollment(ctx context.Context, cfg *config.Config, log *slog.Logger)
 	}
 
 	enrollReq := &transport.EnrollRequest{
-		Token:      token,
-		Hostname:   hostname,
-		HardwareID: hardwareID,
-		OSInfo:     osInfo,
+		Token:        token,
+		Hostname:     hostname,
+		HardwareID:   hardwareID,
+		AgentVersion: version.Version,
+		OSInfo:       osInfo,
 	}
 
 	resp, err := client.Enroll(ctx, enrollReq)

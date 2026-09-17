@@ -1,7 +1,7 @@
 .PHONY: build build-release test clean install uninstall
 
 # Build variables
-VERSION ?= 0.1.0-dev
+VERSION ?= 1.1.0
 COMMIT := $(shell git rev-parse --short HEAD 2>/dev/null || echo "unknown")
 BUILD_DATE := $(shell date -u +"%Y-%m-%dT%H:%M:%SZ" 2>/dev/null || echo "unknown")
 LDFLAGS := -ldflags "-s -w \

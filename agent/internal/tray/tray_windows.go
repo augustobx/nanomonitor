@@ -15,6 +15,7 @@ import (
 	"golang.org/x/sys/windows/svc/mgr"
 
 	"github.com/nanolabs/nanomonitor/agent/internal/config"
+	"github.com/nanolabs/nanomonitor/agent/internal/version"
 )
 
 var (
@@ -98,12 +99,14 @@ const (
 	IDM_HEADER       = 1001
 	IDM_HOSTNAME     = 1002
 	IDM_ORGANIZATION = 1003
-	IDM_STATUS       = 1004
-	IDM_SEPARATOR    = 1005
+	IDM_VERSION      = 1004
+	IDM_STATUS       = 1005
+	IDM_SEPARATOR    = 1006
 	IDM_COPY_ID      = 2001
 	IDM_OPEN_PORTAL  = 2002
 	IDM_OPEN_LOGS    = 2003
 	IDM_RESTART_SVC  = 2004
+	IDM_ABOUT        = 2005
 	IDM_EXIT         = 3001
 )
 
@@ -238,7 +241,7 @@ func (app *TrayApp) Run() error {
 	app.nid.UFlags = NIF_MESSAGE | NIF_ICON | NIF_TIP
 	app.nid.UCallbackMessage = WM_TRAYICON
 	app.nid.HIcon = app.hIcon
-	copy(app.nid.SzTip[:], windows.StringToUTF16(fmt.Sprintf("NanoLabs Monitor — %s", app.hostname)))
+	copy(app.nid.SzTip[:], windows.StringToUTF16(fmt.Sprintf("NanoLabs Monitor v%s — %s", version.Version, app.hostname)))
 
 	shellNotifyIcon.Call(NIM_ADD, uintptr(unsafe.Pointer(&app.nid)))
 
@@ -287,7 +290,7 @@ func (app *TrayApp) updateTooltip() {
 		app.nid.HIcon = app.redIcon
 	}
 
-	tip := fmt.Sprintf("NanoLabs: %s (%s)", app.hostname, statusText)
+	tip := fmt.Sprintf("NanoLabs v%s: %s (%s)", version.Version, app.hostname, statusText)
 	if len(tip) > 120 {
 		tip = tip[:120]
 	}
@@ -334,16 +337,18 @@ func (app *TrayApp) showContextMenu() {
 		orgText = fmt.Sprintf("Organización: %s", app.cfg.TenantID)
 	}
 
-	appendMenuString(hMenu, MF_DISABLED|MF_GRAYED, IDM_HEADER, "🛡️ NanoLabs Monitor")
+	appendMenuString(hMenu, MF_DISABLED|MF_GRAYED, IDM_HEADER, fmt.Sprintf("🛡️ NanoLabs Monitor v%s", version.Version))
 	appendMenuSeparator(hMenu)
 	appendMenuString(hMenu, MF_DISABLED|MF_GRAYED, IDM_HOSTNAME, fmt.Sprintf("Equipo: %s", app.hostname))
 	appendMenuString(hMenu, MF_DISABLED|MF_GRAYED, IDM_ORGANIZATION, orgText)
+	appendMenuString(hMenu, MF_DISABLED|MF_GRAYED, IDM_VERSION, fmt.Sprintf("Versión: v%s", version.Version))
 	appendMenuString(hMenu, MF_DISABLED|MF_GRAYED, IDM_STATUS, statusText)
 	appendMenuSeparator(hMenu)
 
 	appendMenuString(hMenu, MF_STRING, IDM_COPY_ID, "📋 Copiar ID del Dispositivo")
 	appendMenuString(hMenu, MF_STRING, IDM_OPEN_PORTAL, "🌐 Abrir Consola Web NOC")
 	appendMenuString(hMenu, MF_STRING, IDM_OPEN_LOGS, "📁 Ver Archivos de Registro (Logs)")
+	appendMenuString(hMenu, MF_STRING, IDM_ABOUT, "ℹ️ Acerca de NanoLabs Monitor...")
 	appendMenuSeparator(hMenu)
 
 	if isRunning {
@@ -404,6 +409,8 @@ func wndProc(hWnd windows.HWND, msg uint32, wParam, lParam uintptr) uintptr {
 			instance.handleOpenLogs()
 		case IDM_RESTART_SVC:
 			instance.handleRestartService()
+		case IDM_ABOUT:
+			instance.handleAbout()
 		case IDM_EXIT:
 			destroyWindow.Call(uintptr(instance.hwnd))
 			postQuitMessage.Call(0)
@@ -417,6 +424,21 @@ func wndProc(hWnd windows.HWND, msg uint32, wParam, lParam uintptr) uintptr {
 
 	r, _, _ := defWindowProc.Call(uintptr(hWnd), uintptr(msg), wParam, lParam)
 	return r
+}
+
+func (app *TrayApp) handleAbout() {
+	pTitle, _ := windows.UTF16PtrFromString("Acerca de NanoLabs Monitor")
+	pText, _ := windows.UTF16PtrFromString(fmt.Sprintf(
+		"NanoLabs Control Center — Enterprise NOC & RMM\n\n"+
+			"Versión del Agente: %s\n"+
+			"Equipo: %s\n"+
+			"Plataforma: Windows (x64)\n"+
+			"Arquitectura: Outbound Long-Polling (HMAC-SHA256)\n\n"+
+			"© 2026 NanoLabs Software Solutions",
+		version.Info(),
+		app.hostname,
+	))
+	messageBox.Call(uintptr(app.hwnd), uintptr(unsafe.Pointer(pText)), uintptr(unsafe.Pointer(pTitle)), uintptr(MB_OK|MB_ICONINFO))
 }
 
 func (app *TrayApp) handleCopyID() {

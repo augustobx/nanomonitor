@@ -283,17 +283,19 @@ export const enrollmentRoutes: FastifyPluginAsync = async (fastify: FastifyInsta
     // Generate agent credentials
     const agentSecret = generateAgentSecret();
 
+    const resolvedAgentVersion = parsed.data.agentVersion ? parsed.data.agentVersion.replace(/^v/, '') : '1.1.0';
+
     const agent = await db.agent.upsert({
       where: { deviceId: device.id },
       create: {
         tenantId: tokenRecord.tenantId,
         deviceId: device.id,
-        agentVersion: '0.1.0',
+        agentVersion: resolvedAgentVersion,
         secretHash: agentSecret, // Direct secret for HMAC-SHA256 signature verification
         status: 'ACTIVE',
       },
       update: {
-        agentVersion: '0.1.0',
+        agentVersion: resolvedAgentVersion,
         secretHash: agentSecret,
         status: 'ACTIVE',
         revokedAt: null,
