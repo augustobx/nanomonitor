@@ -13,6 +13,8 @@ import (
 
 	"golang.org/x/sys/windows"
 	"golang.org/x/sys/windows/registry"
+	"golang.org/x/sys/windows/svc"
+	"golang.org/x/sys/windows/svc/mgr"
 )
 
 //go:embed embedded/nanoagent.exe
@@ -265,13 +267,19 @@ func doInstall(token, apiURL string, silent bool) {
 		k.Close()
 	}
 
-	// 7b. Configure Windows Service auto-restart watchdog on crash or taskkill
-	_ = exec.Command("sc.exe", "failure", ServiceName, "reset=", "0", "actions=", "restart/1000/restart/2000/restart/5000").Run()
+	// 7b. Validate the service configuration created by nanoagent.exe.
+	if err := validateServiceConfiguration(); err != nil {
+		showError(fmt.Sprintf("El servicio fue creado pero su configuración no es válida:\n%v", err), silent)
+		os.Exit(1)
+	}
 
-	// 8. Start Windows Service
-	_ = exec.Command("sc.exe", "start", ServiceName).Run()
+	// 8. Start Windows Service and verify the SCM really reports RUNNING.
+	if err := ensureServiceRunning(30 * time.Second); err != nil {
+		showError(fmt.Sprintf("NanoLabsAgent fue instalado pero NO pudo quedar en ejecución:\n%v\n\nRevise el Visor de Eventos > Windows Logs > System > Service Control Manager.", err), silent)
+		os.Exit(1)
+	}
 
-	// 9. Launch nanotray.exe in current user session
+	// 9. Launch nanotray.exe in current user session only after the service is confirmed RUNNING
 	pTray, _ := windows.UTF16PtrFromString(trayDest)
 	pDir, _ := windows.UTF16PtrFromString(DefaultInstallDir)
 	pOp, _ := windows.UTF16PtrFromString("open")
@@ -287,6 +295,86 @@ func doInstall(token, apiURL string, silent bool) {
 			MB_OK|MB_ICONINFORMATION)
 	}
 	os.Exit(0)
+}
+
+func validateServiceConfiguration() error {
+	m, err := mgr.Connect()
+	if err != nil {
+		return fmt.Errorf("conectando con Service Control Manager: %w", err)
+	}
+	defer m.Disconnect()
+
+	s, err := m.OpenService(ServiceName)
+	if err != nil {
+		return fmt.Errorf("abriendo servicio %s: %w", ServiceName, err)
+	}
+	defer s.Close()
+
+	cfg, err := s.Config()
+	if err != nil {
+		return fmt.Errorf("leyendo configuración del servicio: %w", err)
+	}
+	if cfg.StartType != mgr.StartAutomatic {
+		return fmt.Errorf("StartType inesperado: %v; se esperaba Automatic", cfg.StartType)
+	}
+
+	k, err := registry.OpenKey(registry.LOCAL_MACHINE, `SYSTEM\CurrentControlSet\Services\NanoLabsAgent`, registry.QUERY_VALUE)
+	if err != nil {
+		return fmt.Errorf("leyendo DelayedAutoStart: %w", err)
+	}
+	defer k.Close()
+	delayed, _, err := k.GetIntegerValue("DelayedAutoStart")
+	if err != nil {
+		return fmt.Errorf("DelayedAutoStart no configurado: %w", err)
+	}
+	if delayed != 1 {
+		return fmt.Errorf("DelayedAutoStart=%d; se esperaba 1", delayed)
+	}
+
+	return nil
+}
+
+func ensureServiceRunning(timeout time.Duration) error {
+	m, err := mgr.Connect()
+	if err != nil {
+		return fmt.Errorf("conectando con Service Control Manager: %w", err)
+	}
+	defer m.Disconnect()
+
+	s, err := m.OpenService(ServiceName)
+	if err != nil {
+		return fmt.Errorf("abriendo servicio %s: %w", ServiceName, err)
+	}
+	defer s.Close()
+
+	status, err := s.Query()
+	if err != nil {
+		return fmt.Errorf("consultando estado inicial: %w", err)
+	}
+	if status.State != svc.Running {
+		if err := s.Start(); err != nil {
+			return fmt.Errorf("iniciando servicio: %w", err)
+		}
+	}
+
+	deadline := time.Now().Add(timeout)
+	var lastState svc.State
+	for time.Now().Before(deadline) {
+		status, err = s.Query()
+		if err != nil {
+			return fmt.Errorf("consultando estado durante arranque: %w", err)
+		}
+		lastState = status.State
+		if status.State == svc.Running {
+			return nil
+		}
+		if status.State == svc.Stopped {
+			return fmt.Errorf("el servicio volvió a STOPPED durante el arranque")
+		}
+		time.Sleep(500 * time.Millisecond)
+	}
+
+	return fmt.Errorf("timeout esperando RUNNING; último estado SCM=%v", lastState)
 }
 
 func safeWriteBinary(destPath string, data []byte) error {
