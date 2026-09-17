@@ -41,6 +41,36 @@ type InstallResult struct {
 	Details        string   `json:"details"`
 }
 
+// UnmarshalJSON implements custom JSON decoding for ScanResult to handle both array and single-object patches from PowerShell
+func (r *ScanResult) UnmarshalJSON(data []byte) error {
+	type Alias ScanResult
+	aux := struct {
+		Patches json.RawMessage `json:"patches"`
+		*Alias
+	}{
+		Alias: (*Alias)(r),
+	}
+	if err := json.Unmarshal(data, &aux); err != nil {
+		return err
+	}
+	if len(aux.Patches) == 0 || string(aux.Patches) == "null" {
+		r.Patches = []PatchItem{}
+		return nil
+	}
+	// Try slice first
+	if err := json.Unmarshal(aux.Patches, &r.Patches); err == nil {
+		return nil
+	}
+	// Fallback to single object if PowerShell serialized 1 item as an object
+	var single PatchItem
+	if err := json.Unmarshal(aux.Patches, &single); err == nil {
+		r.Patches = []PatchItem{single}
+		return nil
+	}
+	r.Patches = []PatchItem{}
+	return nil
+}
+
 // ScanWindowsUpdates actively scans for pending updates via Windows Update Session
 func ScanWindowsUpdates(ctx context.Context, timeout time.Duration) (*ScanResult, error) {
 	startTime := time.Now()
@@ -50,12 +80,14 @@ func ScanWindowsUpdates(ctx context.Context, timeout time.Duration) (*ScanResult
 try {
     $Session = New-Object -ComObject Microsoft.Update.Session
     $Searcher = $Session.CreateUpdateSearcher()
-    $SearchResult = $Searcher.Search("IsInstalled=0 and Type='Software'")
+    $SearchResult = $Searcher.Search("IsInstalled=0 and IsHidden=0")
     $list = @()
     foreach ($u in $SearchResult.Updates) {
         $kbs = @()
         foreach ($kb in $u.KBArticleIDs) { $kbs += "KB$kb" }
-        $mainKB = if ($kbs.Count -gt 0) { $kbs[0] } else { "KB0" }
+        $mainKB = if ($kbs.Count -gt 0) { $kbs[0] } else {
+            if ($u.Identity.UpdateID) { "KB-" + $u.Identity.UpdateID.Substring(0, [Math]::Min(12, $u.Identity.UpdateID.Length)) } else { "KB0" }
+        }
         
         $cat = "OTHER"
         foreach ($c in $u.Categories) {
@@ -100,7 +132,7 @@ try {
     }
 
     [PSCustomObject]@{
-        patches = $list
+        patches = @($list)
         rebootPending = $reboot
         rebootReason = $reason
     } | ConvertTo-Json -Depth 4 -Compress

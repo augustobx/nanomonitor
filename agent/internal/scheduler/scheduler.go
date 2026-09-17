@@ -12,6 +12,7 @@ import (
 	"github.com/nanolabs/nanomonitor/agent/internal/buffer"
 	"github.com/nanolabs/nanomonitor/agent/internal/collector"
 	"github.com/nanolabs/nanomonitor/agent/internal/config"
+	"github.com/nanolabs/nanomonitor/agent/internal/patch"
 	"github.com/nanolabs/nanomonitor/agent/internal/transport"
 	"github.com/nanolabs/nanomonitor/agent/internal/version"
 )
@@ -390,6 +391,7 @@ func (s *Scheduler) collectAndSendSmart(ctx context.Context) {
 func (s *Scheduler) collectAndSendWindowsUpdate(ctx context.Context) {
 	log := s.logger.With("task", "windows_update")
 
+	// 1. Collect installed hotfixes and reboot status (lightweight WMI)
 	wu, err := collector.CollectWindowsUpdate()
 	if err != nil {
 		log.Warn("failed to collect windows update info", "error", err)
@@ -407,11 +409,83 @@ func (s *Scheduler) collectAndSendWindowsUpdate(ctx context.Context) {
 		if s.buffer != nil {
 			_ = s.buffer.Enqueue(buffer.PriorityInventory, "/agent/inventory", map[string]interface{}{"windowsUpdate": wu})
 		}
+	} else if resp.StatusCode >= 200 && resp.StatusCode < 300 {
+		log.Debug("windows update telemetry sent", "reboot_pending", wu.RebootPending, "hotfixes", wu.HotfixCount)
+	}
+
+	// 2. Active scan for PENDING updates via COM Session (feeds DevicePatch table)
+	s.scanAndReportPendingPatches(ctx)
+}
+
+// scanAndReportPendingPatches uses Microsoft.Update.Session COM to discover pending Windows Updates
+// and reports them to /agent/patches/report for persistence in the CRM's DevicePatch table
+func (s *Scheduler) scanAndReportPendingPatches(ctx context.Context) {
+	log := s.logger.With("task", "patch_scan")
+
+	scanResult, err := patch.ScanWindowsUpdates(ctx, 5*time.Minute)
+	if err != nil {
+		log.Warn("failed to scan pending windows updates via COM", "error", err)
+		return
+	}
+
+	log.Info("pending windows update scan completed",
+		"pending_count", len(scanResult.Patches),
+		"reboot_pending", scanResult.RebootPending,
+		"scan_duration_ms", scanResult.ScanDurationMs,
+	)
+
+	s.ReportPatches(ctx, scanResult)
+}
+
+// ReportPatches serializes and sends a patch scan result to /agent/patches/report
+func (s *Scheduler) ReportPatches(ctx context.Context, scanResult *patch.ScanResult) {
+	log := s.logger.With("task", "patch_report")
+	if scanResult == nil {
+		return
+	}
+
+	// Build patch report payload matching the server's reportDevicePatchesSchema
+	patchItems := make([]map[string]interface{}, 0, len(scanResult.Patches))
+	for _, p := range scanResult.Patches {
+		status := "MISSING"
+		if p.IsDownloaded {
+			status = "DOWNLOADED"
+		}
+
+		patchItems = append(patchItems, map[string]interface{}{
+			"kbArticleId":    p.KBArticleID,
+			"title":          p.Title,
+			"description":    p.Title,
+			"category":       p.Category,
+			"severity":       p.Severity,
+			"status":         status,
+			"sizeBytes":      p.SizeBytes,
+			"requiresReboot": p.RequiresReboot,
+		})
+	}
+
+	reportPayload := map[string]interface{}{
+		"patches":       patchItems,
+		"rebootPending": scanResult.RebootPending,
+		"rebootReason":  scanResult.RebootReason,
+	}
+
+	resp, err := s.client.SendWithRetry(ctx, func(ctx context.Context) (*transport.Response, error) {
+		return s.client.SendPatchReport(ctx, reportPayload)
+	}, 2)
+
+	if err != nil {
+		log.Warn("failed to send patch report, buffering offline", "error", err)
+		if s.buffer != nil {
+			_ = s.buffer.Enqueue(buffer.PriorityInventory, "/agent/patches/report", reportPayload)
+		}
 		return
 	}
 
 	if resp.StatusCode >= 200 && resp.StatusCode < 300 {
-		log.Debug("windows update telemetry sent", "reboot_pending", wu.RebootPending, "hotfixes", wu.HotfixCount)
+		log.Info("patch report sent successfully", "synced_patches", len(patchItems))
+	} else {
+		log.Warn("patch report rejected by server", "status", resp.StatusCode, "body", string(resp.Body))
 	}
 }
 

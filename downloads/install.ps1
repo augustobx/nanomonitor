@@ -105,7 +105,7 @@ if (-not $started) {
 }
 
 $agentExe = Join-Path $env:ProgramFiles "NanoLabs\NanoMonitor\nanoagent.exe"
-$installedVersion = "v1.2.0"
+$installedVersion = "v1.3.0"
 if (Test-Path $agentExe) {
     try {
         $vOut = (& $agentExe -v 2>&1)

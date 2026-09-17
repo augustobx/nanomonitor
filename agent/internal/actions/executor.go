@@ -3,6 +3,7 @@ package actions
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
 	"os"
 	"os/exec"
@@ -22,6 +23,7 @@ type SchedTriggerHook interface {
 	TriggerInventory(ctx context.Context)
 	TriggerSmart(ctx context.Context)
 	TriggerWindowsUpdate(ctx context.Context)
+	ReportPatches(ctx context.Context, scanResult *patch.ScanResult)
 }
 
 // ExecutionResult holds the sanitized output and exit code of a completed action
@@ -99,13 +101,13 @@ func ExecuteAction(ctx context.Context, action *transport.ActionItem, hook Sched
 
 	// ==================== WINDOWS DEFENDER ====================
 	case "DEFENDER_UPDATE_SIGNATURES":
-		return runCommand(ctx, 5*time.Minute, "powershell.exe", "-NoProfile", "-NonInteractive", "-Command", "Update-MpSignature")
+		return executeDefenderUpdateSignatures(ctx)
 
 	case "DEFENDER_QUICK_SCAN":
-		return runCommand(ctx, 10*time.Minute, "powershell.exe", "-NoProfile", "-NonInteractive", "-Command", "Start-MpScan -ScanType QuickScan")
+		return executeDefenderScan(ctx, "QuickScan", 10*time.Minute)
 
 	case "DEFENDER_FULL_SCAN":
-		return runCommand(ctx, 30*time.Minute, "powershell.exe", "-NoProfile", "-NonInteractive", "-Command", "Start-MpScan -ScanType FullScan")
+		return executeDefenderScan(ctx, "FullScan", 60*time.Minute)
 
 	// ==================== RED & CONECTIVIDAD ====================
 	case "FLUSH_DNS":
@@ -301,18 +303,40 @@ func executePatchScan(ctx context.Context, hook SchedTriggerHook) *ExecutionResu
 	}
 
 	if hook != nil {
-		hook.TriggerWindowsUpdate(ctx)
+		hook.ReportPatches(ctx, res)
 	}
 
-	summary := fmt.Sprintf("Escaneo de parches completado en %d ms. Actualizaciones encontradas: %d. Reinicio pendiente: %v",
-		res.ScanDurationMs, len(res.Patches), res.RebootPending)
+	var sb strings.Builder
+	sb.WriteString(fmt.Sprintf("Escaneo de Windows Update completado en %d ms.\n\n", res.ScanDurationMs))
+	sb.WriteString(fmt.Sprintf("📦 Actualizaciones pendientes encontradas: %d\n", len(res.Patches)))
+	sb.WriteString(fmt.Sprintf("🔄 Reinicio del sistema requerido: %v\n", res.RebootPending))
 	if res.RebootReason != "" {
-		summary += " (" + res.RebootReason + ")"
+		sb.WriteString(fmt.Sprintf("ℹ️ Motivo de reinicio: %s\n", res.RebootReason))
+	}
+
+	if len(res.Patches) > 0 {
+		sb.WriteString("\nDetalle de parches detectados:\n")
+		for i, p := range res.Patches {
+			downloadedStr := "Pendiente descarga"
+			if p.IsDownloaded {
+				downloadedStr = "Descargado"
+			}
+			rebootStr := "No requiere reinicio"
+			if p.RequiresReboot {
+				rebootStr = "Requiere reinicio"
+			}
+			sizeMb := float64(p.SizeBytes) / (1024 * 1024)
+			sb.WriteString(fmt.Sprintf("\n%d. [%s / %s] %s\n   %s\n   Estado: %s | %s | Tamaño: %.1f MB\n",
+				i+1, p.Category, p.Severity, p.KBArticleID, p.Title,
+				downloadedStr, rebootStr, sizeMb))
+		}
+	} else {
+		sb.WriteString("\n✅ El equipo está completamente al día. No se detectaron parches pendientes.")
 	}
 
 	return &ExecutionResult{
 		ExitCode: 0,
-		Output:   summary,
+		Output:   sb.String(),
 		Result: map[string]interface{}{
 			"patches":        res.Patches,
 			"rebootPending":  res.RebootPending,
@@ -485,4 +509,218 @@ func executeCleanTempFiles(ctx context.Context, hook SchedTriggerHook) *Executio
 		},
 	}
 }
+
+// executeDefenderScan runs a Defender scan with pre/post validation to capture real results
+func executeDefenderScan(ctx context.Context, scanType string, timeout time.Duration) *ExecutionResult {
+	script := fmt.Sprintf(`$ErrorActionPreference = 'Stop'
+$out = @{}
+try {
+    $pre = Get-MpComputerStatus
+    $out.preQuickScanStart = $pre.QuickScanStartTime.ToString('o')
+    $out.preFullScanStart = $pre.FullScanStartTime.ToString('o')
+    $out.antivirusEnabled = [bool]$pre.AntivirusEnabled
+    $out.realTimeProtection = [bool]$pre.RealTimeProtectionEnabled
+    $out.signatureVersion = $pre.AntivirusSignatureVersion
+    $out.signatureLastUpdated = $pre.AntivirusSignatureLastUpdated.ToString('o')
+
+    $scanStart = Get-Date
+    Start-MpScan -ScanType %s
+    $scanEnd = Get-Date
+
+    Start-Sleep -Seconds 2
+    $post = Get-MpComputerStatus
+
+    $out.scanType = '%s'
+    $out.scanStarted = $scanStart.ToString('o')
+    $out.scanFinished = $scanEnd.ToString('o')
+    $out.scanDurationSeconds = [math]::Round(($scanEnd - $scanStart).TotalSeconds, 1)
+
+    if ('%s' -eq 'QuickScan') {
+        $out.postScanStart = $post.QuickScanStartTime.ToString('o')
+        $out.postScanEnd = $post.QuickScanEndTime.ToString('o')
+        $out.scanConfirmed = ($post.QuickScanStartTime -gt $pre.QuickScanStartTime)
+    } else {
+        $out.postScanStart = $post.FullScanStartTime.ToString('o')
+        $out.postScanEnd = $post.FullScanEndTime.ToString('o')
+        $out.scanConfirmed = ($post.FullScanStartTime -gt $pre.FullScanStartTime)
+    }
+
+    # Check for threats
+    try {
+        $threats = Get-MpThreatDetection -ErrorAction SilentlyContinue | Where-Object { $_.InitialDetectionTime -gt $scanStart }
+        $out.threatsFound = @($threats).Count
+        if ($out.threatsFound -gt 0) {
+            $out.threatNames = ($threats | Select-Object -First 5 | ForEach-Object {
+                try { (Get-MpThreat -ThreatID $_.ThreatID -ErrorAction SilentlyContinue).ThreatName } catch { 'Unknown' }
+            }) -join ', '
+        }
+    } catch {
+        $out.threatsFound = 0
+    }
+
+    $out.success = $true
+} catch {
+    $out.success = $false
+    $out.error = $_.Exception.Message
+}
+$out | ConvertTo-Json -Compress`, scanType, scanType, scanType)
+
+	cmdCtx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+
+	cmd := exec.CommandContext(cmdCtx, "powershell.exe", "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-Command", script)
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+
+	err := cmd.Run()
+	combined := strings.TrimSpace(stdout.String())
+	errStr := strings.TrimSpace(stderr.String())
+
+	if err != nil && combined == "" {
+		if errStr != "" {
+			combined = errStr
+		} else {
+			combined = err.Error()
+		}
+	}
+
+	// Try to parse JSON output for structured result
+	result := make(map[string]interface{})
+	if err := json.Unmarshal([]byte(combined), &result); err == nil {
+		// Build human-readable summary
+		var sb strings.Builder
+		sb.WriteString(fmt.Sprintf("Windows Defender %s completado.\n\n", scanType))
+		if confirmed, ok := result["scanConfirmed"].(bool); ok && confirmed {
+			sb.WriteString("✅ Scan confirmado por Defender.\n")
+		}
+		if dur, ok := result["scanDurationSeconds"].(float64); ok {
+			sb.WriteString(fmt.Sprintf("⏱️ Duración: %.1f segundos\n", dur))
+		}
+		if threats, ok := result["threatsFound"].(float64); ok {
+			if threats > 0 {
+				sb.WriteString(fmt.Sprintf("🚨 Amenazas detectadas: %.0f\n", threats))
+				if names, ok := result["threatNames"].(string); ok && names != "" {
+					sb.WriteString(fmt.Sprintf("   Nombres: %s\n", names))
+				}
+			} else {
+				sb.WriteString("🛡️ Sin amenazas detectadas.\n")
+			}
+		}
+		if sigVer, ok := result["signatureVersion"].(string); ok {
+			sb.WriteString(fmt.Sprintf("📋 Versión de firmas: %s\n", sigVer))
+		}
+
+		exitCode := 0
+		if success, ok := result["success"].(bool); ok && !success {
+			exitCode = 1
+		}
+
+		return &ExecutionResult{
+			ExitCode: exitCode,
+			Output:   sb.String(),
+			Result:   result,
+		}
+	}
+
+	// Fallback: return raw output
+	exitCode := 0
+	if err != nil {
+		exitCode = 1
+	}
+	return &ExecutionResult{
+		ExitCode: exitCode,
+		Output:   combined,
+		Error:    errStr,
+	}
+}
+
+// executeDefenderUpdateSignatures updates Defender signatures and reports pre/post version
+func executeDefenderUpdateSignatures(ctx context.Context) *ExecutionResult {
+	script := `$ErrorActionPreference = 'Stop'
+$out = @{}
+try {
+    $pre = Get-MpComputerStatus
+    $out.preVersion = $pre.AntivirusSignatureVersion
+    $out.preLastUpdated = $pre.AntivirusSignatureLastUpdated.ToString('o')
+
+    Update-MpSignature
+
+    Start-Sleep -Seconds 2
+    $post = Get-MpComputerStatus
+    $out.postVersion = $post.AntivirusSignatureVersion
+    $out.postLastUpdated = $post.AntivirusSignatureLastUpdated.ToString('o')
+    $out.updated = ($post.AntivirusSignatureVersion -ne $pre.AntivirusSignatureVersion)
+    $out.engineVersion = $post.AMEngineVersion
+    $out.success = $true
+} catch {
+    $out.success = $false
+    $out.error = $_.Exception.Message
+}
+$out | ConvertTo-Json -Compress`
+
+	cmdCtx, cancel := context.WithTimeout(ctx, 5*time.Minute)
+	defer cancel()
+
+	cmd := exec.CommandContext(cmdCtx, "powershell.exe", "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-Command", script)
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+
+	err := cmd.Run()
+	combined := strings.TrimSpace(stdout.String())
+	errStr := strings.TrimSpace(stderr.String())
+
+	if err != nil && combined == "" {
+		if errStr != "" {
+			combined = errStr
+		} else {
+			combined = err.Error()
+		}
+	}
+
+	result := make(map[string]interface{})
+	if err := json.Unmarshal([]byte(combined), &result); err == nil {
+		var sb strings.Builder
+		sb.WriteString("Actualización de firmas de Windows Defender.\n\n")
+		if preVer, ok := result["preVersion"].(string); ok {
+			sb.WriteString(fmt.Sprintf("📋 Versión anterior: %s\n", preVer))
+		}
+		if postVer, ok := result["postVersion"].(string); ok {
+			sb.WriteString(fmt.Sprintf("📋 Versión actual:   %s\n", postVer))
+		}
+		if updated, ok := result["updated"].(bool); ok {
+			if updated {
+				sb.WriteString("✅ Firmas actualizadas exitosamente.\n")
+			} else {
+				sb.WriteString("ℹ️ Las firmas ya estaban al día.\n")
+			}
+		}
+		if engine, ok := result["engineVersion"].(string); ok {
+			sb.WriteString(fmt.Sprintf("⚙️ Motor AM: %s\n", engine))
+		}
+
+		exitCode := 0
+		if success, ok := result["success"].(bool); ok && !success {
+			exitCode = 1
+		}
+
+		return &ExecutionResult{
+			ExitCode: exitCode,
+			Output:   sb.String(),
+			Result:   result,
+		}
+	}
+
+	exitCode := 0
+	if err != nil {
+		exitCode = 1
+	}
+	return &ExecutionResult{
+		ExitCode: exitCode,
+		Output:   combined,
+		Error:    errStr,
+	}
+}
+
 

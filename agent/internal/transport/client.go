@@ -106,6 +106,11 @@ func (c *Client) SendEvents(ctx context.Context, payload interface{}) (*Response
 	return c.sendAuthenticatedJSON(ctx, "POST", "/agent/events", payload)
 }
 
+// SendPatchReport sends pending Windows Update patch inventory to the API
+func (c *Client) SendPatchReport(ctx context.Context, payload interface{}) (*Response, error) {
+	return c.sendAuthenticatedJSON(ctx, "POST", "/agent/patches/report", payload)
+}
+
 // ActionItem represents an action received from the server
 type ActionItem struct {
 	ID          string                 `json:"id"`
