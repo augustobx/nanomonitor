@@ -116,15 +116,18 @@ func Install(execPath string) error {
 		StartType:        mgr.StartAutomatic,
 		ErrorControl:     mgr.ErrorNormal,
 		ServiceStartName: "",
-		Dependencies:     []string{"Tcpip", "Dhcp", "Dnscache"},
 	})
 	if err != nil {
 		return fmt.Errorf("creating service: %w", err)
 	}
 	defer s.Close()
 
-	// Enable delayed auto start so Windows waits for network/other services
-	setDelayedAutoStart(s)
+	// Start automatically after the boot storm, but do not depend on DHCP/DNS services.
+	// The agent is designed to start offline and retry connectivity on its own.
+	if err := setDelayedAutoStart(s); err != nil {
+		_ = s.Delete()
+		return fmt.Errorf("enabling delayed auto start: %w", err)
+	}
 
 	// Set recovery actions: rapid restart (10s, 30s, 60s)
 	err = s.SetRecoveryActions([]mgr.RecoveryAction{
@@ -137,7 +140,10 @@ func Install(execPath string) error {
 	}
 
 	// Also recover on non-crash failures (e.g., exit code != 0)
-	setRecoveryOnNonCrash(s)
+	if err := setRecoveryOnNonCrash(s); err != nil {
+		_ = s.Delete()
+		return fmt.Errorf("enabling recovery on non-crash failures: %w", err)
+	}
 
 	return nil
 }
@@ -193,7 +199,7 @@ func Start() error {
 // setDelayedAutoStart enables the SERVICE_CONFIG_DELAYED_AUTO_START_INFO flag
 // so Windows delays starting the service until after the boot phase completes.
 // This ensures network connectivity is available when the agent starts.
-func setDelayedAutoStart(s *mgr.Service) {
+func setDelayedAutoStart(s *mgr.Service) error {
 	const SERVICE_CONFIG_DELAYED_AUTO_START_INFO = 3
 	type SERVICE_DELAYED_AUTO_START_INFO struct {
 		DelayedAutostart uint32
@@ -201,17 +207,24 @@ func setDelayedAutoStart(s *mgr.Service) {
 	info := SERVICE_DELAYED_AUTO_START_INFO{DelayedAutostart: 1}
 	advapi32 := windows.NewLazySystemDLL("advapi32.dll")
 	changeServiceConfig2 := advapi32.NewProc("ChangeServiceConfig2W")
-	changeServiceConfig2.Call(
+	r1, _, callErr := changeServiceConfig2.Call(
 		uintptr(s.Handle),
 		uintptr(SERVICE_CONFIG_DELAYED_AUTO_START_INFO),
 		uintptr(unsafe.Pointer(&info)),
 	)
+	if r1 == 0 {
+		if callErr != nil && callErr != windows.ERROR_SUCCESS {
+			return callErr
+		}
+		return fmt.Errorf("ChangeServiceConfig2W returned failure")
+	}
+	return nil
 }
 
 // setRecoveryOnNonCrash sets SERVICE_CONFIG_FAILURE_ACTIONS_FLAG so that
 // recovery actions also apply when the service stops with a non-zero exit code
 // (not just on crash / unclean termination).
-func setRecoveryOnNonCrash(s *mgr.Service) {
+func setRecoveryOnNonCrash(s *mgr.Service) error {
 	const SERVICE_CONFIG_FAILURE_ACTIONS_FLAG = 4
 	type SERVICE_FAILURE_ACTIONS_FLAG struct {
 		FailureActionsOnNonCrashFailures uint32
@@ -219,9 +232,16 @@ func setRecoveryOnNonCrash(s *mgr.Service) {
 	info := SERVICE_FAILURE_ACTIONS_FLAG{FailureActionsOnNonCrashFailures: 1}
 	advapi32 := windows.NewLazySystemDLL("advapi32.dll")
 	changeServiceConfig2 := advapi32.NewProc("ChangeServiceConfig2W")
-	changeServiceConfig2.Call(
+	r1, _, callErr := changeServiceConfig2.Call(
 		uintptr(s.Handle),
 		uintptr(SERVICE_CONFIG_FAILURE_ACTIONS_FLAG),
 		uintptr(unsafe.Pointer(&info)),
 	)
+	if r1 == 0 {
+		if callErr != nil && callErr != windows.ERROR_SUCCESS {
+			return callErr
+		}
+		return fmt.Errorf("ChangeServiceConfig2W returned failure")
+	}
+	return nil
 }
