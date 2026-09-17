@@ -58,6 +58,21 @@ enum SoftwareChangeType {
   UPDATED
 }
 
+enum HardwareComponent {
+  RAM
+  CPU
+  STORAGE
+  NETWORK
+  BIOS
+  OS
+}
+
+enum HardwareChangeType {
+  ADDED
+  REMOVED
+  MODIFIED
+}
+
 enum Severity {
   INFO
   WARNING
@@ -213,6 +228,8 @@ model Tenant {
   devicePatches    DevicePatch[]
   patchHistory     PatchHistory[]
   remediations     RemediationExecution[]
+  hardwareChanges  HardwareChange[]
+  softwareBlacklistRules SoftwareBlacklistRule[]
 
   @@map("tenants")
 }
@@ -239,6 +256,7 @@ model Customer {
   incidents        Incident[]
   remoteActions    RemoteAction[]
   patchPolicies    PatchPolicy[]
+  softwareBlacklistRules SoftwareBlacklistRule[]
 
   @@unique([tenantId, code])
   @@index([tenantId])
@@ -310,6 +328,7 @@ model Device {
   patches            DevicePatch[]
   patchHistory       PatchHistory[]
   remediations       RemediationExecution[]
+  hardwareChanges    HardwareChange[]
 
   @@index([tenantId, customerId])
   @@index([tenantId, status])
@@ -479,6 +498,47 @@ model SoftwareChange {
 
   @@index([tenantId, deviceId, detectedAt(sort: Desc)])
   @@map("software_changes")
+}
+
+model HardwareChange {
+  id            String             @id @default(uuid()) @db.Uuid
+  tenantId      String             @db.Uuid
+  deviceId      String             @db.Uuid
+  detectedAt    DateTime           @default(now())
+  component     HardwareComponent
+  changeType    HardwareChangeType
+  componentName String
+  oldValue      String?
+  newValue      String?
+  details       Json?
+
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  device Device @relation(fields: [deviceId], references: [id], onDelete: Cascade)
+
+  @@index([tenantId, deviceId, detectedAt(sort: Desc)])
+  @@map("hardware_changes")
+}
+
+model SoftwareBlacklistRule {
+  id          String   @id @default(uuid()) @db.Uuid
+  tenantId    String   @db.Uuid
+  customerId  String?  @db.Uuid
+  name        String
+  pattern     String
+  category    String
+  severity    Severity @default(HIGH)
+  description String?
+  enabled     Boolean  @default(true)
+  autoAlert   Boolean  @default(true)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  tenant   Tenant    @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  customer Customer? @relation(fields: [customerId], references: [id], onDelete: Cascade)
+
+  @@index([tenantId])
+  @@index([customerId])
+  @@map("software_blacklist_rules")
 }
 
 model DeviceEvent {

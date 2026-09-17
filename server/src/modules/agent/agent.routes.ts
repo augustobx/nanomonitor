@@ -3,6 +3,8 @@ import crypto from 'crypto';
 import { db } from '../../lib/db.js';
 import { authenticateAgent } from '../../middleware/agent-auth.js';
 import { evaluateDeviceAlerts } from '../alerts/alert-evaluator.js';
+import { HardwareDiffer } from '../inventory/hardware-differ.js';
+import { SoftwareComplianceService } from '../inventory/software-compliance.service.js';
 import {
   agentEventsSchema,
   agentHeartbeatSchema,
@@ -229,6 +231,16 @@ export const agentRoutes: FastifyPluginAsync = async (fastify: FastifyInstance) 
       data: deviceUpdates,
     });
 
+    // Evaluate hardware changes & detect physical tampering (e.g. RAM reduction)
+    HardwareDiffer.evaluateHardwareChanges(tenantId, deviceId, {
+      hardware,
+      os: identity.os || undefined,
+      network,
+      storage,
+    }).catch((err) => {
+      request.log.error({ err, deviceId }, 'Failed to evaluate hardware changes');
+    });
+
     return reply.status(200).send({ status: 'ok', checksum });
   });
 
@@ -279,6 +291,11 @@ export const agentRoutes: FastifyPluginAsync = async (fastify: FastifyInstance) 
     await db.device.update({
       where: { id: deviceId },
       data: { lastSeenAt: new Date() },
+    });
+
+    // Check for unauthorized / blacklisted software violations
+    SoftwareComplianceService.evaluateSoftwareCompliance(tenantId, deviceId, items).catch((err) => {
+      request.log.error({ err, deviceId }, 'Failed to evaluate software compliance');
     });
 
     return reply.status(200).send({

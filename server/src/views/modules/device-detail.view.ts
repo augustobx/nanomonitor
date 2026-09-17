@@ -173,13 +173,51 @@ export function getDeviceDetailViewHtml(): string {
       </div>
 
       <!-- SUBTAB 3: HARDWARE & SO -->
-      <div id="dViewHardware" style="display: none; flex-direction: column; gap: 20px;">
-        <div class="section-card">
+      <div id="dViewHardware" style="display: none; flex-direction: column; gap: 16px;">
+        <!-- Subnavigation Buttons -->
+        <div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 10px; border-bottom: 1px solid var(--border-color); padding-bottom: 8px;">
+          <div style="display: flex; gap: 8px;">
+            <button id="dBtnHwSpecs" class="filter-pill active" onclick="switchDeviceHwTab('specs')" style="padding: 6px 14px; font-weight: 700;">
+              💻 Componentes & Especificaciones
+            </button>
+            <button id="dBtnHwChanges" class="filter-pill" onclick="switchDeviceHwTab('changes')" style="padding: 6px 14px; font-weight: 700;">
+              🔧 Registro de Cambios Físicos (<span id="dCountHwChanges">0</span>)
+            </button>
+          </div>
+          <span style="font-size: 11px; color: var(--text-muted);">Auditoría de integridad de hardware</span>
+        </div>
+
+        <!-- Section 1: Hardware Specs Grid -->
+        <div id="dContainerHwSpecs" class="section-card">
           <div class="section-header">
             <div class="section-title"><span>⚙️ Especificaciones de Hardware y Sistema Operativo</span></div>
           </div>
           <div class="section-body" style="display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 14px;" id="dHardwareGrid">
             <!-- Hardware properties dynamically rendered -->
+          </div>
+        </div>
+
+        <!-- Section 2: Hardware Changes Audit Log Table -->
+        <div id="dContainerHwChanges" class="section-card" style="display: none;">
+          <div class="section-header">
+            <div class="section-title"><span>🔧 Historial de Modificaciones Físicas (RAM, CPU, Discos, Red, SO)</span></div>
+          </div>
+          <div class="table-responsive" style="max-height: 480px; overflow-y: auto;">
+            <table class="noc-table">
+              <thead>
+                <tr>
+                  <th style="width: 140px;">Fecha / Hora</th>
+                  <th>Componente</th>
+                  <th style="width: 130px;">Tipo de Cambio</th>
+                  <th>Componente / Recurso</th>
+                  <th>Valor Anterior</th>
+                  <th>Valor Nuevo</th>
+                </tr>
+              </thead>
+              <tbody id="dHwChangesTableBody">
+                <tr><td colspan="6" style="text-align: center; color: var(--text-muted); padding: 24px;">No se registran cambios de hardware.</td></tr>
+              </tbody>
+            </table>
           </div>
         </div>
       </div>
@@ -235,16 +273,32 @@ export function getDeviceDetailViewHtml(): string {
         </div>
       </div>
 
-      <!-- SUBTAB 7: SOFTWARE INSTALADO -->
+      <!-- SUBTAB 7: SOFTWARE INSTALADO & CAMBIOS -->
       <div id="dViewSoftware" style="display: none; flex-direction: column; gap: 16px;">
-        <div class="section-card">
-          <div class="section-header">
-            <div class="section-title"><span>📦 Inventario de Software Instalado</span></div>
-            <div class="input-search-wrapper">
+        <!-- Subnavigation & Search Header -->
+        <div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 10px; border-bottom: 1px solid var(--border-color); padding-bottom: 8px;">
+          <div style="display: flex; gap: 8px;">
+            <button id="dBtnSwInstalled" class="filter-pill active" onclick="switchDeviceSwTab('installed')" style="padding: 6px 14px; font-weight: 700;">
+              📦 Software Instalado (<span id="dCountSoftware">0</span>)
+            </button>
+            <button id="dBtnSwChanges" class="filter-pill" onclick="switchDeviceSwTab('changes')" style="padding: 6px 14px; font-weight: 700;">
+              📜 Registro de Cambios Delta (<span id="dCountSoftwareChanges">0</span>)
+            </button>
+          </div>
+
+          <div style="display: flex; align-items: center; gap: 8px;">
+            <div class="input-search-wrapper" id="swSearchWrapper">
               <span class="input-search-icon">🔍</span>
               <input type="text" id="softwareSearchInput" class="input-search" placeholder="Filtrar software..." oninput="filterSoftwareTable(this.value)">
             </div>
+            <button class="btn btn-secondary btn-sm" onclick="exportCurrentDeviceSoftwareCsv()" title="Descargar inventario en CSV">
+              📥 Exportar CSV
+            </button>
           </div>
+        </div>
+
+        <!-- Container 1: Currently Installed Software Table -->
+        <div id="dContainerSwInstalled" class="section-card">
           <div class="table-responsive" style="max-height: 480px; overflow-y: auto;">
             <table class="noc-table">
               <thead>
@@ -253,10 +307,32 @@ export function getDeviceDetailViewHtml(): string {
                   <th>Versión</th>
                   <th>Fabricante</th>
                   <th>Fecha de Instalación</th>
+                  <th style="width: 100px; text-align: center;">Arquitectura</th>
                 </tr>
               </thead>
               <tbody id="dSoftwareTableBody">
                 <!-- Dynamically rendered -->
+              </tbody>
+            </table>
+          </div>
+        </div>
+
+        <!-- Container 2: Software Delta Changes Log Table -->
+        <div id="dContainerSwChanges" class="section-card" style="display: none;">
+          <div class="table-responsive" style="max-height: 480px; overflow-y: auto;">
+            <table class="noc-table">
+              <thead>
+                <tr>
+                  <th style="width: 140px;">Fecha / Detección</th>
+                  <th style="width: 130px;">Acción</th>
+                  <th>Aplicación</th>
+                  <th>Versión Previa</th>
+                  <th>Versión Nueva</th>
+                  <th>Fabricante</th>
+                </tr>
+              </thead>
+              <tbody id="dSoftwareChangesTableBody">
+                <tr><td colspan="6" style="text-align: center; color: var(--text-muted); padding: 24px;">No se registran cambios de software en este equipo.</td></tr>
               </tbody>
             </table>
           </div>

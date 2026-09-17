@@ -2448,6 +2448,69 @@ export function getClientRuntimeScript(): string {
           '<div style="font-size: 13px; color: #fff; font-weight: 600; margin-top: 4px;" class="code-font">' + p.val + '</div>' +
         '</div>';
       }).join('');
+
+      // Render Hardware Changes Audit Log
+      const hwChanges = d.hardwareChanges && Array.isArray(d.hardwareChanges) ? d.hardwareChanges : [];
+      setVal('dCountHwChanges', hwChanges.length);
+      renderHardwareChangesTable(hwChanges);
+    }
+
+    function switchDeviceHwTab(tab) {
+      const cSpecs = document.getElementById('dContainerHwSpecs');
+      const cChanges = document.getElementById('dContainerHwChanges');
+      const bSpecs = document.getElementById('dBtnHwSpecs');
+      const bChanges = document.getElementById('dBtnHwChanges');
+      if (!cSpecs || !cChanges || !bSpecs || !bChanges) return;
+
+      if (tab === 'changes') {
+        cSpecs.style.display = 'none';
+        cChanges.style.display = 'block';
+        bSpecs.classList.remove('active');
+        bChanges.classList.add('active');
+      } else {
+        cChanges.style.display = 'none';
+        cSpecs.style.display = 'block';
+        bChanges.classList.remove('active');
+        bSpecs.classList.add('active');
+      }
+    }
+
+    function renderHardwareChangesTable(changes) {
+      const tb = document.getElementById('dHwChangesTableBody');
+      if (!tb) return;
+
+      if (!changes || changes.length === 0) {
+        tb.innerHTML = '<tr><td colspan="6" style="text-align: center; color: var(--text-muted); padding: 24px;">No se registran cambios ni modificaciones de hardware en este equipo.</td></tr>';
+        return;
+      }
+
+      tb.innerHTML = changes.map(function(c) {
+        const dateStr = c.detectedAt ? new Date(c.detectedAt).toLocaleString('es-AR') : '-';
+        let actionBadge = '';
+        if (c.changeType === 'ADDED') {
+          actionBadge = '<span class="status-pill status-online">+ AÑADIDO</span>';
+        } else if (c.changeType === 'REMOVED') {
+          actionBadge = '<span class="status-pill status-danger">- RETIRADO</span>';
+        } else {
+          actionBadge = '<span class="status-pill status-warning">~ MODIFICADO</span>';
+        }
+
+        let compIcon = '⚙️';
+        if (c.component === 'RAM') compIcon = '🧠';
+        else if (c.component === 'CPU') compIcon = '⚡';
+        else if (c.component === 'STORAGE') compIcon = '💾';
+        else if (c.component === 'NETWORK') compIcon = '🌐';
+        else if (c.component === 'OS') compIcon = '🪟';
+
+        return '<tr>' +
+          '<td><span class="code-font" style="font-size: 11px; color: #38bdf8;">' + dateStr + '</span></td>' +
+          '<td><strong style="color: #fff;">' + compIcon + ' ' + c.component + '</strong></td>' +
+          '<td>' + actionBadge + '</td>' +
+          '<td><span style="color: #fff; font-size: 13px;">' + (c.componentName || '-') + '</span></td>' +
+          '<td><span class="code-font" style="color: var(--text-muted); font-size: 12px;">' + (c.oldValue || '-') + '</span></td>' +
+          '<td><strong class="code-font" style="color: #38bdf8; font-size: 12px;">' + (c.newValue || '-') + '</strong></td>' +
+        '</tr>';
+      }).join('');
     }
 
     function renderDeviceStorageSubtab(d) {
@@ -2575,13 +2638,84 @@ export function getClientRuntimeScript(): string {
     function renderDeviceSoftwareSubtab(d) {
       const tb = document.getElementById('dSoftwareTableBody');
       const countEl = document.getElementById('dCountSoftware');
+      const countChangesEl = document.getElementById('dCountSoftwareChanges');
       if (!tb) return;
       const sinv = d.softwareInventories && d.softwareInventories.length > 0 ? d.softwareInventories[0] : null;
       const items = sinv ? (Array.isArray(sinv.software) ? sinv.software : (Array.isArray(sinv.items) ? sinv.items : [])) : [];
       cachedSoftwareList = items;
       if (countEl) countEl.textContent = items.length;
 
+      const swChanges = d.softwareChanges && Array.isArray(d.softwareChanges) ? d.softwareChanges : [];
+      if (countChangesEl) countChangesEl.textContent = swChanges.length;
+      renderSoftwareChangesTable(swChanges);
+
       filterSoftwareTable('');
+    }
+
+    function switchDeviceSwTab(tab) {
+      const cInst = document.getElementById('dContainerSwInstalled');
+      const cChanges = document.getElementById('dContainerSwChanges');
+      const bInst = document.getElementById('dBtnSwInstalled');
+      const bChanges = document.getElementById('dBtnSwChanges');
+      const swSearch = document.getElementById('swSearchWrapper');
+      if (!cInst || !cChanges || !bInst || !bChanges) return;
+
+      if (tab === 'changes') {
+        cInst.style.display = 'none';
+        cChanges.style.display = 'block';
+        bInst.classList.remove('active');
+        bChanges.classList.add('active');
+        if (swSearch) swSearch.style.display = 'none';
+      } else {
+        cChanges.style.display = 'none';
+        cInst.style.display = 'block';
+        bChanges.classList.remove('active');
+        bInst.classList.add('active');
+        if (swSearch) swSearch.style.display = 'block';
+      }
+    }
+
+    function renderSoftwareChangesTable(changes) {
+      const tb = document.getElementById('dSoftwareChangesTableBody');
+      if (!tb) return;
+
+      if (!changes || changes.length === 0) {
+        tb.innerHTML = '<tr><td colspan="6" style="text-align: center; color: var(--text-muted); padding: 24px;">No se registran cambios de software en este equipo.</td></tr>';
+        return;
+      }
+
+      tb.innerHTML = changes.map(function(c) {
+        const dateStr = c.detectedAt ? new Date(c.detectedAt).toLocaleString('es-AR') : '-';
+        let actionBadge = '';
+        if (c.changeType === 'INSTALLED') {
+          actionBadge = '<span class="status-pill status-online">+ INSTALADO</span>';
+        } else if (c.changeType === 'REMOVED') {
+          actionBadge = '<span class="status-pill status-danger">- DESINSTALADO</span>';
+        } else {
+          actionBadge = '<span class="status-pill status-warning">~ ACTUALIZADO</span>';
+        }
+
+        return '<tr>' +
+          '<td><span class="code-font" style="font-size: 11px; color: #38bdf8;">' + dateStr + '</span></td>' +
+          '<td>' + actionBadge + '</td>' +
+          '<td><strong style="color: #fff;">' + (c.name || 'Aplicación') + '</strong></td>' +
+          '<td><span class="code-font" style="color: var(--text-muted); font-size: 11px;">' + (c.versionBefore || '-') + '</span></td>' +
+          '<td><strong class="code-font" style="color: #60a5fa; font-size: 12px;">' + (c.versionAfter || '-') + '</strong></td>' +
+          '<td><span style="font-size: 12px; color: var(--text-secondary);">' + (c.publisher || '-') + '</span></td>' +
+        '</tr>';
+      }).join('');
+    }
+
+    function exportCurrentDeviceSoftwareCsv() {
+      if (!selectedDeviceId) {
+        showToast('Seleccione un dispositivo primero', 'warning');
+        return;
+      }
+      let token = localStorage.getItem('nl_token');
+      if (!token) return;
+
+      window.open('/api/v1/inventory/devices/' + selectedDeviceId + '/software/export?token=' + encodeURIComponent(token), '_blank');
+      showToast('Descargando inventario de software en CSV...');
     }
 
     function filterSoftwareTable(query) {
@@ -2597,16 +2731,22 @@ export function getClientRuntimeScript(): string {
       }
 
       if (list.length === 0) {
-        tb.innerHTML = '<tr><td colspan="4" style="text-align: center; color: var(--text-muted); padding: 24px;">No se encontraron programas instalados.</td></tr>';
+        tb.innerHTML = '<tr><td colspan="5" style="text-align: center; color: var(--text-muted); padding: 24px;">No se encontraron programas instalados.</td></tr>';
         return;
       }
 
       tb.innerHTML = list.slice(0, 100).map(function(s) {
+        const isBlacklisted = /(torrent|bittorrent|utorrent|qbittorrent|anydesk|teamviewer|miner|xmrig)/i.test(s.name || '');
+        const nameHtml = isBlacklisted
+          ? '<strong style="color: #f87171;" title="Aplicación no autorizada detectada">' + (s.name || 'App') + '</strong> <span class="status-pill status-danger" style="font-size: 9px; padding: 1px 6px;">⚠️ No Autorizado</span>'
+          : '<strong style="color: #fff;">' + (s.name || 'Aplicación') + '</strong>';
+
         return '<tr>' +
-          '<td><strong style="color: #fff;">' + (s.name || 'Aplicación') + '</strong></td>' +
+          '<td>' + nameHtml + '</td>' +
           '<td><span class="code-font" style="color: #60a5fa;">' + (s.version || '-') + '</span></td>' +
           '<td>' + (s.publisher || '-') + '</td>' +
           '<td><span class="code-font" style="font-size: 11px; color: var(--text-muted);">' + (s.installDate || '-') + '</span></td>' +
+          '<td style="text-align: center;"><span class="code-badge">' + (s.architecture || 'x64') + '</span></td>' +
         '</tr>';
       }).join('');
     }
@@ -3416,6 +3556,9 @@ export function getClientRuntimeScript(): string {
     window.recalculateCurrentDeviceHealth = recalculateCurrentDeviceHealth;
     window.triggerDeviceAlertEvaluation = triggerDeviceAlertEvaluation;
     window.filterSoftwareTable = filterSoftwareTable;
+    window.switchDeviceHwTab = switchDeviceHwTab;
+    window.switchDeviceSwTab = switchDeviceSwTab;
+    window.exportCurrentDeviceSoftwareCsv = exportCurrentDeviceSoftwareCsv;
     window.handleMoveDevice = handleMoveDevice;
     window.copyDeviceDiagnostic = copyDeviceDiagnostic;
     window.switchAgentsTab = switchAgentsTab;

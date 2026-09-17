@@ -17,7 +17,9 @@ import { alertsRoutes } from './modules/alerts/alerts.routes.js';
 import { deviceActionRoutes, agentActionRoutes } from './modules/actions/actions.routes.js';
 import { patchRoutes, devicePatchRoutes, agentPatchRoutes } from './modules/patches/patches.routes.js';
 import { remediationRoutes } from './modules/remediation/remediation.routes.js';
+import { inventoryRoutes } from './modules/inventory/inventory.routes.js';
 import { ensureDefaultAlertRules } from './modules/alerts/alert-rules.seed.js';
+import { SoftwareComplianceService } from './modules/inventory/software-compliance.service.js';
 import { authenticateUser } from './middleware/user-auth.js';
 import { db } from './lib/db.js';
 import { getLandingHtml } from './views/landing.html.js';
@@ -53,6 +55,11 @@ export async function buildApp(): Promise<FastifyInstance> {
   // Ensure default alert rules exist for all active tenants
   ensureDefaultAlertRules().catch((err) => {
     app.log.error({ err }, 'Failed to seed default alert rules');
+  });
+
+  // Ensure default software blacklist rules exist
+  SoftwareComplianceService.ensureDefaultBlacklistRules().catch((err) => {
+    app.log.error({ err }, 'Failed to seed default software blacklist rules');
   });
 
   // Security plugins — CSP must allow inline scripts/styles for the SSR landing console
@@ -427,6 +434,7 @@ export async function buildApp(): Promise<FastifyInstance> {
   await app.register(patchRoutes, { prefix: '/api/v1/patches' });
   await app.register(alertsRoutes, { prefix: '/api/v1/alerts' });
   await app.register(remediationRoutes, { prefix: '/api/v1/remediations' });
+  await app.register(inventoryRoutes, { prefix: '/api/v1/inventory' });
 
   // Centralized Error Handler
   app.setErrorHandler((error: any, request, reply) => {
