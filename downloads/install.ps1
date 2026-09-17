@@ -80,9 +80,14 @@ if ($Token) {
 
 try {
     $process = Start-Process -FilePath $installerPath -ArgumentList $procArgs -PassThru
-    # Espera controlada de max 15 segundos para evitar bloqueos por handles heredados
-    $null = $process.WaitForExit(15000)
-    if ($process.HasExited -and $process.ExitCode -ne 0) {
+    # Espera controlada: el wrapper no puede declarar éxito mientras el instalador siga trabajando.
+    $exited = $process.WaitForExit(60000)
+    if (-not $exited) {
+        try { $process.Kill() } catch {}
+        Write-Host "[!] El instalador no finalizo dentro de 60 segundos. Instalacion abortada." -ForegroundColor Red
+        exit 1
+    }
+    if ($process.ExitCode -ne 0) {
         Write-Host "[!] El instalador finalizo con codigo de error: $($process.ExitCode)" -ForegroundColor Red
         exit $process.ExitCode
     }
@@ -106,31 +111,77 @@ for ($i = 0; $i -lt 10; $i++) {
 }
 
 if (-not $started) {
-    Start-Service -Name "NanoLabsAgent" -ErrorAction SilentlyContinue
-    Start-Sleep -Seconds 2
-    $svc = Get-Service -Name "NanoLabsAgent" -ErrorAction SilentlyContinue
-    if ($svc -and $svc.Status -eq 'Running') {
-        $started = $true
+    try {
+        Start-Service -Name "NanoLabsAgent" -ErrorAction Stop
+    } catch {
+        Write-Host "[!] No se pudo iniciar NanoLabsAgent: $($_.Exception.Message)" -ForegroundColor Red
+        exit 1
+    }
+
+    for ($i = 0; $i -lt 15; $i++) {
+        Start-Sleep -Seconds 1
+        $svc = Get-Service -Name "NanoLabsAgent" -ErrorAction SilentlyContinue
+        if ($svc -and $svc.Status -eq 'Running') {
+            $started = $true
+            break
+        }
+        if ($svc -and $svc.Status -eq 'Stopped') {
+            break
+        }
     }
 }
 
-$agentExe = Join-Path $env:ProgramFiles "NanoLabs\NanoMonitor\nanoagent.exe"
-$installedVersion = "v1.3.0"
-if (Test-Path $agentExe) {
-    try {
-        $vOut = (& $agentExe -v 2>&1)
-        if ($vOut) { $installedVersion = $vOut.ToString().Trim() }
-    } catch {}
+if (-not $started) {
+    Write-Host "[!] INSTALACION INCOMPLETA: NanoLabsAgent no quedo en estado RUNNING." -ForegroundColor Red
+    Write-Host "    Revise: Visor de eventos > Registros de Windows > Sistema > Service Control Manager." -ForegroundColor Yellow
+    exit 1
 }
 
-if ($started) {
-    Write-Host "=====================================================" -ForegroundColor Green
-    Write-Host "  [OK] NanoLabs Monitor instalado exitosamente!      " -ForegroundColor Green
-    Write-Host "  Version:  $installedVersion                        " -ForegroundColor Green
-    Write-Host "  Servicio: En ejecucion continua                    " -ForegroundColor Green
-    Write-Host "  Bandeja:  Icono activo en la barra de tareas       " -ForegroundColor Green
-    Write-Host "=====================================================" -ForegroundColor Green
-} else {
-    Write-Host "[*] El agente se instalo ($installedVersion). Verifique el estado con: Get-Service NanoLabsAgent" -ForegroundColor Yellow
+# Validate automatic + delayed startup. The agent must survive Windows reboot without user intervention.
+$svcConfig = Get-CimInstance Win32_Service -Filter "Name='NanoLabsAgent'" -ErrorAction SilentlyContinue
+if (-not $svcConfig) {
+    Write-Host "[!] No se pudo validar la configuracion de NanoLabsAgent." -ForegroundColor Red
+    exit 1
 }
+if ($svcConfig.StartMode -ne 'Auto') {
+    Write-Host "[!] StartMode invalido: $($svcConfig.StartMode). Se esperaba Auto." -ForegroundColor Red
+    exit 1
+}
+
+$delayedStart = 0
+try {
+    $delayedStart = (Get-ItemProperty -Path "HKLM:\SYSTEM\CurrentControlSet\Services\NanoLabsAgent" -Name "DelayedAutoStart" -ErrorAction Stop).DelayedAutoStart
+} catch {
+    Write-Host "[!] No se pudo validar DelayedAutoStart." -ForegroundColor Red
+    exit 1
+}
+if ($delayedStart -ne 1) {
+    Write-Host "[!] DelayedAutoStart no esta habilitado." -ForegroundColor Red
+    exit 1
+}
+
+$agentExe = Join-Path $env:ProgramFiles "NanoLabs\NanoMonitor\nanoagent.exe"
+if (-not (Test-Path $agentExe)) {
+    Write-Host "[!] No se encontro nanoagent.exe en $agentExe" -ForegroundColor Red
+    exit 1
+}
+
+$installedVersion = "desconocida"
+try {
+    $vOut = (& $agentExe -v 2>&1)
+    if ($vOut) { $installedVersion = $vOut.ToString().Trim() }
+} catch {
+    Write-Host "[!] No se pudo consultar la version instalada: $($_.Exception.Message)" -ForegroundColor Red
+    exit 1
+}
+
+$trayRunning = [bool](Get-Process -Name "nanotray" -ErrorAction SilentlyContinue)
+$trayText = if ($trayRunning) { "Iniciada en la sesion actual" } else { "Se iniciara con la proxima sesion de usuario" }
+
+Write-Host "=====================================================" -ForegroundColor Green
+Write-Host "  [OK] NanoLabs Monitor instalado y VERIFICADO       " -ForegroundColor Green
+Write-Host "  Version:  $installedVersion" -ForegroundColor Green
+Write-Host "  Servicio: RUNNING / Automatic / Delayed Start" -ForegroundColor Green
+Write-Host "  Bandeja:  $trayText" -ForegroundColor Green
+Write-Host "=====================================================" -ForegroundColor Green
 
