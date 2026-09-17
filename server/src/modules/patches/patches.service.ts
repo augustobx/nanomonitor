@@ -67,15 +67,70 @@ export class PatchesService {
       },
     });
 
+    const totalMissingPatches = await db.devicePatch.count({
+      where: {
+        tenantId,
+        status: { in: ['MISSING', 'PENDING_DOWNLOAD', 'DOWNLOADED'] },
+      },
+    });
+
+    const devices = await db.device.findMany({
+      where: { tenantId },
+      select: {
+        id: true,
+        hostname: true,
+        status: true,
+        lastSeenAt: true,
+        rebootState: true,
+        customerId: true,
+        customer: { select: { name: true } },
+        agent: { select: { agentVersion: true } },
+        patches: {
+          select: {
+            id: true,
+            category: true,
+            severity: true,
+            status: true,
+            requiresReboot: true,
+          },
+        },
+      },
+      orderBy: { hostname: 'asc' },
+    });
+
+    const deviceBreakdown = devices.map((d: any) => {
+      const missing = d.patches.filter((p: any) => p.status === 'MISSING' || p.status === 'PENDING_DOWNLOAD' || p.status === 'DOWNLOADED');
+      const criticalOrSecurity = missing.filter((p: any) => p.category === 'CRITICAL' || p.category === 'SECURITY' || p.severity === 'CRITICAL' || p.severity === 'IMPORTANT');
+      return {
+        deviceId: d.id,
+        hostname: d.hostname,
+        ipAddress: '-',
+        status: d.status,
+        customerName: d.customer?.name || 'NanoLabs',
+        agentVersion: d.agent?.agentVersion || '1.1.0',
+        missingCount: missing.length,
+        missingCriticalOrSecurity: criticalOrSecurity.length,
+        rebootState: d.rebootState,
+        isCompliant: missing.length === 0,
+        lastScanAt: d.lastSeenAt,
+      };
+    });
+
     return {
       totalDevices,
       upToDateDevices,
+      compliantDevices: upToDateDevices,
       devicesWithPendingPatches,
       compliancePct,
+      complianceRate: compliancePct,
+      totalMissingPatches,
+      totalCriticalOrSecurityMissing: criticalPendingCount + securityPendingCount,
+      totalPendingReboot: rebootRequiredDevices,
       criticalPendingCount,
       securityPendingCount,
       rebootRequiredDevices,
       failedInstallsCount,
+      deviceBreakdown,
     };
   }
 
