@@ -2529,6 +2529,18 @@ export function getClientRuntimeScript(): string {
       });
     }
 
+    function openRemoteActionsFromNav() {
+      if (selectedDeviceId) {
+        openDeviceWorkspace(selectedDeviceId);
+        switchDeviceSubTab('acciones');
+      } else if (currentDevices && currentDevices.length > 0) {
+        openDeviceWorkspace(currentDevices[0].id);
+        switchDeviceSubTab('acciones');
+      } else {
+        switchNavTab('devices');
+      }
+    }
+
     // ==========================================
     // AGENTS & ENROLLMENT WIZARD
     // ==========================================
@@ -3207,6 +3219,7 @@ export function getClientRuntimeScript(): string {
     window.handleThresholdSubmit = handleThresholdSubmit;
     window.saveNotificationSettings = saveNotificationSettings;
     window.updatePollingInterval = updatePollingInterval;
+    window.openRemoteActionsFromNav = openRemoteActionsFromNav;
     window.triggerAction = triggerAction;
     window.confirmAndTriggerAction = confirmAndTriggerAction;
     window.triggerRestartSelectedService = triggerRestartSelectedService;

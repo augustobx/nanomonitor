@@ -342,6 +342,8 @@ export function getDeviceDetailViewHtml(): string {
             </div>
           </div>
         </div>
+      </div>
+
       <!-- SUBTAB 11: ACCIONES REMOTAS -->
       <div id="dViewAcciones" style="display: none; flex-direction: column; gap: 20px;">
         
