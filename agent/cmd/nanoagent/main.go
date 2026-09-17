@@ -34,6 +34,7 @@ func main() {
 		configFlag    = flag.String("config", "", "Path to config file")
 		silentFlag    = flag.Bool("silent", false, "Silent mode (for automated installation)")
 	)
+	flag.BoolVar(versionFlag, "v", false, "Print version and exit")
 	flag.Parse()
 
 	// Version

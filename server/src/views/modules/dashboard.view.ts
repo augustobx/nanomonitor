@@ -190,7 +190,7 @@ export function getDashboardViewHtml(): string {
             <div class="section-body" style="padding: 14px; display: flex; flex-direction: column; gap: 10px;">
               <div style="display: flex; justify-content: space-between; align-items: center;">
                 <span style="font-size: 12px; color: var(--text-secondary);">Servidor API Fastify</span>
-                <span class="status-pill status-online"><span class="pulse-dot online"></span> Operativo (v1.1.0)</span>
+                <span class="status-pill status-online"><span class="pulse-dot online"></span> Operativo</span>
               </div>
               <div style="display: flex; justify-content: space-between; align-items: center;">
                 <span style="font-size: 12px; color: var(--text-secondary);">PostgreSQL 17</span>
@@ -202,7 +202,7 @@ export function getDashboardViewHtml(): string {
               </div>
               <div style="display: flex; justify-content: space-between; align-items: center;">
                 <span style="font-size: 12px; color: var(--text-secondary);">Agente Windows (Go)</span>
-                <span class="status-pill status-online"><span class="pulse-dot online"></span> v1.1.0 (TLS / HMAC-SHA256)</span>
+                <span class="status-pill status-online"><span class="pulse-dot online"></span> Canal Seguro (TLS / HMAC)</span>
               </div>
             </div>
           </div>

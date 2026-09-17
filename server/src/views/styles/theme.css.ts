@@ -589,39 +589,50 @@ export const themeCss = `
   }
 
   /* TABLES */
-  .table-responsive {
+  .table-responsive, .table-container {
     width: 100%;
     overflow-x: auto;
   }
-  table.noc-table {
+  table.noc-table, table.data-table {
     width: 100%;
     border-collapse: collapse;
     text-align: left;
+    table-layout: auto;
   }
-  table.noc-table th {
-    padding: 10px 14px;
+  table.noc-table th, table.data-table th {
+    padding: 12px 16px;
     font-size: 11px;
-    font-weight: 600;
-    color: var(--text-muted);
+    font-weight: 700;
+    color: #94a3b8;
     text-transform: uppercase;
-    letter-spacing: 0.5px;
-    border-bottom: 1px solid var(--border-subtle);
-    background: var(--bg-surface-subtle);
+    letter-spacing: 0.6px;
+    border-bottom: 2px solid rgba(255, 255, 255, 0.08);
+    background: rgba(15, 23, 42, 0.65);
     white-space: nowrap;
   }
-  table.noc-table td {
-    padding: 10px 14px;
-    font-size: 12px;
-    border-bottom: 1px solid var(--border-subtle);
+  table.noc-table td, table.data-table td {
+    padding: 12px 16px;
+    font-size: 12.5px;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.05);
     vertical-align: middle;
     color: #e2e8f0;
   }
-  table.noc-table tr:last-child td {
+  table.noc-table tr:last-child td, table.data-table tr:last-child td {
     border-bottom: none;
   }
-  table.noc-table tbody tr:hover td {
-    background: var(--bg-hover);
+  table.noc-table tbody tr:hover td, table.data-table tbody tr:hover td {
+    background: rgba(255, 255, 255, 0.03);
   }
+
+  /* Patch Fleet Table Specifics */
+  table.patch-fleet-table th:nth-child(1) { width: 22%; min-width: 210px; }
+  table.patch-fleet-table th:nth-child(2) { width: 14%; min-width: 140px; }
+  table.patch-fleet-table th:nth-child(3) { width: 11%; min-width: 110px; }
+  table.patch-fleet-table th:nth-child(4) { width: 12%; min-width: 120px; }
+  table.patch-fleet-table th:nth-child(5) { width: 11%; min-width: 110px; }
+  table.patch-fleet-table th:nth-child(6) { width: 10%; min-width: 100px; }
+  table.patch-fleet-table th:nth-child(7) { width: 10%; min-width: 120px; }
+  table.patch-fleet-table th:nth-child(8) { width: 10%; min-width: 180px; text-align: right; }
 
   /* FILTER TOOLBAR */
   .filter-bar {

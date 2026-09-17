@@ -108,6 +108,7 @@ export async function buildApp(): Promise<FastifyInstance> {
           include: {
             customer: { select: { id: true, name: true, code: true } },
             site: { select: { id: true, name: true } },
+            agent: { select: { id: true, agentVersion: true, status: true, lastAuthAt: true } },
             inventories: { take: 1, orderBy: { collectedAt: 'desc' } },
             softwareInventories: { take: 1, orderBy: { collectedAt: 'desc' } },
             metrics: { take: 15, orderBy: { timestamp: 'desc' } },
@@ -221,6 +222,7 @@ export async function buildApp(): Promise<FastifyInstance> {
         include: {
           customer: { select: { id: true, name: true, code: true } },
           site: { select: { id: true, name: true } },
+          agent: { select: { id: true, agentVersion: true, status: true, lastAuthAt: true } },
           inventories: { take: 1, orderBy: { collectedAt: 'desc' } },
           softwareInventories: { take: 1, orderBy: { collectedAt: 'desc' } },
           metrics: { take: 15, orderBy: { timestamp: 'desc' } },

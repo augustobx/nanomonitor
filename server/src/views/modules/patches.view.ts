@@ -100,7 +100,7 @@ export function getPatchesViewHtml(): string {
           </div>
 
           <div class="table-container" style="max-height: 600px; overflow-y: auto;">
-            <table class="data-table">
+            <table class="noc-table patch-fleet-table">
               <thead>
                 <tr>
                   <th>Equipo / Hostname</th>
@@ -164,7 +164,7 @@ export function getPatchesViewHtml(): string {
           </div>
 
           <div class="table-container" style="max-height: 600px; overflow-y: auto;">
-            <table class="data-table">
+            <table class="noc-table">
               <thead>
                 <tr>
                   <th>Fecha & Hora</th>

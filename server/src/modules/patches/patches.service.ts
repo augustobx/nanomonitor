@@ -85,6 +85,11 @@ export class PatchesService {
         customerId: true,
         customer: { select: { name: true } },
         agent: { select: { agentVersion: true } },
+        inventories: {
+          take: 1,
+          orderBy: { collectedAt: 'desc' },
+          select: { network: true, os: true },
+        },
         patches: {
           select: {
             id: true,
@@ -101,13 +106,35 @@ export class PatchesService {
     const deviceBreakdown = devices.map((d: any) => {
       const missing = d.patches.filter((p: any) => p.status === 'MISSING' || p.status === 'PENDING_DOWNLOAD' || p.status === 'DOWNLOADED');
       const criticalOrSecurity = missing.filter((p: any) => p.category === 'CRITICAL' || p.category === 'SECURITY' || p.severity === 'CRITICAL' || p.severity === 'IMPORTANT');
+
+      let resolvedIp = '-';
+      let resolvedOs = '';
+      if (d.inventories && d.inventories.length > 0) {
+        const inv = d.inventories[0];
+        if (inv.network && Array.isArray(inv.network.interfaces)) {
+          for (const iface of inv.network.interfaces) {
+            if (iface.ipAddresses && Array.isArray(iface.ipAddresses) && iface.ipAddresses.length > 0) {
+              const found = iface.ipAddresses.find((a: string) => a && !a.startsWith('127.') && !a.startsWith('169.254.') && a.includes('.'));
+              if (found) {
+                resolvedIp = found;
+                break;
+              }
+            }
+          }
+        }
+        if (inv.os && inv.os.caption) {
+          resolvedOs = inv.os.caption;
+        }
+      }
+
       return {
         deviceId: d.id,
         hostname: d.hostname,
-        ipAddress: '-',
+        ipAddress: resolvedIp,
+        osName: resolvedOs,
         status: d.status,
         customerName: d.customer?.name || 'NanoLabs',
-        agentVersion: d.agent?.agentVersion || '1.1.0',
+        agentVersion: d.agent?.agentVersion || '0.1.0',
         missingCount: missing.length,
         missingCriticalOrSecurity: criticalOrSecurity.length,
         rebootState: d.rebootState,

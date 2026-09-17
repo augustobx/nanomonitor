@@ -637,7 +637,7 @@ export function getDeviceDetailViewHtml(): string {
           </div>
 
           <div class="table-container" style="max-height: 550px; overflow-y: auto;">
-            <table class="data-table">
+            <table class="noc-table">
               <thead>
                 <tr>
                   <th style="width: 38px; text-align: center;">

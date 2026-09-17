@@ -53,10 +53,31 @@ export function getClientRuntimeScript(): string {
     }
 
     function getAgentVersionTag(d) {
-      if (!d) return 'v1.1.0';
-      const v = (d.agent && d.agent.agentVersion) ? d.agent.agentVersion : (d.agentVersion ? d.agentVersion : '1.1.0');
-      const clean = String(v).trim().replace(/^v/, '');
+      if (!d) return 'v0.1.0';
+      const raw = (d.agent && d.agent.agentVersion) ? d.agent.agentVersion : (d.agentVersion ? d.agentVersion : null);
+      if (!raw) return 'v0.1.0';
+      const clean = String(raw).trim().replace(/^v/, '');
       return 'v' + clean;
+    }
+
+    function renderAgentVersionBadge(d, compact) {
+      const tag = getAgentVersionTag(d);
+      const clean = tag.replace(/^v/, '');
+      const isLatest = clean.startsWith('1.1');
+      if (compact) {
+        if (isLatest) {
+          return '<span class="code-badge" style="font-size: 10px; margin-left: 6px; padding: 1px 6px; color: #34d399; border-color: rgba(52,211,153,0.35); background: rgba(52,211,153,0.1);" title="Agente actualizado a la última versión (' + tag + ')">' + tag + '</span>';
+        }
+        return '<span class="code-badge" style="font-size: 10px; margin-left: 6px; padding: 1px 6px; color: #fbbf24; border-color: rgba(251,191,36,0.35); background: rgba(251,191,36,0.1);" title="Versión anterior del agente (requiere actualización)">' + tag + ' ⚠️</span>';
+      }
+      if (isLatest) {
+        return '<span class="badge badge-success" style="font-size: 11px; padding: 3px 8px; font-weight: 600; display: inline-flex; align-items: center; gap: 5px;" title="Agente actualizado a la última versión">' +
+          tag + ' <span style="font-size: 9px; opacity: 0.9; background: rgba(255,255,255,0.2); padding: 1px 5px; border-radius: 3px;">Actualizado</span>' +
+        '</span>';
+      }
+      return '<span class="badge" style="background: rgba(245, 158, 11, 0.15); color: #fbbf24; border: 1px solid rgba(245, 158, 11, 0.35); font-size: 11px; padding: 3px 8px; font-weight: 600; display: inline-flex; align-items: center; gap: 5px;" title="Versión previa del agente (requiere actualización)">' +
+        tag + ' <span style="font-size: 9px; opacity: 0.9; background: rgba(245, 158, 11, 0.25); padding: 1px 5px; border-radius: 3px;">Desactualizado</span>' +
+      '</span>';
     }
 
     // Telemetry & Data Model Resolvers
@@ -1530,7 +1551,7 @@ export function getClientRuntimeScript(): string {
               '<span style="font-size: 14px;">💻</span>' +
               '<div>' +
                 '<strong class="code-font" style="color: #fff; cursor: pointer;" onclick="openDeviceWorkspace(\\\'' + d.id + '\\\')">' + host + '</strong>' +
-                '<span class="code-badge" style="font-size: 10px; margin-left: 6px; padding: 1px 5px; color: #60a5fa; border-color: rgba(96,165,250,0.3);">' + getAgentVersionTag(d) + '</span>' +
+                renderAgentVersionBadge(d, true) +
               '</div>' +
             '</div>' +
           '</td>' +
@@ -2482,8 +2503,8 @@ export function getClientRuntimeScript(): string {
 
       g.innerHTML = 
         '<div style="background: var(--bg-surface-subtle); border: 1px solid var(--border-subtle); border-radius: var(--radius-md); padding: 12px 14px;">' +
-          '<div style="font-size: 11px; color: var(--text-muted);">Versión del Agente</div>' +
-          '<div style="font-size: 14px; font-weight: 700; color: #60a5fa;" class="code-font">' + getAgentVersionTag(d) + '</div>' +
+          '<div style="font-size: 11px; color: var(--text-muted); margin-bottom: 4px;">Versión del Agente</div>' +
+          '<div>' + renderAgentVersionBadge(d, false) + '</div>' +
         '</div>' +
 
         '<div style="background: var(--bg-surface-subtle); border: 1px solid var(--border-subtle); border-radius: var(--radius-md); padding: 12px 14px;">' +
@@ -2605,7 +2626,7 @@ export function getClientRuntimeScript(): string {
           '<td><strong class="code-font" style="color: #fff; cursor: pointer;" onclick="openDeviceWorkspace(\\'' + d.id + '\\')">' + host + '</strong></td>' +
           '<td>' + custName + '</td>' +
           '<td>' + siteName + '</td>' +
-          '<td><span class="code-badge">' + ver + '</span></td>' +
+          '<td>' + renderAgentVersionBadge(d, false) + '</td>' +
           '<td><span class="status-pill ' + (isOnline ? 'status-online' : 'status-offline') + '">' + (isOnline ? 'Conectado' : 'Desconectado') + '</span></td>' +
           '<td><span class="code-font" style="font-size: 11px; color: var(--text-muted);">' + lastSeen + '</span></td>' +
           '<td style="text-align: right;"><button class="btn btn-secondary btn-sm" onclick="openDeviceWorkspace(\\'' + d.id + '\\')">Diagnóstico</button></td>' +
@@ -2646,7 +2667,7 @@ export function getClientRuntimeScript(): string {
           '<td><strong class="code-font" style="color: #fff; cursor: pointer;" onclick="openDeviceWorkspace(\\'' + d.id + '\\')">' + host + '</strong></td>' +
           '<td>' + custName + '</td>' +
           '<td>' + siteName + '</td>' +
-          '<td><span class="code-badge">' + ver + '</span></td>' +
+          '<td>' + renderAgentVersionBadge(d, false) + '</td>' +
           '<td><span class="status-pill ' + (isOnline ? 'status-online' : 'status-offline') + '">' + (isOnline ? 'Conectado' : 'Desconectado') + '</span></td>' +
           '<td><span class="code-font" style="font-size: 11px; color: var(--text-muted);">' + lastSeen + '</span></td>' +
           '<td style="text-align: right;"><button class="btn btn-secondary btn-sm" onclick="openDeviceWorkspace(\\'' + d.id + '\\')">Diagnóstico</button></td>' +
@@ -3350,41 +3371,55 @@ export function getClientRuntimeScript(): string {
         const isOnline = d.status === 'ONLINE';
 
         let statusBadge = isUpToDate 
-          ? '<span class="badge badge-success">AL DÍA</span>' 
-          : '<span class="badge badge-warning">' + (d.missingCount || 0) + ' PENDIENTES</span>';
+          ? '<span class="badge badge-success" style="font-weight: 600; padding: 3px 8px;">✓ AL DÍA</span>' 
+          : '<span class="badge badge-warning" style="font-weight: 600; padding: 3px 8px;">⚠️ ' + (d.missingCount || 0) + ' PENDIENTES</span>';
 
         let critBadge = hasCritical
-          ? '<span class="badge badge-danger">🚨 ' + d.missingCriticalOrSecurity + ' CRÍTICOS</span>'
-          : '<span style="color: var(--text-muted); font-size: 12px;">0</span>';
+          ? '<span class="badge badge-danger" style="font-weight: 700; padding: 3px 8px;">🚨 ' + d.missingCriticalOrSecurity + ' CRÍTICOS</span>'
+          : '<span style="color: var(--text-muted); font-size: 12px; font-weight: 600;">0 críticos</span>';
 
         let rebootBadge = needsReboot
-          ? '<span class="badge" style="background: rgba(239, 68, 68, 0.15); color: #ef4444; border: 1px solid rgba(239, 68, 68, 0.3);">⚠️ REQUERIDO</span>'
+          ? '<span class="badge" style="background: rgba(239, 68, 68, 0.15); color: #ef4444; border: 1px solid rgba(239, 68, 68, 0.3); font-weight: 600; padding: 3px 8px;">⚠️ REQUERIDO</span>'
           : '<span style="color: var(--text-muted); font-size: 12px;">OK</span>';
 
-        let lastScanText = d.lastScanAt ? new Date(d.lastScanAt).toLocaleString() : 'Sin escaneo';
+        let lastScanText = d.lastScanAt ? new Date(d.lastScanAt).toLocaleString('es-AR', { dateStyle: 'short', timeStyle: 'short' }) : 'Sin escaneo';
+
+        let subInfo = '';
+        if (d.ipAddress && d.ipAddress !== '-') {
+          subInfo = '<span class="code-font" style="font-size: 11px; color: var(--text-secondary);">' + d.ipAddress + '</span>';
+        }
+        if (d.osName) {
+          subInfo += (subInfo ? ' · ' : '') + '<span style="font-size: 11px; color: var(--text-muted);">' + d.osName + '</span>';
+        }
+        if (!subInfo) {
+          subInfo = '<span style="font-size: 11px; color: var(--text-muted);">Red activa</span>';
+        }
 
         html += '<tr>' +
           '<td>' +
-            '<div style="display: flex; align-items: center; gap: 8px;">' +
+            '<div style="display: flex; align-items: center; gap: 8px; flex-wrap: wrap;">' +
               '<span style="font-weight: 700; color: #fff; cursor: pointer;" onclick="openDeviceWorkspace(\\'' + d.deviceId + '\\'); switchDeviceSubTab(\\'parches\\');">' + (d.hostname || 'Equipo') + '</span>' +
-              '<span class="badge badge-info" style="font-size: 10px;">' + getAgentVersionTag(d) + '</span>' +
+              renderAgentVersionBadge(d, true) +
             '</div>' +
-            '<div style="font-size: 11px; color: var(--text-secondary); margin-top: 2px;">' + (d.ipAddress || '-') + '</div>' +
+            '<div style="margin-top: 3px;">' + subInfo + '</div>' +
           '</td>' +
           '<td>' +
-            '<div style="color: #fff; font-size: 13px;">' + (d.customerName || 'NanoLabs') + '</div>' +
+            '<div style="color: #fff; font-weight: 600; font-size: 13px;">' + (d.customerName || 'NanoLabs') + '</div>' +
           '</td>' +
           '<td>' +
-            '<span class="status-pill ' + (isOnline ? 'status-online' : 'status-offline') + '">' + (isOnline ? 'ONLINE' : 'OFFLINE') + '</span>' +
+            '<span class="status-pill ' + (isOnline ? 'status-online' : 'status-offline') + '">' +
+              '<span class="pulse-dot ' + (isOnline ? 'online' : 'offline') + '"></span> ' +
+              (isOnline ? 'ONLINE' : 'OFFLINE') +
+            '</span>' +
           '</td>' +
           '<td>' + statusBadge + '</td>' +
           '<td>' + critBadge + '</td>' +
           '<td>' + rebootBadge + '</td>' +
-          '<td style="font-size: 12px; color: var(--text-secondary);">' + lastScanText + '</td>' +
-          '<td style="text-align: right;">' +
-            '<div style="display: inline-flex; gap: 6px;">' +
-              '<button class="btn btn-secondary btn-sm" onclick="triggerDevicePatchScanById(\\'' + d.deviceId + '\\')" title="Escanear Windows Update">🔍 Escanear</button>' +
-              '<button class="btn btn-primary btn-sm" onclick="openDeviceWorkspace(\\'' + d.deviceId + '\\'); switchDeviceSubTab(\\'parches\\');" title="Ver catálogo de parches">📦 Ver Parches</button>' +
+          '<td style="font-size: 12px; color: var(--text-secondary); white-space: nowrap;">' + lastScanText + '</td>' +
+          '<td style="text-align: right; white-space: nowrap;">' +
+            '<div style="display: inline-flex; gap: 8px; justify-content: flex-end;">' +
+              '<button class="btn btn-secondary btn-sm" onclick="triggerDevicePatchScanById(\\'' + d.deviceId + '\\')" title="Escanear Windows Update" style="padding: 4px 10px; font-size: 12px;">🔍 Escanear</button>' +
+              '<button class="btn btn-primary btn-sm" onclick="openDeviceWorkspace(\\'' + d.deviceId + '\\'); switchDeviceSubTab(\\'parches\\');" title="Ver catálogo de parches" style="padding: 4px 10px; font-size: 12px;">📦 Ver Parches</button>' +
             '</div>' +
           '</td>' +
         '</tr>';
