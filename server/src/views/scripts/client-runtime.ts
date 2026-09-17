@@ -2451,7 +2451,8 @@ export function getClientRuntimeScript(): string {
 
       // Render Hardware Changes Audit Log
       const hwChanges = d.hardwareChanges && Array.isArray(d.hardwareChanges) ? d.hardwareChanges : [];
-      setVal('dCountHwChanges', hwChanges.length);
+      const countHwChangesEl = document.getElementById('dCountHwChanges');
+      if (countHwChangesEl) countHwChangesEl.textContent = hwChanges.length;
       renderHardwareChangesTable(hwChanges);
     }
 
@@ -2639,11 +2640,12 @@ export function getClientRuntimeScript(): string {
       const tb = document.getElementById('dSoftwareTableBody');
       const countEl = document.getElementById('dCountSoftware');
       const countChangesEl = document.getElementById('dCountSoftwareChanges');
-      if (!tb) return;
       const sinv = d.softwareInventories && d.softwareInventories.length > 0 ? d.softwareInventories[0] : null;
       const items = sinv ? (Array.isArray(sinv.software) ? sinv.software : (Array.isArray(sinv.items) ? sinv.items : [])) : [];
       cachedSoftwareList = items;
       if (countEl) countEl.textContent = items.length;
+      const countInstEl = document.getElementById('dCountSoftwareInstalled');
+      if (countInstEl) countInstEl.textContent = items.length;
 
       const swChanges = d.softwareChanges && Array.isArray(d.softwareChanges) ? d.softwareChanges : [];
       if (countChangesEl) countChangesEl.textContent = swChanges.length;

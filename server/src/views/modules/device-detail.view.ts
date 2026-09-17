@@ -279,7 +279,7 @@ export function getDeviceDetailViewHtml(): string {
         <div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 10px; border-bottom: 1px solid var(--border-color); padding-bottom: 8px;">
           <div style="display: flex; gap: 8px;">
             <button id="dBtnSwInstalled" class="filter-pill active" onclick="switchDeviceSwTab('installed')" style="padding: 6px 14px; font-weight: 700;">
-              📦 Software Instalado (<span id="dCountSoftware">0</span>)
+              📦 Software Instalado (<span id="dCountSoftwareInstalled">0</span>)
             </button>
             <button id="dBtnSwChanges" class="filter-pill" onclick="switchDeviceSwTab('changes')" style="padding: 6px 14px; font-weight: 700;">
               📜 Registro de Cambios Delta (<span id="dCountSoftwareChanges">0</span>)
