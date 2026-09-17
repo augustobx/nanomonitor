@@ -30,9 +30,17 @@ Write-Host "=====================================================" -ForegroundCo
 # 1. Check Administrator Privileges
 $isAdmin = ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
 if (-not $isAdmin) {
-    Write-Host "[!] Error: Este instalador requiere ejecutarse como Administrador." -ForegroundColor Red
-    Write-Host "[!] Abra PowerShell como Administrador e intente nuevamente." -ForegroundColor Yellow
-    exit 1
+    Write-Host "[*] Solicitando elevacion de privilegios de Administrador (UAC)..." -ForegroundColor Yellow
+    try {
+        $tokenParam = if ($Token) { " -Token `"$Token`"" } else { "" }
+        $fullCmd = "& { irm '$ApiUrl/install.ps1' | iex$tokenParam }"
+        Start-Process powershell.exe -ArgumentList "-NoProfile -ExecutionPolicy Bypass -Command `"$fullCmd`"" -Verb RunAs
+        exit 0
+    } catch {
+        Write-Host "[!] Error: Este instalador requiere ejecutarse como Administrador." -ForegroundColor Red
+        Write-Host "[!] Abra PowerShell como Administrador e intente nuevamente." -ForegroundColor Yellow
+        exit 1
+    }
 }
 
 # 2. Download Unified Installer
