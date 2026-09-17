@@ -1521,7 +1521,7 @@ export function getClientRuntimeScript(): string {
             '<div style="display: flex; align-items: center; gap: 8px;">' +
               '<span style="font-size: 14px;">💻</span>' +
               '<div>' +
-                '<strong class="code-font" style="color: #fff; cursor: pointer;" onclick="openDeviceWorkspace(\'' + d.id + '\')">' + host + '</strong>' +
+                '<strong class="code-font" style="color: #fff; cursor: pointer;" onclick="openDeviceWorkspace(\\\'' + d.id + '\\\')">' + host + '</strong>' +
                 '<span class="code-badge" style="font-size: 10px; margin-left: 6px; padding: 1px 5px; color: #60a5fa; border-color: rgba(96,165,250,0.3);">' + getAgentVersionTag(d) + '</span>' +
               '</div>' +
             '</div>' +
