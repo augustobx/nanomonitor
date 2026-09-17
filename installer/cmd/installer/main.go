@@ -198,12 +198,12 @@ func doInstall(token, apiURL string, silent bool) {
 		token = askTokenGUI()
 	}
 
-	// 1. Stop existing service if running
+	// 1. Temporarily disable watchdog and stop service/tray
+	_ = exec.Command("sc.exe", "failure", ServiceName, "reset=", "0", "actions=", "").Run()
 	_ = exec.Command("net", "stop", ServiceName).Run()
-
-	// 2. Kill existing tray if running
+	_ = exec.Command("taskkill", "/F", "/IM", "nanoagent.exe").Run()
 	_ = exec.Command("taskkill", "/F", "/IM", "nanotray.exe").Run()
-	time.Sleep(500 * time.Millisecond)
+	time.Sleep(800 * time.Millisecond)
 
 	// 3. Create target program files directory
 	if err := os.MkdirAll(DefaultInstallDir, 0755); err != nil {
@@ -211,15 +211,15 @@ func doInstall(token, apiURL string, silent bool) {
 		os.Exit(1)
 	}
 
-	// 4. Extract binaries
+	// 4. Extract binaries safely with lock handling
 	agentDest := filepath.Join(DefaultInstallDir, "nanoagent.exe")
-	if err := os.WriteFile(agentDest, nanoagentBin, 0755); err != nil {
+	if err := safeWriteBinary(agentDest, nanoagentBin); err != nil {
 		showError(fmt.Sprintf("Error instalando nanoagent.exe:\n%v", err), silent)
 		os.Exit(1)
 	}
 
 	trayDest := filepath.Join(DefaultInstallDir, "nanotray.exe")
-	if err := os.WriteFile(trayDest, nanotrayBin, 0755); err != nil {
+	if err := safeWriteBinary(trayDest, nanotrayBin); err != nil {
 		showError(fmt.Sprintf("Error instalando nanotray.exe:\n%v", err), silent)
 		os.Exit(1)
 	}
@@ -287,6 +287,36 @@ func doInstall(token, apiURL string, silent bool) {
 			MB_OK|MB_ICONINFORMATION)
 	}
 	os.Exit(0)
+}
+
+func safeWriteBinary(destPath string, data []byte) error {
+	// 1. Try direct writes first
+	for i := 0; i < 3; i++ {
+		if err := os.WriteFile(destPath, data, 0755); err == nil {
+			return nil
+		}
+		time.Sleep(300 * time.Millisecond)
+	}
+
+	// 2. If locked, rename old file out of the way (Windows permits renaming running .exe)
+	oldPath := destPath + ".old"
+	_ = os.Remove(oldPath)
+	_ = os.Rename(destPath, oldPath)
+
+	if err := os.WriteFile(destPath, data, 0755); err == nil {
+		_ = os.Remove(oldPath)
+		return nil
+	}
+
+	// 3. Force kill specific binary name and retry
+	procName := filepath.Base(destPath)
+	_ = exec.Command("taskkill", "/F", "/IM", procName).Run()
+	time.Sleep(500 * time.Millisecond)
+	_ = os.Remove(oldPath)
+	_ = os.Rename(destPath, oldPath)
+	err := os.WriteFile(destPath, data, 0755)
+	_ = os.Remove(oldPath)
+	return err
 }
 
 func readConfigTamperKey(path string) string {
