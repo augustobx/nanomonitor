@@ -18,6 +18,7 @@ type PerformanceInfo struct {
 	RAMPercent  float64      `json:"ramPercent"`
 	Volumes     []VolumeInfo `json:"volumes"`
 	UptimeSecs  int64        `json:"uptimeSeconds"`
+	Thermal     *ThermalInfo `json:"thermal,omitempty"`
 }
 
 // VolumeInfo contains per-volume storage metrics
