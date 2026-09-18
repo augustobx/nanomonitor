@@ -30,12 +30,27 @@ export const authRoutes: FastifyPluginAsync = async (fastify: FastifyInstance) =
 
     const { email, password } = parseResult.data;
 
-    const user = await db.user.findFirst({
-      where: { email: email.toLowerCase() },
+    const candidates = await db.user.findMany({
+      where: {
+        email: email.toLowerCase(),
+        status: 'ACTIVE',
+        tenant: { status: 'ACTIVE' },
+      },
       include: { tenant: true },
+      take: 10,
     });
 
-    if (!user || user.status !== 'ACTIVE') {
+    const passwordMatches = await Promise.all(
+      candidates.map(async (candidate) => ({
+        user: candidate,
+        matches: await comparePassword(password, candidate.passwordHash),
+      }))
+    );
+    const matchedUsers = passwordMatches.filter((entry) => entry.matches);
+
+    // Email is tenant-scoped in the data model. Never let findFirst choose an
+    // arbitrary organization when the same email exists in multiple tenants.
+    if (matchedUsers.length !== 1) {
       return reply.status(401).send({
         statusCode: 401,
         error: 'Unauthorized',
@@ -43,14 +58,7 @@ export const authRoutes: FastifyPluginAsync = async (fastify: FastifyInstance) =
       });
     }
 
-    const passwordMatches = await comparePassword(password, user.passwordHash);
-    if (!passwordMatches) {
-      return reply.status(401).send({
-        statusCode: 401,
-        error: 'Unauthorized',
-        message: 'Invalid email or password',
-      });
-    }
+    const user = matchedUsers[0].user;
 
     // Generate JWT access token
     const accessToken = signUserAccessToken({
@@ -148,7 +156,8 @@ export const authRoutes: FastifyPluginAsync = async (fastify: FastifyInstance) =
       !tokenRecord ||
       tokenRecord.revokedAt !== null ||
       tokenRecord.expiresAt < new Date() ||
-      tokenRecord.user.status !== 'ACTIVE'
+      tokenRecord.user.status !== 'ACTIVE' ||
+      tokenRecord.user.tenant.status !== 'ACTIVE'
     ) {
       return reply.status(401).send({
         statusCode: 401,
@@ -157,24 +166,44 @@ export const authRoutes: FastifyPluginAsync = async (fastify: FastifyInstance) =
       });
     }
 
-    // Revoke used refresh token (Token rotation)
-    await db.refreshToken.update({
-      where: { id: tokenRecord.id },
-      data: { revokedAt: new Date() },
-    });
-
-    // Create new refresh token
+    // Rotate refresh tokens with compare-and-set semantics. Two concurrent
+    // refresh requests must never mint two valid descendants from one token.
     const newRawRefreshToken = generateRandomString(48);
     const newTokenHash = crypto.createHash('sha256').update(newRawRefreshToken).digest('hex');
     const newExpiresAt = new Date(Date.now() + config.REFRESH_TOKEN_EXPIRES_DAYS * 24 * 60 * 60 * 1000);
+    const rotationNow = new Date();
 
-    await db.refreshToken.create({
-      data: {
-        userId: tokenRecord.userId,
-        tokenHash: newTokenHash,
-        expiresAt: newExpiresAt,
-      },
+    const rotated = await db.$transaction(async (tx) => {
+      const claimed = await tx.refreshToken.updateMany({
+        where: {
+          id: tokenRecord.id,
+          revokedAt: null,
+          expiresAt: { gt: rotationNow },
+        },
+        data: { revokedAt: rotationNow },
+      });
+
+      if (claimed.count !== 1) {
+        return false;
+      }
+
+      await tx.refreshToken.create({
+        data: {
+          userId: tokenRecord.userId,
+          tokenHash: newTokenHash,
+          expiresAt: newExpiresAt,
+        },
+      });
+      return true;
     });
+
+    if (!rotated) {
+      return reply.status(401).send({
+        statusCode: 401,
+        error: 'Unauthorized',
+        message: 'Refresh token was already used or revoked',
+      });
+    }
 
     // Sign new access token
     const newAccessToken = signUserAccessToken({
