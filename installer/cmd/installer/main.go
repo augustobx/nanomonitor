@@ -355,19 +355,16 @@ func doInstall(token, apiURL string, silent bool) {
 		}
 	}
 
-	// 9. Interactive installs launch the tray immediately.
+	// 9. Launch the tray through the existing interactive Windows shell.
 	//
-	// Silent/unattended installs MUST NOT spawn a long-lived tray child here.
-	// PowerShell Start-Process -Wait tracks the spawned process tree on Windows;
-	// a persistent nanotray.exe child can therefore make a successfully
-	// completed installer appear hung forever. HKLM Run already guarantees the
-	// tray starts on the next interactive logon, while the monitoring service is
-	// fully operational independently of the tray.
-	if !silent {
-		pTray, _ := windows.UTF16PtrFromString(trayDest)
-		pDir, _ := windows.UTF16PtrFromString(DefaultInstallDir)
-		pOp, _ := windows.UTF16PtrFromString("open")
-		shellExecute.Call(0, uintptr(unsafe.Pointer(pOp)), uintptr(unsafe.Pointer(pTray)), 0, uintptr(unsafe.Pointer(pDir)), SW_HIDE)
+	// Do not ShellExecute nanotray.exe directly from this installer: PowerShell
+	// Start-Process -Wait can track that persistent descendant and appear hung
+	// forever even after installation succeeded. Shell.Application delegates the
+	// launch to Explorer, so the tray belongs to the user shell instead of the
+	// installer process tree. If there is no interactive shell (for example a
+	// SYSTEM/GPO deployment), HKLM Run will start the tray at the next user logon.
+	if err := launchTrayViaInteractiveShell(trayDest); err != nil {
+		fmt.Fprintln(os.Stderr, "Aviso: no se pudo iniciar el tray en la sesión actual:", err)
 	}
 
 	// 10. Success notice
@@ -380,6 +377,41 @@ func doInstall(token, apiURL string, silent bool) {
 			MB_OK|MB_ICONINFORMATION)
 	}
 	os.Exit(0)
+}
+
+func launchTrayViaInteractiveShell(trayDest string) error {
+	escapedPath := strings.ReplaceAll(trayDest, "'", "''")
+	psScript := fmt.Sprintf(
+		`$ErrorActionPreference='Stop'; $shell=New-Object -ComObject Shell.Application; $shell.ShellExecute('%s','','','open',0)`,
+		escapedPath,
+	)
+
+	cmd := exec.Command(
+		"powershell.exe",
+		"-NoProfile",
+		"-NonInteractive",
+		"-WindowStyle", "Hidden",
+		"-Command", psScript,
+	)
+	if out, err := cmd.CombinedOutput(); err != nil {
+		return fmt.Errorf("delegando inicio del tray a Explorer: %w (%s)", err, strings.TrimSpace(string(out)))
+	}
+
+	// Give Explorer a short window to materialize the tray process. Failure here
+	// is non-fatal because HKLM Run remains the durable fallback for next logon.
+	for i := 0; i < 10; i++ {
+		out, _ := exec.Command(
+			"tasklist.exe",
+			"/FI", "IMAGENAME eq nanotray.exe",
+			"/NH",
+		).CombinedOutput()
+		if strings.Contains(strings.ToLower(string(out)), "nanotray.exe") {
+			return nil
+		}
+		time.Sleep(300 * time.Millisecond)
+	}
+
+	return fmt.Errorf("Explorer aceptó la solicitud pero nanotray.exe no apareció en 3 segundos")
 }
 
 func validateServiceConfiguration() error {
