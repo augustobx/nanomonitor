@@ -3,11 +3,13 @@ package actions
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
 	"encoding/json"
 	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sort"
 	"strings"
 	"time"
 
@@ -35,27 +37,25 @@ type ExecutionResult struct {
 	Result   map[string]interface{}
 }
 
-// ExecuteAction executes a validated remote action
-func ExecuteAction(ctx context.Context, action *transport.ActionItem, hook SchedTriggerHook) *ExecutionResult {
-	switch action.ActionType {
-	// ==================== SISTEMA ====================
-	case "REBOOT_DEVICE":
+type actionHandler func(context.Context, *transport.ActionItem, SchedTriggerHook) *ExecutionResult
+
+var actionHandlers = map[string]actionHandler{
+	"REBOOT_DEVICE": func(ctx context.Context, _ *transport.ActionItem, _ SchedTriggerHook) *ExecutionResult {
 		return runCommand(ctx, 30*time.Second, "shutdown.exe", "/r", "/t", "10", "/c", "NanoMonitor Remote Reboot")
-
-	case "SHUTDOWN_DEVICE":
+	},
+	"SHUTDOWN_DEVICE": func(ctx context.Context, _ *transport.ActionItem, _ SchedTriggerHook) *ExecutionResult {
 		return runCommand(ctx, 30*time.Second, "shutdown.exe", "/s", "/t", "10", "/c", "NanoMonitor Remote Shutdown")
-
-	// ==================== TELEMETRÍA NANOMONITOR ====================
-	case "FORCE_HEARTBEAT":
+	},
+	"FORCE_HEARTBEAT": func(ctx context.Context, _ *transport.ActionItem, hook SchedTriggerHook) *ExecutionResult {
 		return executeForceHeartbeat(ctx, hook)
-
-	case "FORCE_METRICS":
+	},
+	"FORCE_METRICS": func(ctx context.Context, _ *transport.ActionItem, hook SchedTriggerHook) *ExecutionResult {
 		return executeForceMetrics(ctx, hook)
-
-	case "FORCE_SECURITY_SCAN":
+	},
+	"FORCE_SECURITY_SCAN": func(ctx context.Context, _ *transport.ActionItem, hook SchedTriggerHook) *ExecutionResult {
 		return executeForceSecurityScan(ctx, hook)
-
-	case "FORCE_INVENTORY":
+	},
+	"FORCE_INVENTORY": func(ctx context.Context, _ *transport.ActionItem, hook SchedTriggerHook) *ExecutionResult {
 		if hook != nil {
 			hook.TriggerInventory(ctx)
 		}
@@ -63,71 +63,111 @@ func ExecuteAction(ctx context.Context, action *transport.ActionItem, hook Sched
 			ExitCode: 0,
 			Output:   "Recolección de inventario de hardware y software disparada y sincronizada con éxito.",
 		}
-
-	case "FORCE_SMART_CHECK":
+	},
+	"FORCE_SMART_CHECK": func(ctx context.Context, _ *transport.ActionItem, hook SchedTriggerHook) *ExecutionResult {
 		return executeForceSmartCheck(ctx, hook)
-
-	case "FORCE_WINDOWS_UPDATE":
+	},
+	"FORCE_WINDOWS_UPDATE": func(ctx context.Context, _ *transport.ActionItem, hook SchedTriggerHook) *ExecutionResult {
 		return executePatchScan(ctx, hook)
-
-	// ==================== WINDOWS DEFENDER ====================
-	case "DEFENDER_UPDATE_SIGNATURES":
+	},
+	"DEFENDER_UPDATE_SIGNATURES": func(ctx context.Context, _ *transport.ActionItem, _ SchedTriggerHook) *ExecutionResult {
 		return executeDefenderUpdateSignatures(ctx)
-
-	case "DEFENDER_QUICK_SCAN":
+	},
+	"DEFENDER_QUICK_SCAN": func(ctx context.Context, _ *transport.ActionItem, _ SchedTriggerHook) *ExecutionResult {
 		return executeDefenderScan(ctx, "QuickScan", 10*time.Minute)
-
-	case "DEFENDER_FULL_SCAN":
+	},
+	"DEFENDER_FULL_SCAN": func(ctx context.Context, _ *transport.ActionItem, _ SchedTriggerHook) *ExecutionResult {
 		return executeDefenderScan(ctx, "FullScan", 60*time.Minute)
-
-	case "DEFENDER_ENABLE_PROTECTION":
+	},
+	"DEFENDER_ENABLE_PROTECTION": func(ctx context.Context, _ *transport.ActionItem, hook SchedTriggerHook) *ExecutionResult {
 		return executeDefenderEnableProtection(ctx, hook)
-
-	// ==================== RED & CONECTIVIDAD ====================
-	case "FLUSH_DNS":
+	},
+	"FLUSH_DNS": func(ctx context.Context, _ *transport.ActionItem, _ SchedTriggerHook) *ExecutionResult {
 		return runCommand(ctx, 30*time.Second, "ipconfig.exe", "/flushdns")
-
-	case "RENEW_DHCP":
+	},
+	"RENEW_DHCP": func(ctx context.Context, _ *transport.ActionItem, _ SchedTriggerHook) *ExecutionResult {
 		return runCommand(ctx, 60*time.Second, "ipconfig.exe", "/renew")
-
-	// ==================== INTEGRIDAD WINDOWS ====================
-	case "WINDOWS_SFC_SCAN":
+	},
+	"WINDOWS_SFC_SCAN": func(ctx context.Context, _ *transport.ActionItem, _ SchedTriggerHook) *ExecutionResult {
 		return runCommand(ctx, 20*time.Minute, "sfc.exe", "/scannow")
-
-	case "WINDOWS_DISM_CHECK":
+	},
+	"WINDOWS_DISM_CHECK": func(ctx context.Context, _ *transport.ActionItem, _ SchedTriggerHook) *ExecutionResult {
 		return runCommand(ctx, 10*time.Minute, "dism.exe", "/online", "/cleanup-image", "/checkhealth")
-
-	case "WINDOWS_CHKDSK_SCAN":
-		// Modo diagnóstico / lectura exclusivamente (sin /f ni /r)
+	},
+	"WINDOWS_CHKDSK_SCAN": func(ctx context.Context, _ *transport.ActionItem, _ SchedTriggerHook) *ExecutionResult {
 		return runCommand(ctx, 10*time.Minute, "chkdsk.exe", "C:")
-
-	// ==================== SERVICIOS WINDOWS ====================
-	case "QUERY_SERVICES":
+	},
+	"QUERY_SERVICES": func(ctx context.Context, _ *transport.ActionItem, _ SchedTriggerHook) *ExecutionResult {
 		return executeQueryServices(ctx)
-
-	case "RESTART_SERVICE":
+	},
+	"RESTART_SERVICE": func(ctx context.Context, action *transport.ActionItem, _ SchedTriggerHook) *ExecutionResult {
 		return executeRestartService(ctx, action)
-
-	// ==================== PARCHES Y ACTUALIZACIONES ====================
-	case "WINDOWS_UPDATE_SCAN":
+	},
+	"WINDOWS_UPDATE_SCAN": func(ctx context.Context, _ *transport.ActionItem, hook SchedTriggerHook) *ExecutionResult {
 		return executePatchScan(ctx, hook)
-
-	case "WINDOWS_UPDATE_INSTALL_KB", "WINDOWS_UPDATE_INSTALL_APPROVED":
+	},
+	"WINDOWS_UPDATE_INSTALL_KB": func(ctx context.Context, action *transport.ActionItem, hook SchedTriggerHook) *ExecutionResult {
 		return executePatchInstall(ctx, action, hook)
-
-	case "WINDOWS_UPDATE_SCHEDULE_REBOOT":
+	},
+	"WINDOWS_UPDATE_INSTALL_APPROVED": func(ctx context.Context, action *transport.ActionItem, hook SchedTriggerHook) *ExecutionResult {
+		return executePatchInstall(ctx, action, hook)
+	},
+	"WINDOWS_UPDATE_SCHEDULE_REBOOT": func(ctx context.Context, action *transport.ActionItem, _ SchedTriggerHook) *ExecutionResult {
 		return executeScheduleReboot(ctx, action)
-
-	// ==================== AUTO-REMEDIACIÓN ====================
-	case "CLEAN_TEMP_FILES":
+	},
+	"CLEAN_TEMP_FILES": func(ctx context.Context, _ *transport.ActionItem, hook SchedTriggerHook) *ExecutionResult {
 		return executeCleanTempFiles(ctx, hook)
+	},
+}
 
-	default:
+var agentReportableActionStatuses = []string{"RUNNING", "SUCCESS", "FAILED"}
+
+var actionParameterContracts = []string{
+	"RESTART_SERVICE:serviceName:string:required",
+	"WINDOWS_UPDATE_INSTALL_KB:kbArticleIds:string[]:required",
+	"WINDOWS_UPDATE_INSTALL_APPROVED:kbArticleIds:string[]:required",
+	"WINDOWS_UPDATE_SCHEDULE_REBOOT:delaySeconds:number:optional,message:string:optional",
+}
+
+// ActionContractHash is derived from the handlers the binary can actually execute,
+// reportable statuses, parameter contracts and service whitelist.
+func ActionContractHash() string {
+	actionTypes := make([]string, 0, len(actionHandlers))
+	for actionType := range actionHandlers {
+		actionTypes = append(actionTypes, actionType)
+	}
+	sort.Strings(actionTypes)
+
+	statuses := append([]string(nil), agentReportableActionStatuses...)
+	sort.Strings(statuses)
+
+	services := append([]string(nil), AllowedServicesWhitelist...)
+	sort.Strings(services)
+
+	params := append([]string(nil), actionParameterContracts...)
+	sort.Strings(params)
+
+	signature := strings.Join([]string{
+		"actions:" + strings.Join(actionTypes, ","),
+		"statuses:" + strings.Join(statuses, ","),
+		"services:" + strings.Join(services, ","),
+		"params:" + strings.Join(params, ","),
+	}, "\n")
+
+	sum := sha256.Sum256([]byte(signature))
+	return fmt.Sprintf("%x", sum[:])
+}
+
+// ExecuteAction executes only actions present in the authoritative handler map.
+func ExecuteAction(ctx context.Context, action *transport.ActionItem, hook SchedTriggerHook) *ExecutionResult {
+	handler, ok := actionHandlers[action.ActionType]
+	if !ok {
 		return &ExecutionResult{
 			ExitCode: 1,
 			Error:    fmt.Sprintf("Acción desconocida o no autorizada en el agente: %s", action.ActionType),
 		}
 	}
+	return handler(ctx, action, hook)
 }
 
 func executeQueryServices(ctx context.Context) *ExecutionResult {
