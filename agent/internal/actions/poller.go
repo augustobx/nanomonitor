@@ -37,7 +37,10 @@ func NewPoller(client *transport.Client, logger *slog.Logger, hook SchedTriggerH
 
 // Run starts the polling loop and blocks until context is cancelled.
 func (p *Poller) Run(ctx context.Context) {
-	p.logger.Info("remote actions poller started (outbound long-poll model)")
+	localContractHash := ActionContractHash()
+	p.logger.Info("remote actions poller started (outbound long-poll model)",
+		"action_contract_hash", localContractHash,
+	)
 
 	backoff := 5 * time.Second
 
@@ -68,7 +71,7 @@ func (p *Poller) Run(ctx context.Context) {
 			continue
 		}
 
-		actions, err := p.client.PollActions(ctx, 20)
+		actions, serverContractHash, err := p.client.PollActions(ctx, 20)
 		if err != nil {
 			if ctx.Err() != nil {
 				return
@@ -83,6 +86,17 @@ func (p *Poller) Run(ctx context.Context) {
 			backoff *= 2
 			if backoff > 30*time.Second {
 				backoff = 30 * time.Second
+			}
+			continue
+		}
+
+		if serverContractHash == "" || serverContractHash != localContractHash {
+			p.logger.Error("ACTION CONTRACT MISMATCH: refusing remote action execution",
+				"agent_contract_hash", localContractHash,
+				"server_contract_hash", serverContractHash,
+			)
+			if !sleepWithContext(ctx, 10*time.Second) {
+				return
 			}
 			continue
 		}
@@ -121,7 +135,7 @@ func (p *Poller) processAction(ctx context.Context, action *transport.ActionItem
 	if IsActionExpired(action) {
 		p.logger.Warn("action arrived but is already expired, discarding", "action_id", action.ID)
 		report := &transport.ActionStatusReport{
-			Status:     "FAILED",
+			Status:     ActionStatusFailed,
 			FinishedAt: time.Now().UTC().Format(time.RFC3339),
 			Error:      "La acción expiró antes de poder ejecutarse en el agente.",
 		}
@@ -136,7 +150,7 @@ func (p *Poller) processAction(ctx context.Context, action *transport.ActionItem
 	// do not perform the local side effect; the server delivery lease will retry it.
 	startedAt := time.Now().UTC().Format(time.RFC3339)
 	runningReport := &transport.ActionStatusReport{
-		Status:    "RUNNING",
+		Status:    ActionStatusRunning,
 		StartedAt: startedAt,
 	}
 	if err := p.reportWithRetry(ctx, action.ID, runningReport, 3); err != nil {
@@ -151,9 +165,9 @@ func (p *Poller) processAction(ctx context.Context, action *transport.ActionItem
 	result := ExecuteAction(ctx, action, p.hook)
 	_ = PublishActionEnd(action.ID, action.ActionType, result.ExitCode, result.Error)
 
-	status := "SUCCESS"
+	status := ActionStatusSuccess
 	if result.ExitCode != 0 || result.Error != "" {
-		status = "FAILED"
+		status = ActionStatusFailed
 	}
 
 	finalReport := &transport.ActionStatusReport{
