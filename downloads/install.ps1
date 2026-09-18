@@ -32,8 +32,11 @@ $isAdmin = ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIden
 if (-not $isAdmin) {
     Write-Host "[*] Solicitando elevacion de privilegios de Administrador (UAC)..." -ForegroundColor Yellow
     try {
-        $tokenParam = if ($Token) { " -Token `"$Token`"" } else { "" }
-        $fullCmd = "& { irm '$ApiUrl/install.ps1' | iex$tokenParam }"
+        $scriptUrl = "$ApiUrl/install.ps1"
+        if ($Token) {
+            $scriptUrl += "?token=$([uri]::EscapeDataString($Token))"
+        }
+        $fullCmd = "irm `"$scriptUrl`" -Headers @{ 'Cache-Control'='no-cache' } | iex"
         Start-Process powershell.exe -ArgumentList "-NoProfile -ExecutionPolicy Bypass -Command `"$fullCmd`"" -Verb RunAs
         exit 0
     } catch {
