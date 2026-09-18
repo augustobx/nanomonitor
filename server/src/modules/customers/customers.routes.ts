@@ -155,6 +155,7 @@ export const customersRoutes: FastifyPluginAsync = async (fastify: FastifyInstan
     }
 
     return reply.send({ statusCode: 200, data: token });
+    }
   );
 
   // GET /api/v1/customers/:id
