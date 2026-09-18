@@ -163,7 +163,7 @@ export class RemediationService {
         },
       });
 
-      await this.dispatchRemediationAction(execution.id, alert.customerId);
+      await this.dispatchRemediationAction(execution.id);
     }
   }
 
@@ -171,8 +171,7 @@ export class RemediationService {
    * Dispatches the underlying RemoteAction to the device
    */
   static async dispatchRemediationAction(
-    remediationId: string,
-    customerId: string
+    remediationId: string
   ): Promise<void> {
     const execution = await db.remediationExecution.findUnique({
       where: { id: remediationId },
@@ -189,7 +188,7 @@ export class RemediationService {
 
       const remoteAction = await ActionsService.createAction({
         tenantId: execution.tenantId,
-        customerId,
+        customerId: execution.alert.customerId,
         deviceId: execution.deviceId,
         actionType: validated.actionType as ActionType,
         parameters: validated.parameters,
@@ -261,7 +260,7 @@ export class RemediationService {
       },
     });
 
-    await this.dispatchRemediationAction(execution.id, execution.alert.customerId);
+    await this.dispatchRemediationAction(execution.id);
 
     await logAudit({
       tenantId,
