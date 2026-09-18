@@ -99,7 +99,7 @@ foreach ($ns in @('root\LibreHardwareMonitor', 'root\OpenHardwareMonitor')) {
                 [ref]$value
             )) { continue }
 
-            if ($value -lt -20 -or $value -gt 150) { continue }
+            if ($value -le 0 -or $value -gt 150) { continue }
 
             $identifier = "$($s.Identifier)"
             $sensorName = "$($s.Name)"
@@ -189,7 +189,7 @@ if ($gpus.Count -eq 0) {
                 [ref]$temp
             )) { continue }
 
-            if ($temp -lt -20 -or $temp -gt 150) { continue }
+            if ($temp -le 0 -or $temp -gt 150) { continue }
 
             $gpus += [PSCustomObject]@{
                 name = $parts[0].Trim()
@@ -284,7 +284,7 @@ $out | ConvertTo-Json -Depth 5 -Compress`
 }
 
 func validThermalValue(tempC float64) bool {
-	return tempC > -20 && tempC <= 150
+	return tempC > 0 && tempC <= 150
 }
 
 func cleanThermalName(name, fallback string) string {
