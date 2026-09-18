@@ -120,7 +120,13 @@ var actionHandlers = map[string]actionHandler{
 	},
 }
 
-var agentReportableActionStatuses = []string{"RUNNING", "SUCCESS", "FAILED"}
+const (
+	ActionStatusRunning = "RUNNING"
+	ActionStatusSuccess = "SUCCESS"
+	ActionStatusFailed  = "FAILED"
+)
+
+var agentReportableActionStatuses = []string{ActionStatusRunning, ActionStatusSuccess, ActionStatusFailed}
 
 var actionParameterContracts = []string{
 	"RESTART_SERVICE:serviceName:string:required",
