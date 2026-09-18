@@ -197,40 +197,101 @@ export const agentRoutes: FastifyPluginAsync = async (fastify: FastifyInstance) 
     }
 
     const { deviceId, tenantId } = request.agent!;
-    const rawBody = (request as any).rawBody || JSON.stringify(parsed.data);
-    const checksum = crypto.createHash('sha256').update(rawBody).digest('hex');
+    const hasCollectionTime = typeof parsed.data.collectedAt === 'string';
+    const collectedAt = hasCollectionTime ? new Date(parsed.data.collectedAt!) : new Date();
+
+    const latestInventory = await db.deviceInventory.findFirst({
+      where: { tenantId, deviceId },
+      orderBy: { collectedAt: 'desc' },
+    });
+
+    // Buffered inventory may arrive after a newer live snapshot. Acknowledge it
+    // without letting old state become authoritative.
+    if (
+      hasCollectionTime &&
+      latestInventory &&
+      collectedAt.getTime() <= latestInventory.collectedAt.getTime()
+    ) {
+      return reply.status(200).send({
+        status: 'ok',
+        stale: true,
+        ignored: true,
+        collectedAt: collectedAt.toISOString(),
+      });
+    }
 
     const identity = parsed.data.identity || {};
-    const hardware = parsed.data.hardware || {};
-    const network = parsed.data.network || {};
-    const security = parsed.data.security || undefined;
-    const storage = parsed.data.storage || undefined;
-    const windowsUpdate = parsed.data.windowsUpdate || undefined;
+    const hardware =
+      parsed.data.hardware !== undefined
+        ? parsed.data.hardware
+        : (latestInventory?.hardware || {});
+    const network =
+      parsed.data.network !== undefined
+        ? parsed.data.network
+        : (latestInventory?.network || {});
+    const security =
+      parsed.data.security !== undefined
+        ? parsed.data.security
+        : (latestInventory?.security || undefined);
+    const storage =
+      parsed.data.storage !== undefined
+        ? parsed.data.storage
+        : (latestInventory?.storage || undefined);
+    const smart =
+      parsed.data.smart !== undefined
+        ? parsed.data.smart
+        : (latestInventory?.smart || undefined);
+    const windowsUpdate =
+      parsed.data.windowsUpdate !== undefined
+        ? parsed.data.windowsUpdate
+        : (latestInventory?.windowsUpdate || undefined);
+    const os =
+      identity.os !== undefined
+        ? identity.os
+        : (latestInventory?.os || undefined);
 
-    // Store inventory snapshot
+    // Every accepted snapshot is complete by carrying forward sections that
+    // were not part of a partial SMART/Windows Update report.
+    const mergedSnapshot = {
+      hardware,
+      os,
+      network,
+      security,
+      storage,
+      smart,
+      windowsUpdate,
+    };
+    const checksum = crypto
+      .createHash('sha256')
+      .update(JSON.stringify(mergedSnapshot))
+      .digest('hex');
+
     await db.deviceInventory.create({
       data: {
         tenantId,
         deviceId,
-        collectedAt: new Date(),
-        hardware,
-        os: identity.os || undefined,
-        network,
-        security,
-        storage,
-        windowsUpdate,
+        collectedAt,
+        hardware: hardware as any,
+        os: os as any,
+        network: network as any,
+        security: security as any,
+        storage: storage as any,
+        smart: smart as any,
+        windowsUpdate: windowsUpdate as any,
         checksum,
       },
     });
 
-    // Update Device specs in DB if available
+    // Only fields actually present in this report may alter canonical device
+    // identity/spec metadata.
     const deviceUpdates: any = {
       lastSeenAt: new Date(),
     };
 
-    if (hardware.cpu?.name) deviceUpdates.cpuName = hardware.cpu.name;
-    if (hardware.cpu?.cores) deviceUpdates.cpuCores = hardware.cpu.cores;
-    if (hardware.ram?.totalMb) deviceUpdates.ramTotalMB = hardware.ram.totalMb;
+    const incomingHardware: any = parsed.data.hardware;
+    if (incomingHardware?.cpu?.name) deviceUpdates.cpuName = incomingHardware.cpu.name;
+    if (incomingHardware?.cpu?.cores) deviceUpdates.cpuCores = incomingHardware.cpu.cores;
+    if (incomingHardware?.ram?.totalMb) deviceUpdates.ramTotalMB = incomingHardware.ram.totalMb;
     if (identity.os?.caption) deviceUpdates.osEdition = identity.os.caption;
     if (identity.os?.version) deviceUpdates.osVersion = identity.os.version;
     if (identity.os?.buildNumber) deviceUpdates.osBuild = identity.os.buildNumber;
@@ -243,17 +304,30 @@ export const agentRoutes: FastifyPluginAsync = async (fastify: FastifyInstance) 
       data: deviceUpdates,
     });
 
-    // Evaluate hardware changes & detect physical tampering (e.g. RAM reduction)
-    HardwareDiffer.evaluateHardwareChanges(tenantId, deviceId, {
-      hardware,
-      os: identity.os || undefined,
-      network,
-      storage,
-    }).catch((err) => {
-      request.log.error({ err, deviceId }, 'Failed to evaluate hardware changes');
-    });
+    // Hardware diffing is meaningful only when physical/general inventory was
+    // actually collected, not for a partial SMART or Windows Update snapshot.
+    if (
+      parsed.data.hardware !== undefined ||
+      parsed.data.network !== undefined ||
+      parsed.data.storage !== undefined ||
+      parsed.data.identity !== undefined
+    ) {
+      HardwareDiffer.evaluateHardwareChanges(tenantId, deviceId, {
+        hardware,
+        os,
+        network,
+        storage,
+      }).catch((err) => {
+        request.log.error({ err, deviceId }, 'Failed to evaluate hardware changes');
+      });
+    }
 
-    return reply.status(200).send({ status: 'ok', checksum });
+    return reply.status(200).send({
+      status: 'ok',
+      checksum,
+      stale: false,
+      collectedAt: collectedAt.toISOString(),
+    });
   });
 
   // POST /agent/software
@@ -270,51 +344,69 @@ export const agentRoutes: FastifyPluginAsync = async (fastify: FastifyInstance) 
 
     const { deviceId, tenantId } = request.agent!;
     const { checksum, items, changes } = parsed.data;
+    const hasCollectionTime = typeof parsed.data.collectedAt === 'string';
+    const collectedAt = hasCollectionTime ? new Date(parsed.data.collectedAt!) : new Date();
 
-    // Store software snapshot
+    const latestSoftware = await db.softwareInventory.findFirst({
+      where: { tenantId, deviceId },
+      orderBy: { collectedAt: 'desc' },
+      select: { collectedAt: true },
+    });
+
+    if (
+      hasCollectionTime &&
+      latestSoftware &&
+      collectedAt.getTime() <= latestSoftware.collectedAt.getTime()
+    ) {
+      return reply.status(200).send({
+        status: 'ok',
+        stale: true,
+        ignored: true,
+        checksum,
+      });
+    }
+
     await db.softwareInventory.create({
       data: {
         tenantId,
         deviceId,
-        collectedAt: new Date(),
+        collectedAt,
         software: items as any,
         checksum,
       },
     });
 
-    // Store software delta changes if present
     if (changes && changes.length > 0) {
-      const now = new Date();
       await db.softwareChange.createMany({
-        data: changes.map((c) => ({
+        data: changes.map((change) => ({
           tenantId,
           deviceId,
-          detectedAt: now,
-          changeType: c.action as any, // INSTALLED | REMOVED | UPDATED
-          name: c.software.name,
-          versionBefore: c.action === 'INSTALLED' ? null : (c.oldVersion || null),
-          versionAfter: c.action === 'REMOVED' ? null : (c.software.version || null),
-          publisher: c.software.publisher || null,
+          detectedAt: collectedAt,
+          changeType: change.action as any,
+          name: change.software.name,
+          versionBefore: change.action === 'INSTALLED' ? null : (change.oldVersion || null),
+          versionAfter: change.action === 'REMOVED' ? null : (change.software.version || null),
+          publisher: change.software.publisher || null,
         })),
       });
     }
 
-    // Update device lastSeenAt
     await db.device.update({
       where: { id: deviceId },
       data: { lastSeenAt: new Date() },
     });
 
-    // Check for unauthorized / blacklisted software violations
     SoftwareComplianceService.evaluateSoftwareCompliance(tenantId, deviceId, items).catch((err) => {
       request.log.error({ err, deviceId }, 'Failed to evaluate software compliance');
     });
 
     return reply.status(200).send({
       status: 'ok',
+      stale: false,
       checksum,
       recordedItems: items.length,
       recordedChanges: changes ? changes.length : 0,
+      collectedAt: collectedAt.toISOString(),
     });
   });
 
