@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"log/slog"
 	"math/rand"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"time"
@@ -66,9 +68,19 @@ func (s *Scheduler) Run(ctx context.Context) error {
 		"events_sec", s.cfg.EventCheckInterval,
 	)
 
-	// Establish baseline watermark for Windows Event Log before starting loops
-	s.lastEventRecordIDs = collector.GetInitialHighestRecordIDs()
-	s.logger.Info("events baseline established", "record_ids", s.lastEventRecordIDs)
+	// Resume the durable Windows Event Log watermark. On the first-ever run,
+	// establish a baseline at the current tail so NanoMonitor does not import
+	// arbitrary historical logs; subsequent service restarts resume exactly.
+	if ids, err := s.loadEventWatermark(); err == nil && len(ids) > 0 {
+		s.lastEventRecordIDs = ids
+		s.logger.Info("events watermark restored", "record_ids", s.lastEventRecordIDs)
+	} else {
+		s.lastEventRecordIDs = collector.GetInitialHighestRecordIDs()
+		if saveErr := s.saveEventWatermark(s.lastEventRecordIDs); saveErr != nil {
+			s.logger.Warn("failed to persist initial events watermark", "error", saveErr)
+		}
+		s.logger.Info("events baseline established", "record_ids", s.lastEventRecordIDs)
+	}
 
 	// Execute staggered startup sequence to avoid CPU/disk/network contention
 	s.wg.Add(1)
@@ -659,9 +671,12 @@ func (s *Scheduler) collectAndSendEvents(ctx context.Context) {
 		return
 	}
 
-	s.lastEventRecordIDs = updatedIDs
-
 	if len(events) == 0 {
+		// Even an empty scan can legitimately advance per-log cursors.
+		s.lastEventRecordIDs = updatedIDs
+		if err := s.saveEventWatermark(updatedIDs); err != nil {
+			log.Warn("failed to persist event watermark", "error", err)
+		}
 		return
 	}
 
@@ -671,28 +686,71 @@ func (s *Scheduler) collectAndSendEvents(ctx context.Context) {
 		return s.client.SendEvents(ctx, events)
 	}, 2)
 
+	durable := false
 	if err != nil {
 		log.Warn("failed to send events, buffering offline", "error", err)
 		if s.buffer != nil {
+			durable = true
 			for _, ev := range events {
 				pri := buffer.PriorityAlert
 				if ev.Severity == "CRITICAL" {
 					pri = buffer.PriorityCriticalEvent
 				}
-				_ = s.buffer.Enqueue(pri, "/agent/events", []collector.DeviceEventPayload{ev})
+				if bufferErr := s.buffer.Enqueue(pri, "/agent/events", []collector.DeviceEventPayload{ev}); bufferErr != nil {
+					durable = false
+					log.Error("failed to persist Windows event in offline buffer",
+						"error", bufferErr,
+						"dedup_key", ev.DedupKey,
+					)
+					break
+				}
 			}
 		}
-		return
-	}
-
-	if resp.StatusCode >= 200 && resp.StatusCode < 300 {
+	} else if resp.StatusCode >= 200 && resp.StatusCode < 300 {
+		durable = true
 		log.Info("events sent successfully", "count", len(events))
 	} else {
 		log.Warn("events rejected", "status", resp.StatusCode)
 	}
+
+	// Never advance past events that are neither server-confirmed nor safely
+	// stored on disk. Re-reading them is safe because the server deduplicates.
+	if durable {
+		s.lastEventRecordIDs = updatedIDs
+		if err := s.saveEventWatermark(updatedIDs); err != nil {
+			log.Warn("events delivered but watermark persistence failed; events may be re-read", "error", err)
+		}
+	}
 }
 
-// sendEventImmediate transmits a critical event immediately or queues it in priority buffer
+func (s *Scheduler) eventWatermarkPath() string {
+	return filepath.Join(config.DefaultConfigDir, "event_watermark.json")
+}
+
+func (s *Scheduler) loadEventWatermark() (map[string]uint64, error) {
+	data, err := os.ReadFile(s.eventWatermarkPath())
+	if err != nil {
+		return nil, err
+	}
+	var ids map[string]uint64
+	if err := json.Unmarshal(data, &ids); err != nil {
+		return nil, err
+	}
+	return ids, nil
+}
+
+func (s *Scheduler) saveEventWatermark(ids map[string]uint64) error {
+	data, err := json.Marshal(ids)
+	if err != nil {
+		return err
+	}
+	path := s.eventWatermarkPath()
+	tmp := path + ".tmp"
+	if err := os.WriteFile(tmp, data, 0600); err != nil {
+		return err
+	}
+	return os.Rename(tmp, path)
+}
 func (s *Scheduler) sendEventImmediate(ctx context.Context, ev collector.DeviceEventPayload, pri buffer.Priority) {
 	log := s.logger.With("event_immediate", ev.Title, "priority", pri)
 
