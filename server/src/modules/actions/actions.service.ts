@@ -625,10 +625,43 @@ export class ActionsService {
       dataUpdates.result = result as any;
     }
 
-    const updated = await db.remoteAction.update({
-      where: { id: actionId },
+    const write = await db.remoteAction.updateMany({
+      where: {
+        id: actionId,
+        tenantId,
+        deviceId,
+        status: action.status,
+      },
       data: dataUpdates,
     });
+
+    if (write.count !== 1) {
+      const current = await db.remoteAction.findFirst({
+        where: { id: actionId, tenantId, deviceId },
+      });
+
+      if (!current) {
+        throw new Error(`Action "${actionId}" not found for this device`);
+      }
+
+      // Concurrent duplicate reports are idempotent. A cancellation or other
+      // terminal transition that won the race must never be overwritten by a
+      // stale agent update.
+      if (current.status === (status as ActionStatus)) {
+        return { action: current, changed: false };
+      }
+
+      throw new Error(
+        `Action "${actionId}" changed concurrently from ${action.status} to ${current.status}`
+      );
+    }
+
+    const updated = await db.remoteAction.findFirst({
+      where: { id: actionId, tenantId, deviceId },
+    });
+    if (!updated) {
+      throw new Error(`Action "${actionId}" disappeared after status update`);
+    }
 
     await logAudit({
       tenantId,
