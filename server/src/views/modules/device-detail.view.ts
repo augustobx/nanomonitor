@@ -771,7 +771,7 @@ export function getDeviceDetailViewHtml(): string {
                   <th>Título de Actualización</th>
                   <th>Categoría</th>
                   <th>Severidad</th>
-                  <th>Tamaño</th>
+                  <th title="Valor informado por Windows Update; puede diferir de la descarga real.">Tamaño informado</th>
                   <th>Reinicio</th>
                   <th>Estado</th>
                   <th style="text-align: right;">Acciones</th>
