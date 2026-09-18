@@ -48,8 +48,8 @@ export class RemediationService {
   }): Promise<void> {
     if (!alert.ruleId) return;
 
-    const rule = await db.alertRule.findUnique({
-      where: { id: alert.ruleId },
+    const rule = await db.alertRule.findFirst({
+      where: { id: alert.ruleId, tenantId: alert.tenantId },
     });
 
     if (!rule || !rule.enabled || !rule.remediationAction) return;
@@ -288,19 +288,24 @@ export class RemediationService {
    */
   static async handleRemoteActionCompletion(
     remoteActionId: string,
+    tenantId: string,
+    terminalStatus: 'SUCCESS' | 'FAILED',
     exitCode: number,
     output?: string,
     error?: string,
     resultData?: any
   ): Promise<void> {
     const execution = await db.remediationExecution.findFirst({
-      where: { remoteActionId },
+      where: { remoteActionId, tenantId },
       include: { alert: true, rule: true },
     });
 
     if (!execution) return;
 
-    const isSuccess = exitCode === 0 && (!resultData || resultData.success !== false);
+    const isSuccess =
+      terminalStatus === 'SUCCESS' &&
+      exitCode === 0 &&
+      (!resultData || resultData.success !== false);
 
     if (isSuccess) {
       // 1. Mark remediation successful with saved intervention
