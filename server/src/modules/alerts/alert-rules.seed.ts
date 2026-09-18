@@ -10,7 +10,7 @@ export interface PredefinedRule {
   severity: Severity;
   cooldownMin: number;
   condition: {
-    type: 'STORAGE' | 'SMART' | 'CPU' | 'RAM' | 'OFFLINE' | 'DEFENDER' | 'FIREWALL' | 'KERNEL_EVENT' | 'DISK_EVENT' | 'APP_CRASH';
+    type: 'STORAGE' | 'SMART' | 'CPU' | 'RAM' | 'THERMAL' | 'OFFLINE' | 'DEFENDER' | 'FIREWALL' | 'KERNEL_EVENT' | 'DISK_EVENT' | 'APP_CRASH';
     threshold?: number;
     durationMins?: number;
     driveLetter?: string;
@@ -79,6 +79,18 @@ export const PREDEFINED_RULES: PredefinedRule[] = [
     cooldownMin: 30,
     condition: {
       type: 'CPU',
+      threshold: 90,
+    },
+  },
+  {
+    code: 'THERMAL_CRITICAL',
+    name: 'Temperatura Crítica de CPU/GPU (>= 90 °C)',
+    description: 'NanoMonitor detectó una temperatura crítica real en un sensor disponible de CPU o GPU.',
+    category: 'hardware',
+    severity: Severity.CRITICAL,
+    cooldownMin: 30,
+    condition: {
+      type: 'THERMAL',
       threshold: 90,
     },
   },
