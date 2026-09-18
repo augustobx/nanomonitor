@@ -520,13 +520,7 @@ const defenderReactivationPsSnippet = `function Invoke-DefenderReactivation {
     }
 
     try {
-        Set-MpPreference `
-            -DisableRealtimeMonitoring:$false `
-            -DisableBehaviorMonitoring:$false `
-            -DisableIOAVProtection:$false `
-            -DisableScriptScanning:$false `
-            -DisableBlockAtFirstSeen:$false `
-            -ErrorAction Stop
+        Set-MpPreference -DisableRealtimeMonitoring:$false -DisableBehaviorMonitoring:$false -DisableIOAVProtection:$false -DisableScriptScanning:$false -DisableBlockAtFirstSeen:$false -ErrorAction Stop
         $report.preferenceApplied = $true
     } catch {
         $report.error = "Windows rechazó Set-MpPreference: " + $_.Exception.Message
