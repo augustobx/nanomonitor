@@ -2,6 +2,7 @@ package main
 
 import (
 	_ "embed"
+	"encoding/json"
 	"flag"
 	"fmt"
 	"os"
@@ -240,19 +241,34 @@ func doInstall(token, apiURL string, silent bool) {
 	}
 	_ = os.MkdirAll(filepath.Join(DefaultDataDir, "logs"), 0755)
 
-	// Grant modify permissions to Users on data dir
-	_ = exec.Command("icacls", DefaultDataDir, "/grant", "*S-1-5-32-545:(OI)(CI)M", "/T").Run()
+	// Standard users may inspect tray-visible status/logs, but cannot modify
+	// agent state, queue, configuration or credentials.
+	if err := secureDataDirectory(); err != nil {
+		showError(fmt.Sprintf("No se pudieron aplicar ACL seguras al directorio de datos:\n%v", err), silent)
+		os.Exit(1)
+	}
 
 	configYamlPath := filepath.Join(DefaultDataDir, "config.yaml")
 	if _, err := os.Stat(configYamlPath); os.IsNotExist(err) {
 		initialConfig := fmt.Sprintf("apiUrl: %s\nlogFile: %s\\logs\\nanoagent.log\nlogLevel: info\n", apiURL, DefaultDataDir)
-		_ = os.WriteFile(configYamlPath, []byte(initialConfig), 0666)
+		if err := os.WriteFile(configYamlPath, []byte(initialConfig), 0640); err != nil {
+			showError(fmt.Sprintf("No se pudo crear config.yaml:\n%v", err), silent)
+			os.Exit(1)
+		}
 	}
 
-	// If token was provided, write .enrollment-token
+	// Enrollment token is a credential. It is readable only by the installer
+	// administrator and LocalSystem, then the agent deletes it after enrollment.
 	if token != "" {
 		tokenFile := filepath.Join(DefaultDataDir, ".enrollment-token")
-		_ = os.WriteFile(tokenFile, []byte(token), 0666)
+		if err := os.WriteFile(tokenFile, []byte(token), 0600); err != nil {
+			showError(fmt.Sprintf("No se pudo guardar el token de enrolamiento:\n%v", err), silent)
+			os.Exit(1)
+		}
+		if err := protectSensitiveFile(tokenFile); err != nil {
+			showError(fmt.Sprintf("No se pudo proteger el token de enrolamiento:\n%v", err), silent)
+			os.Exit(1)
+		}
 	}
 
 	// 6. Install Windows Service
@@ -453,8 +469,54 @@ func safeWriteBinary(destPath string, data []byte) error {
 	return err
 }
 
-func readConfigTamperKey(path string) string {
-	data, err := os.ReadFile(path)
+func secureDataDirectory() error {
+	cmd := exec.Command(
+		"icacls.exe",
+		DefaultDataDir,
+		"/inheritance:r",
+		"/grant:r",
+		"*S-1-5-18:(OI)(CI)F",
+		"*S-1-5-32-544:(OI)(CI)F",
+		"*S-1-5-32-545:(OI)(CI)RX",
+		"/T",
+		"/C",
+	)
+	if out, err := cmd.CombinedOutput(); err != nil {
+		return fmt.Errorf("icacls data directory: %w (%s)", err, string(out))
+	}
+	return nil
+}
+
+func protectSensitiveFile(path string) error {
+	cmd := exec.Command(
+		"icacls.exe",
+		path,
+		"/inheritance:r",
+		"/grant:r",
+		"*S-1-5-18:F",
+		"*S-1-5-32-544:F",
+	)
+	if out, err := cmd.CombinedOutput(); err != nil {
+		return fmt.Errorf("icacls sensitive file: %w (%s)", err, string(out))
+	}
+	return nil
+}
+
+func readProtectedTamperKey() string {
+	// Hardened releases store the key outside config.yaml.
+	secretPath := filepath.Join(DefaultDataDir, "agent.secrets.json")
+	if data, err := os.ReadFile(secretPath); err == nil {
+		var secrets struct {
+			TamperKey string `json:"tamperKey"`
+		}
+		if json.Unmarshal(data, &secrets) == nil && strings.TrimSpace(secrets.TamperKey) != "" {
+			return strings.TrimSpace(secrets.TamperKey)
+		}
+	}
+
+	// Upgrade compatibility for <=1.4.0 until the agent migrates config.yaml.
+	configPath := filepath.Join(DefaultDataDir, "config.yaml")
+	data, err := os.ReadFile(configPath)
 	if err != nil {
 		return ""
 	}
@@ -464,8 +526,7 @@ func readConfigTamperKey(path string) string {
 		if strings.HasPrefix(line, "tamperKey:") {
 			parts := strings.SplitN(line, ":", 2)
 			if len(parts) == 2 {
-				val := strings.TrimSpace(parts[1])
-				return strings.Trim(val, `"' `)
+				return strings.Trim(strings.TrimSpace(parts[1]), `"' `)
 			}
 		}
 	}
@@ -473,9 +534,8 @@ func readConfigTamperKey(path string) string {
 }
 
 func doUninstall(key string, silent bool) {
-	// Check if Tamper Protection is enabled in config.yaml
-	configPath := filepath.Join(DefaultDataDir, "config.yaml")
-	storedKey := readConfigTamperKey(configPath)
+	// Check protected Tamper credential (with legacy upgrade fallback).
+	storedKey := readProtectedTamperKey()
 
 	if storedKey != "" {
 		// Tamper Protection is ACTIVE!
@@ -521,8 +581,9 @@ func doUninstall(key string, silent bool) {
 		k.Close()
 	}
 
-	// 5. Remove Program Files directory
+	// 5. Remove binaries and local agent state, including protected credentials.
 	_ = os.RemoveAll(DefaultInstallDir)
+	_ = os.RemoveAll(DefaultDataDir)
 
 	if !silent {
 		promptDialog("NanoLabs Monitor", "NanoLabs Monitor ha sido desinstalado correctamente.", MB_OK|MB_ICONINFORMATION)
