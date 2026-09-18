@@ -749,7 +749,30 @@ func (s *Scheduler) saveEventWatermark(ids map[string]uint64) error {
 	if err := os.WriteFile(tmp, data, 0600); err != nil {
 		return err
 	}
-	return os.Rename(tmp, path)
+
+	backup := path + ".bak"
+	_ = os.Remove(backup)
+	hadExisting := false
+	if _, statErr := os.Stat(path); statErr == nil {
+		if err := os.Rename(path, backup); err != nil {
+			_ = os.Remove(tmp)
+			return err
+		}
+		hadExisting = true
+	}
+
+	if err := os.Rename(tmp, path); err != nil {
+		_ = os.Remove(tmp)
+		if hadExisting {
+			_ = os.Rename(backup, path)
+		}
+		return err
+	}
+
+	if hadExisting {
+		_ = os.Remove(backup)
+	}
+	return nil
 }
 func (s *Scheduler) sendEventImmediate(ctx context.Context, ev collector.DeviceEventPayload, pri buffer.Priority) {
 	log := s.logger.With("event_immediate", ev.Title, "priority", pri)
