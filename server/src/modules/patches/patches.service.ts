@@ -187,7 +187,7 @@ export class PatchesService {
     }
 
     const patches = await db.devicePatch.findMany({
-      where: { tenantId, deviceId },
+      where: { tenantId, deviceId, status: { not: 'SUPERSEDED' } },
       orderBy: [
         { status: 'asc' },
         { category: 'asc' },
@@ -221,6 +221,28 @@ export class PatchesService {
     const now = new Date();
     let hasRebootFlag = report.rebootPending;
 
+    const activeInstallActions = await db.remoteAction.findMany({
+      where: {
+        tenantId,
+        deviceId,
+        actionType: { in: ['WINDOWS_UPDATE_INSTALL_KB', 'WINDOWS_UPDATE_INSTALL_APPROVED'] },
+        status: { in: ['PENDING', 'QUEUED', 'DELIVERED', 'RUNNING'] },
+      },
+      select: { parameters: true },
+    });
+
+    const activelyInstallingIds = new Set<string>();
+    for (const action of activeInstallActions) {
+      const ids = Array.isArray((action.parameters as any)?.kbArticleIds)
+        ? ((action.parameters as any).kbArticleIds as unknown[])
+        : [];
+      for (const id of ids) {
+        if (typeof id === 'string' && id.trim()) {
+          activelyInstallingIds.add(id.toUpperCase());
+        }
+      }
+    }
+
     // Process patches in batch transaction
     await db.$transaction(async (tx: any) => {
       const reportedIds = report.patches.map((p) => p.kbArticleId);
@@ -243,6 +265,37 @@ export class PatchesService {
           lastScannedAt: now,
         },
       });
+
+      const staleInstalling = await tx.devicePatch.findMany({
+        where: {
+          tenantId,
+          deviceId,
+          status: 'INSTALLING',
+          ...(reportedIds.length > 0
+            ? { kbArticleId: { notIn: reportedIds } }
+            : {}),
+        },
+        select: { kbArticleId: true },
+      });
+
+      const staleInstallingIds = staleInstalling
+        .map((p: any) => String(p.kbArticleId).toUpperCase())
+        .filter((id: string) => !activelyInstallingIds.has(id));
+
+      if (staleInstallingIds.length > 0) {
+        await tx.devicePatch.updateMany({
+          where: {
+            tenantId,
+            deviceId,
+            status: 'INSTALLING',
+            kbArticleId: { in: staleInstallingIds },
+          },
+          data: {
+            status: 'SUPERSEDED',
+            lastScannedAt: now,
+          },
+        });
+      }
 
       for (const p of report.patches) {
         if (p.requiresReboot && p.status !== 'INSTALLED') {
