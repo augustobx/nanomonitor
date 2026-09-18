@@ -14,7 +14,7 @@ echo " commit: $COMMIT"
 echo " build:  $BUILD_DATE"
 echo "====================================================="
 
-echo "=== 0/7 PREFLIGHT ==="
+echo "=== 0/8 PREFLIGHT ==="
 test -f compose.yml
 test -f server/package.json
 test -f agent/go.mod
@@ -25,7 +25,7 @@ test -f third_party/THIRD_PARTY_NOTICES.txt
 command -v curl >/dev/null
 docker compose config -q
 
-echo "=== 1/7 SERVER BUILD + TYPESCRIPT + CONTRACT VALIDATION ==="
+echo "=== 1/8 SERVER BUILD + TYPESCRIPT + CONTRACT VALIDATION ==="
 # Dockerfile runs npm ci, prisma generate and npm run build.
 # No production container is replaced if this build fails.
 docker compose build nanomonitor-server
