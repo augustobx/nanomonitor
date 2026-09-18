@@ -45,7 +45,12 @@ export async function seedDatabase() {
   });
 
   // 4. Create SuperAdmin User
-  const initialPassword = process.env.ADMIN_INITIAL_PASSWORD || 'NanoLabs2026!Admin';
+  const initialPassword = process.env.ADMIN_INITIAL_PASSWORD?.trim();
+  if (!initialPassword || initialPassword.length < 16) {
+    throw new Error(
+      'ADMIN_INITIAL_PASSWORD must be explicitly configured with at least 16 characters before initializing an empty production database.'
+    );
+  }
   const passwordHash = await hashPassword(initialPassword);
 
   const admin = await db.user.create({
