@@ -1,7 +1,7 @@
 import { FastifyInstance, FastifyPluginAsync } from 'fastify';
-import { AlertStatus, Severity } from '@prisma/client';
+import { AlertStatus, Severity, UserRole } from '@prisma/client';
 import { db } from '../../lib/db.js';
-import { authenticateUser } from '../../middleware/user-auth.js';
+import { authenticateUser, requireRole } from '../../middleware/user-auth.js';
 import { getTenantId } from '../../middleware/tenant-isolation.js';
 import { evaluateAllDevicesAlerts, evaluateDeviceAlerts } from './alert-evaluator.js';
 
@@ -244,6 +244,17 @@ export const alertsRoutes: FastifyPluginAsync = async (fastify: FastifyInstance)
       });
     }
 
+    const targetCustomer = await db.customer.findFirst({
+      where: { id: customerId, tenantId },
+      select: { id: true },
+    });
+    if (!targetCustomer) {
+      return reply.status(404).send({
+        error: 'Not Found',
+        message: 'Customer not found in tenant',
+      });
+    }
+
     // Fetch customer overrides for this specific customer
     const customerOverrides = await db.alertRule.findMany({
       where: { tenantId, customerId },
@@ -286,13 +297,24 @@ export const alertsRoutes: FastifyPluginAsync = async (fastify: FastifyInstance)
   });
 
   // PATCH /api/v1/alerts/rules/:id/toggle
-  fastify.patch('/rules/:id/toggle', async (request, reply) => {
+  fastify.patch('/rules/:id/toggle', { preHandler: [requireRole([UserRole.SUPER_ADMIN, UserRole.ADMIN])] }, async (request, reply) => {
     const tenantId = getTenantId(request);
     const { id } = request.params as { id: string };
     const { customerId } = request.query as { customerId?: string };
 
     // If customerId is supplied, toggle/create customer override
     if (customerId && customerId !== 'ALL' && customerId !== 'GENERAL') {
+      const targetCustomer = await db.customer.findFirst({
+        where: { id: customerId, tenantId },
+        select: { id: true },
+      });
+      if (!targetCustomer) {
+        return reply.status(404).send({
+          error: 'Not Found',
+          message: 'Customer not found in tenant',
+        });
+      }
+
       // Find base rule or current override
       const baseRule = await db.alertRule.findFirst({
         where: { id, tenantId },
@@ -349,7 +371,7 @@ export const alertsRoutes: FastifyPluginAsync = async (fastify: FastifyInstance)
   });
 
   // POST /api/v1/alerts/rules/customer-override
-  fastify.post('/rules/customer-override', async (request, reply) => {
+  fastify.post('/rules/customer-override', { preHandler: [requireRole([UserRole.SUPER_ADMIN, UserRole.ADMIN])] }, async (request, reply) => {
     const tenantId = getTenantId(request);
     const { baseRuleId, customerId, enabled, threshold } = (request.body || {}) as {
       baseRuleId: string;
@@ -362,8 +384,19 @@ export const alertsRoutes: FastifyPluginAsync = async (fastify: FastifyInstance)
       return reply.status(400).send({ error: 'Bad Request', message: 'baseRuleId and customerId are required' });
     }
 
+    const targetCustomer = await db.customer.findFirst({
+      where: { id: customerId, tenantId },
+      select: { id: true },
+    });
+    if (!targetCustomer) {
+      return reply.status(404).send({
+        error: 'Not Found',
+        message: 'Customer not found in tenant',
+      });
+    }
+
     const baseRule = await db.alertRule.findFirst({
-      where: { id: baseRuleId, tenantId },
+      where: { id: baseRuleId, tenantId, customerId: null },
     });
 
     if (!baseRule) {
@@ -409,7 +442,7 @@ export const alertsRoutes: FastifyPluginAsync = async (fastify: FastifyInstance)
   });
 
   // DELETE /api/v1/alerts/rules/customer-override/:id
-  fastify.delete('/rules/customer-override/:id', async (request, reply) => {
+  fastify.delete('/rules/customer-override/:id', { preHandler: [requireRole([UserRole.SUPER_ADMIN, UserRole.ADMIN])] }, async (request, reply) => {
     const tenantId = getTenantId(request);
     const { id } = request.params as { id: string };
 
@@ -426,7 +459,7 @@ export const alertsRoutes: FastifyPluginAsync = async (fastify: FastifyInstance)
   });
 
   // POST /api/v1/alerts/evaluate
-  fastify.post('/evaluate', async (request, reply) => {
+  fastify.post('/evaluate', { preHandler: [requireRole([UserRole.SUPER_ADMIN, UserRole.ADMIN, UserRole.TECHNICIAN])] }, async (request, reply) => {
     const { deviceId } = (request.body || {}) as { deviceId?: string };
     const tenantId = getTenantId(request);
 
@@ -434,7 +467,7 @@ export const alertsRoutes: FastifyPluginAsync = async (fastify: FastifyInstance)
       const res = await evaluateDeviceAlerts(deviceId, tenantId);
       return reply.status(200).send({ data: res });
     } else {
-      const res = await evaluateAllDevicesAlerts();
+      const res = await evaluateAllDevicesAlerts(tenantId);
       return reply.status(200).send({ data: res });
     }
   });
@@ -447,7 +480,22 @@ export const alertsRoutes: FastifyPluginAsync = async (fastify: FastifyInstance)
     const alert = await db.alert.findFirst({
       where: { id, tenantId },
       include: {
-        device: true,
+        device: {
+          select: {
+            id: true,
+            hostname: true,
+            displayName: true,
+            status: true,
+            lastSeenAt: true,
+            customerId: true,
+            siteId: true,
+            osEdition: true,
+            osVersion: true,
+            osBuild: true,
+            manufacturer: true,
+            model: true,
+          },
+        },
         customer: true,
         rule: true,
         acknowledger: {
@@ -468,7 +516,7 @@ export const alertsRoutes: FastifyPluginAsync = async (fastify: FastifyInstance)
   });
 
   // PATCH /api/v1/alerts/:id/ack
-  fastify.patch('/:id/ack', async (request, reply) => {
+  fastify.patch('/:id/ack', { preHandler: [requireRole([UserRole.SUPER_ADMIN, UserRole.ADMIN, UserRole.TECHNICIAN])] }, async (request, reply) => {
     const tenantId = getTenantId(request);
     const { id } = request.params as { id: string };
     const userId = request.user?.userId;
@@ -498,7 +546,7 @@ export const alertsRoutes: FastifyPluginAsync = async (fastify: FastifyInstance)
   });
 
   // PATCH /api/v1/alerts/:id/resolve
-  fastify.patch('/:id/resolve', async (request, reply) => {
+  fastify.patch('/:id/resolve', { preHandler: [requireRole([UserRole.SUPER_ADMIN, UserRole.ADMIN, UserRole.TECHNICIAN])] }, async (request, reply) => {
     const tenantId = getTenantId(request);
     const { id } = request.params as { id: string };
     const { note } = (request.body || {}) as { note?: string };
@@ -532,7 +580,7 @@ export const alertsRoutes: FastifyPluginAsync = async (fastify: FastifyInstance)
   });
 
   // PATCH /api/v1/alerts/:id/ignore
-  fastify.patch('/:id/ignore', async (request, reply) => {
+  fastify.patch('/:id/ignore', { preHandler: [requireRole([UserRole.SUPER_ADMIN, UserRole.ADMIN, UserRole.TECHNICIAN])] }, async (request, reply) => {
     const tenantId = getTenantId(request);
     const { id } = request.params as { id: string };
 
