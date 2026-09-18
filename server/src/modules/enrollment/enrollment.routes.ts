@@ -347,7 +347,7 @@ export const enrollmentRoutes: FastifyPluginAsync = async (fastify: FastifyInsta
       details: {
         hostname,
         agentId: agent.id,
-        token: tokenRecord.token,
+        enrollmentTokenId: tokenRecord.id,
       },
       request,
     });
