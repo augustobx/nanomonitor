@@ -115,6 +115,7 @@ const (
 	IDM_EXIT         = 3001
 
 	IDM_SERVICE_STATUS_TIMER = 4001
+	IDM_ACTION_STATUS_TIMER  = 4002
 )
 
 type WNDCLASSEX struct {
@@ -271,13 +272,10 @@ func (app *TrayApp) Run() error {
 	}
 	defer killTimer.Call(uintptr(app.hwnd), IDM_SERVICE_STATUS_TIMER)
 
-	// Periodic check for active maintenance actions
-	go func() {
-		for {
-			time.Sleep(1500 * time.Millisecond)
-			app.checkActiveActions()
-		}
-	}()
+	if timerID, _, _ := setTimer.Call(uintptr(app.hwnd), IDM_ACTION_STATUS_TIMER, 1500, 0); timerID == 0 {
+		return fmt.Errorf("failed to create active-action tray timer")
+	}
+	defer killTimer.Call(uintptr(app.hwnd), IDM_ACTION_STATUS_TIMER)
 
 	// Message loop
 	var msg MSG
@@ -495,10 +493,14 @@ func wndProc(hWnd windows.HWND, msg uint32, wParam, lParam uintptr) uintptr {
 		}
 
 	case WM_TIMER:
-		if wParam == IDM_SERVICE_STATUS_TIMER {
+		switch wParam {
+		case IDM_SERVICE_STATUS_TIMER:
 			if !instance.isActionRunning {
 				instance.updateTooltip()
 			}
+			return 0
+		case IDM_ACTION_STATUS_TIMER:
+			instance.checkActiveActions()
 			return 0
 		}
 
