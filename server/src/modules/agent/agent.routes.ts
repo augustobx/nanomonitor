@@ -54,7 +54,7 @@ export const agentRoutes: FastifyPluginAsync = async (fastify: FastifyInstance) 
     // If lightweight security posture is included in heartbeat, persist to latest device inventory
     if (security) {
       const latestInv = await db.deviceInventory.findFirst({
-        where: { deviceId },
+        where: { tenantId, deviceId },
         orderBy: { collectedAt: 'desc' },
       });
 
@@ -475,7 +475,7 @@ export const agentRoutes: FastifyPluginAsync = async (fastify: FastifyInstance) 
       if (evt.category === 'Security' && evt.rawData) {
         const raw = evt.rawData as any;
         const latestInv = await db.deviceInventory.findFirst({
-          where: { deviceId },
+          where: { tenantId, deviceId },
           orderBy: { collectedAt: 'desc' },
         });
         if (latestInv && latestInv.security) {
