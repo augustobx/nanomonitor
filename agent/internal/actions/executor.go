@@ -1309,7 +1309,23 @@ func executeForceMetrics(ctx context.Context, hook SchedTriggerHook) *ExecutionR
 		sb.WriteString("   • GPU: No disponible\n")
 	}
 
-	sb.WriteString("\n✅ Métricas sincronizadas con el NOC.")
+	if syncErr != nil {
+		sb.WriteString("\n⚠️ Lectura local completada, pero el CRM no confirmó la sincronización.")
+		return &ExecutionResult{
+			ExitCode: 1,
+			Output:   sb.String(),
+			Error:    syncErr.Error(),
+			Result: map[string]interface{}{
+				"cpuPercent": perf.CPUPercent,
+				"ramPercent": perf.RAMPercent,
+				"ramUsedMb":  perf.RAMUsedMB,
+				"uptimeSecs": perf.UptimeSecs,
+				"thermal":    perf.Thermal,
+			},
+		}
+	}
+
+	sb.WriteString("\n✅ Métricas sincronizadas y confirmadas por el NOC.")
 
 	return &ExecutionResult{
 		ExitCode: 0,
