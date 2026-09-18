@@ -9,6 +9,12 @@ import { logAudit } from '../../middleware/audit.js';
 import { calculateAndPersistDeviceHealthScore } from '../health/health-scorer.js';
 import { applyDevicePresence, ONLINE_HEARTBEAT_THRESHOLD_MS } from '../../lib/device-presence.js';
 
+function sanitizeDevicePayload(device: any) {
+  if (!device || typeof device !== 'object') return device;
+  const { tamperKey: _tamperKey, ...safe } = device;
+  return safe;
+}
+
 export const devicesRoutes: FastifyPluginAsync = async (fastify: FastifyInstance) => {
   fastify.addHook('preHandler', authenticateUser);
 
@@ -80,7 +86,7 @@ export const devicesRoutes: FastifyPluginAsync = async (fastify: FastifyInstance
     return reply.send({
       statusCode: 200,
       data: {
-        devices: devices.map((device) => applyDevicePresence(device)),
+        devices: devices.map((device) => applyDevicePresence(sanitizeDevicePayload(device))),
         pagination: {
           total,
           page: pageNum,
@@ -150,16 +156,10 @@ export const devicesRoutes: FastifyPluginAsync = async (fastify: FastifyInstance
       return reply.status(404).send({ statusCode: 404, message: 'Device not found' });
     }
 
-    if (!device.tamperKey) {
-      device.tamperKey = generateTamperKey();
-      device.tamperKeyUpdatedAt = new Date();
-      db.device.update({
-        where: { id: device.id },
-        data: { tamperKey: device.tamperKey, tamperKeyUpdatedAt: device.tamperKeyUpdatedAt },
-      }).catch(() => {});
-    }
-
-    return reply.send({ statusCode: 200, data: applyDevicePresence(device) });
+    return reply.send({
+      statusCode: 200,
+      data: applyDevicePresence(sanitizeDevicePayload(device)),
+    });
   });
 
   // GET /api/v1/devices/:id/health
@@ -335,18 +335,53 @@ export const devicesRoutes: FastifyPluginAsync = async (fastify: FastifyInstance
         return reply.status(404).send({ statusCode: 404, message: 'Device not found' });
       }
 
+      const targetCustomerId = parsed.data.customerId ?? device.customerId;
+
       if (parsed.data.customerId) {
         const customer = await db.customer.findFirst({
           where: { id: parsed.data.customerId, tenantId },
+          select: { id: true },
         });
         if (!customer) {
-          return reply.status(404).send({ statusCode: 404, message: 'Target customer not found in tenant' });
+          return reply.status(404).send({
+            statusCode: 404,
+            message: 'Target customer not found in tenant',
+          });
         }
+      }
+
+      if (parsed.data.siteId) {
+        const site = await db.site.findFirst({
+          where: {
+            id: parsed.data.siteId,
+            tenantId,
+            customerId: targetCustomerId,
+          },
+          select: { id: true },
+        });
+        if (!site) {
+          return reply.status(400).send({
+            statusCode: 400,
+            error: 'Bad Request',
+            message: 'Target site does not belong to the selected customer/tenant',
+          });
+        }
+      }
+
+      const updateData: any = { ...parsed.data };
+      // Moving a device to another customer without explicitly selecting a site
+      // must not preserve a site that belongs to the previous customer.
+      if (
+        parsed.data.customerId &&
+        parsed.data.customerId !== device.customerId &&
+        parsed.data.siteId === undefined
+      ) {
+        updateData.siteId = null;
       }
 
       const updated = await db.device.update({
         where: { id },
-        data: parsed.data,
+        data: updateData,
       });
 
       await logAudit({
@@ -358,7 +393,7 @@ export const devicesRoutes: FastifyPluginAsync = async (fastify: FastifyInstance
         request,
       });
 
-      return reply.send({ statusCode: 200, data: updated });
+      return reply.send({ statusCode: 200, data: sanitizeDevicePayload(updated) });
     }
   );
 
