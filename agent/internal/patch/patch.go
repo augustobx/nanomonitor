@@ -96,7 +96,7 @@ try {
         $kbs = @()
         foreach ($kb in $u.KBArticleIDs) { $kbs += "KB$kb" }
         $mainKB = if ($kbs.Count -gt 0) { $kbs[0] } else {
-            if ($u.Identity.UpdateID) { "WU:" + $u.Identity.UpdateID } else { "WU:UNKNOWN" }
+            if ($u.Identity.UpdateID) { "WU:" + $u.Identity.UpdateID.ToUpperInvariant() } else { "WU:UNKNOWN" }
         }
         
         $cat = "OTHER"
