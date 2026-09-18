@@ -179,6 +179,17 @@ try {
             }
         }
 
+        # WUA sometimes exposes a Feature Update with KBArticleIDs that belong to
+        # servicing payloads rather than the update identity itself. Avoid pairing
+        # a Feature Update title with an unrelated KB by using the stable WU UpdateID.
+        $titleLower = "$($u.Title)".ToLowerInvariant()
+        if ($cat -eq "OTHER" -and $titleLower -match "feature update|actualización de características|actualizacion de caracteristicas") {
+            $cat = "FEATURE_UPDATE"
+        }
+        if ($cat -eq "FEATURE_UPDATE" -and $updateId) {
+            $mainKB = "WU:" + $updateId
+        }
+
         if ($sev -eq "UNSPECIFIED") {
             if ($cat -eq "CRITICAL") { $sev = "CRITICAL" }
             elseif ($cat -eq "SECURITY") { $sev = "IMPORTANT" }

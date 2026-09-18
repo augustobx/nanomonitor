@@ -4481,6 +4481,14 @@ export function getClientRuntimeScript(): string {
         return Math.round(mb) + ' MB';
       }
 
+      function formatHResult(value) {
+        if (value === null || value === undefined || value === '') return '';
+        const n = Number(value);
+        if (!Number.isFinite(n)) return String(value);
+        const unsigned = n < 0 ? (0x100000000 + n) : n;
+        return '0x' + Math.trunc(unsigned).toString(16).toUpperCase().padStart(8, '0');
+      }
+
       let html = '';
       patches.forEach(function(p) {
         const isSelectableForInstall = p.status === 'DOWNLOADED';
@@ -4490,7 +4498,7 @@ export function getClientRuntimeScript(): string {
         const lastParts = [];
         if (lastOpText) lastParts.push(lastOpText);
         if (p.lastResultCode !== null && p.lastResultCode !== undefined) lastParts.push('ResultCode=' + p.lastResultCode);
-        if (p.lastHResult) lastParts.push('HRESULT=' + p.lastHResult);
+        if (p.lastHResult) lastParts.push('HRESULT=' + formatHResult(p.lastHResult));
         if (lastAttemptText) lastParts.push(lastAttemptText);
         const evidence = lastParts.length ? '<div style="font-size: 10px; color: var(--text-muted); margin-top: 3px;">Último intento: ' + lastParts.join(' · ') + '</div>' : '';
 
@@ -4511,7 +4519,7 @@ export function getClientRuntimeScript(): string {
           '<td style="max-width: 320px;" title="' + (p.title || '') + '"><div style="font-weight: 600; color: #fff; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">' + (p.title || '-') + '</div>' + evidence + '</td>' +
           '<td>' + categoryBadge(p.category) + '</td>' +
           '<td>' + severityBadge(p.severity) + '</td>' +
-          '<td style="font-size: 12px; color: var(--text-secondary);">' + formatBytes(p.sizeBytes) + '</td>' +
+          '<td style="font-size: 12px; color: var(--text-secondary);" title="Tamaño estimado informado por Windows Update Agent; puede no coincidir con la transferencia efectiva.">' + formatBytes(p.sizeBytes) + (p.category === 'FEATURE_UPDATE' ? ' <span style="font-size:9px;">(WUA)</span>' : '') + '</td>' +
           '<td style="text-align: center;">' + (p.requiresReboot ? '<span style="color: #ef4444; font-weight: 700;">Sí</span>' : '<span style="color: var(--text-muted);">No</span>') + '</td>' +
           '<td>' + statusBadge(p.status) + '</td>' +
           '<td style="text-align: right;">' + action + '</td>' +
