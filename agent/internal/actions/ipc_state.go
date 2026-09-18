@@ -2,7 +2,9 @@ package actions
 
 import (
 	"encoding/json"
+	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"time"
@@ -108,7 +110,10 @@ func PublishActionStart(action *transport.ActionItem) error {
 		return err
 	}
 
-	return os.WriteFile(path, data, 0666)
+	if err := os.WriteFile(path, data, 0600); err != nil {
+		return err
+	}
+	return protectTrayStateACL(path)
 }
 
 // PublishActionEnd registers the final status (COMPLETED or FAILED) of an action
@@ -136,10 +141,29 @@ func PublishActionEnd(actionID string, actionType string, exitCode int, errStr s
 		return err
 	}
 
-	return os.WriteFile(path, data, 0666)
+	if err := os.WriteFile(path, data, 0600); err != nil {
+		return err
+	}
+	return protectTrayStateACL(path)
 }
 
 // ReadActiveAction reads the current state file if it exists
+func protectTrayStateACL(path string) error {
+	cmd := exec.Command(
+		"icacls.exe",
+		path,
+		"/inheritance:r",
+		"/grant:r",
+		"*S-1-5-18:F",
+		"*S-1-5-32-544:F",
+		"*S-1-5-32-545:R",
+	)
+	if out, err := cmd.CombinedOutput(); err != nil {
+		return fmt.Errorf("protecting tray IPC ACL: %w (%s)", err, string(out))
+	}
+	return nil
+}
+
 func ReadActiveAction() (*ActiveActionState, error) {
 	path := getStateFilePath()
 	data, err := os.ReadFile(path)
