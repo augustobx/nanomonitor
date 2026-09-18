@@ -517,8 +517,8 @@ export class ActionsService {
             status: 'INSTALLING',
           },
           data: {
-            status: status === 'SUCCESS' ? 'INSTALLED' : 'FAILED',
-            installedAt: status === 'SUCCESS' ? now : null,
+            status: 'FAILED',
+            installedAt: null,
             lastScannedAt: now,
           },
         });
@@ -531,9 +531,11 @@ export class ActionsService {
             status: 'IN_PROGRESS',
           },
           data: {
-            status: status === 'SUCCESS' ? 'SUCCESS' : 'FAILED',
-            exitCode: exitCode ?? (status === 'SUCCESS' ? 0 : 1),
-            errorDetails: status === 'SUCCESS' ? null : error || 'Instalación no confirmada por el agente.',
+            status: 'FAILED',
+            exitCode: exitCode ?? 1,
+            errorDetails:
+              error ||
+              'El agente no devolvió verificación individual para este parche; no se marca como instalado.',
           },
         });
       }
