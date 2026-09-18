@@ -33,10 +33,9 @@ if (-not $isAdmin) {
     Write-Host "[*] Solicitando elevacion de privilegios de Administrador (UAC)..." -ForegroundColor Yellow
     try {
         $scriptUrl = "$ApiUrl/install.ps1"
-        if ($Token) {
-            $scriptUrl += "?token=$([uri]::EscapeDataString($Token))"
-        }
-        $fullCmd = "irm `"$scriptUrl`" -Headers @{ 'Cache-Control'='no-cache' } | iex"
+        $escapedToken = $Token.Replace("'", "''")
+        $tokenBootstrap = if ($Token) { "`$env:NANOMONITOR_TOKEN='$escapedToken'; " } else { "" }
+        $fullCmd = $tokenBootstrap + "irm `"$scriptUrl`" -Headers @{ 'Cache-Control'='no-cache' } | iex"
         Start-Process powershell.exe -ArgumentList "-NoProfile -ExecutionPolicy Bypass -Command `"$fullCmd`"" -Verb RunAs
         exit 0
     } catch {
