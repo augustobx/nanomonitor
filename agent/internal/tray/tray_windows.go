@@ -12,8 +12,6 @@ import (
 	"unsafe"
 
 	"golang.org/x/sys/windows"
-	"golang.org/x/sys/windows/svc"
-	"golang.org/x/sys/windows/svc/mgr"
 
 	"github.com/nanolabs/nanomonitor/agent/internal/config"
 	"github.com/nanolabs/nanomonitor/agent/internal/version"
@@ -213,9 +211,15 @@ func (app *TrayApp) Run() error {
 	app.redIcon = createCircleIcon(239, 68, 68)    // Crimson Red #ef4444
 	app.amberIcon = createCircleIcon(245, 158, 11) // Amber Maintenance #f59e0b
 
-	if app.isServiceRunning() {
+	state, stateErr := app.queryServiceState()
+	switch {
+	case stateErr != nil:
+		app.hIcon = app.amberIcon
+	case state == windows.SERVICE_RUNNING:
 		app.hIcon = app.greenIcon
-	} else {
+	case state == windows.SERVICE_START_PENDING || state == windows.SERVICE_CONTINUE_PENDING:
+		app.hIcon = app.amberIcon
+	default:
 		app.hIcon = app.redIcon
 	}
 
@@ -258,9 +262,14 @@ func (app *TrayApp) Run() error {
 	shellNotifyIcon.Call(NIM_ADD, uintptr(unsafe.Pointer(&app.nid)))
 
 	// Show a truthful startup notification. The tray process is independent from the service.
-	if app.isServiceRunning() {
+	switch {
+	case stateErr != nil:
+		app.ShowNotification("NanoLabs Control Center", "La bandeja inició. Estado del servicio temporalmente no disponible.")
+	case state == windows.SERVICE_RUNNING:
 		app.ShowNotification("NanoLabs Control Center", "Servicio de monitoreo en ejecución.")
-	} else {
+	case state == windows.SERVICE_START_PENDING || state == windows.SERVICE_CONTINUE_PENDING:
+		app.ShowNotification("NanoLabs Control Center", "Servicio de monitoreo iniciándose.")
+	default:
 		app.ShowNotification("NanoLabs Control Center", "ATENCIÓN: la bandeja inició, pero el servicio NanoLabsAgent está detenido.")
 	}
 
@@ -301,13 +310,24 @@ func (app *TrayApp) ShowNotification(title, message string) {
 }
 
 func (app *TrayApp) updateTooltip() {
-	isRunning := app.isServiceRunning()
+	state, err := app.queryServiceState()
 	var statusText string
-	if isRunning {
+
+	switch {
+	case err != nil:
+		statusText = "🟠 Estado del servicio no disponible"
+		app.nid.HIcon = app.amberIcon
+	case state == windows.SERVICE_RUNNING:
 		statusText = "🟢 Servicio en ejecución"
 		app.nid.HIcon = app.greenIcon
-	} else {
-		statusText = "🔴 Servicio Detenido"
+	case state == windows.SERVICE_START_PENDING || state == windows.SERVICE_CONTINUE_PENDING:
+		statusText = "🟠 Servicio iniciándose"
+		app.nid.HIcon = app.amberIcon
+	case state == windows.SERVICE_STOP_PENDING:
+		statusText = "🟠 Servicio deteniéndose"
+		app.nid.HIcon = app.amberIcon
+	default:
+		statusText = "🔴 Servicio detenido"
 		app.nid.HIcon = app.redIcon
 	}
 
@@ -320,24 +340,37 @@ func (app *TrayApp) updateTooltip() {
 	shellNotifyIcon.Call(NIM_MODIFY, uintptr(unsafe.Pointer(&app.nid)))
 }
 
+func (app *TrayApp) queryServiceState() (uint32, error) {
+	// The tray runs in the interactive user's non-elevated session. mgr.Connect
+	// and mgr.OpenService request ALL_ACCESS, which standard users do not have.
+	// Query only the minimum read-only rights required to inspect service state.
+	scm, err := windows.OpenSCManager(nil, nil, windows.SC_MANAGER_CONNECT)
+	if err != nil {
+		return 0, err
+	}
+	defer windows.CloseServiceHandle(scm)
+
+	serviceName, err := windows.UTF16PtrFromString(app.serviceName)
+	if err != nil {
+		return 0, err
+	}
+
+	service, err := windows.OpenService(scm, serviceName, windows.SERVICE_QUERY_STATUS)
+	if err != nil {
+		return 0, err
+	}
+	defer windows.CloseServiceHandle(service)
+
+	var status windows.SERVICE_STATUS
+	if err := windows.QueryServiceStatus(service, &status); err != nil {
+		return 0, err
+	}
+	return status.CurrentState, nil
+}
+
 func (app *TrayApp) isServiceRunning() bool {
-	m, err := mgr.Connect()
-	if err != nil {
-		return false
-	}
-	defer m.Disconnect()
-
-	s, err := m.OpenService(app.serviceName)
-	if err != nil {
-		return false
-	}
-	defer s.Close()
-
-	status, err := s.Query()
-	if err != nil {
-		return false
-	}
-	return status.State == svc.Running
+	state, err := app.queryServiceState()
+	return err == nil && state == windows.SERVICE_RUNNING
 }
 
 func (app *TrayApp) checkActiveActions() {
@@ -420,10 +453,19 @@ func (app *TrayApp) showContextMenu() {
 	}
 	defer destroyMenu.Call(hMenu)
 
-	isRunning := app.isServiceRunning()
-	statusText := "Estado: 🟢 Servicio en ejecución"
-	if !isRunning {
-		statusText = "Estado: 🔴 Detenido"
+	state, stateErr := app.queryServiceState()
+	isRunning := stateErr == nil && state == windows.SERVICE_RUNNING
+
+	statusText := "Estado: 🔴 Detenido"
+	switch {
+	case stateErr != nil:
+		statusText = "Estado: 🟠 No disponible"
+	case state == windows.SERVICE_RUNNING:
+		statusText = "Estado: 🟢 Servicio en ejecución"
+	case state == windows.SERVICE_START_PENDING || state == windows.SERVICE_CONTINUE_PENDING:
+		statusText = "Estado: 🟠 Iniciando"
+	case state == windows.SERVICE_STOP_PENDING:
+		statusText = "Estado: 🟠 Deteniendo"
 	}
 
 	orgText := "Organización: NanoLabs"
