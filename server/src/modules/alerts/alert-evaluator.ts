@@ -70,16 +70,6 @@ function stableCrashHash(value: string): string {
   return (hash >>> 0).toString(16).padStart(8, '0');
 }
 
-function crashEventWeight(event: any): number {
-  const dedupKey = String(event?.dedupKey || '');
-  if (dedupKey.startsWith('AppCrashEvent:')) {
-    return 1;
-  }
-
-  // Legacy records compacted multiple real Windows events into one DB row.
-  return Math.max(1, Number(event?.occurrences || 1));
-}
-
 function describeCrashGroup(events: any[], realCount: number): string {
   const newest = events[0];
   const evidence = extractCrashEvidence(newest);
@@ -272,10 +262,11 @@ export async function evaluateDeviceAlerts(
           const sortedEvents = events.sort(
             (a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime()
           );
-          const realCount = sortedEvents.reduce(
-            (total, event) => total + crashEventWeight(event),
-            0
-          );
+          // One DeviceEvent row equals one distinct Windows crash event.
+          // Never reuse the legacy occurrences column here: older agents incremented
+          // that field when the same event signature was observed again, which can
+          // massively inflate counts (for example x1351 for only a few real crashes).
+          const realCount = sortedEvents.length;
           return { signature, events: sortedEvents, realCount };
         })
         .filter((group) => group.realCount >= threshold)
