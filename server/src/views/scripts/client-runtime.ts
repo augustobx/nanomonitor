@@ -1213,6 +1213,43 @@ export function getClientRuntimeScript(): string {
       }).join('');
     }
 
+    function canManageEnrollment() {
+      try {
+        const raw = localStorage.getItem('nl_user');
+        if (!raw) return false;
+        const user = JSON.parse(raw);
+        return ['SUPER_ADMIN', 'ADMIN', 'TECHNICIAN'].includes(user.role);
+      } catch (e) {
+        return false;
+      }
+    }
+
+    async function fetchCustomerEnrollmentToken(customerId) {
+      if (!canManageEnrollment()) {
+        throw new Error('Permisos insuficientes para generar comandos de enrolamiento.');
+      }
+
+      const token = localStorage.getItem('nl_token');
+      if (!token) {
+        throw new Error('Sesión no disponible.');
+      }
+
+      const res = await fetch('/api/v1/customers/' + customerId + '/token', {
+        headers: { 'Authorization': 'Bearer ' + token }
+      });
+
+      const json = await res.json().catch(function() { return {}; });
+      if (!res.ok || !json.data || !json.data.token) {
+        throw new Error(json.message || 'No se pudo obtener el token de enrolamiento.');
+      }
+
+      return json.data.token;
+    }
+
+    function buildEnrollmentCommand(token) {
+      return 'irm "https://monitor.nanolabs.com.ar/install.ps1?token=' + encodeURIComponent(token) + '" | iex';
+    }
+
     function openCustomerWorkspace(customerId) {
       currentActiveCustomerId = customerId;
       const cust = (currentCustomers || []).find(function(c) { return c.id === customerId; });
@@ -1229,12 +1266,23 @@ export function getClientRuntimeScript(): string {
       setVal('cdContactEmail', cust.contactEmail || 'No asignado');
       setVal('cdContactPhone', cust.contactPhone || 'No asignado');
 
-      // Tokens snippet
-      const tokenObj = cust.enrollmentTokens && cust.enrollmentTokens.length > 0 ? cust.enrollmentTokens[0] : null;
-      const tokenStr = tokenObj ? tokenObj.token : ('NL-' + cust.code + '-DEMO');
+      // Enrollment credentials are fetched only on demand by privileged users.
       const snippet = document.getElementById('cdEnrollCmdSnippet');
       if (snippet) {
-        snippet.textContent = 'irm "https://monitor.nanolabs.com.ar/install.ps1?token=' + tokenStr + '" | iex';
+        if (!canManageEnrollment()) {
+          snippet.textContent = 'Disponible para Administradores y Técnicos.';
+        } else {
+          snippet.textContent = 'Cargando comando seguro...';
+          fetchCustomerEnrollmentToken(customerId)
+            .then(function(token) {
+              if (currentActiveCustomerId === customerId) {
+                snippet.textContent = buildEnrollmentCommand(token);
+              }
+            })
+            .catch(function(err) {
+              snippet.textContent = err.message || 'No se pudo cargar el comando.';
+            });
+        }
       }
 
       // Populate Subtabs
@@ -1537,17 +1585,16 @@ export function getClientRuntimeScript(): string {
       copyCustomerEnrollCmdById(currentActiveCustomerId);
     }
 
-    function copyCustomerEnrollCmdById(custId) {
-      const cust = (currentCustomers || []).find(function(c) { return c.id === custId; });
-      if (!cust) return;
-      const tokenObj = cust.enrollmentTokens && cust.enrollmentTokens.length > 0 ? cust.enrollmentTokens[0] : null;
-      const tokenStr = tokenObj ? tokenObj.token : ('NL-' + cust.code + '-DEMO');
-      const cmd = 'irm "https://monitor.nanolabs.com.ar/install.ps1?token=' + tokenStr + '" | iex';
-      navigator.clipboard.writeText(cmd).then(function() {
+    async function copyCustomerEnrollCmdById(custId) {
+      try {
+        const token = await fetchCustomerEnrollmentToken(custId);
+        const cmd = buildEnrollmentCommand(token);
+        await navigator.clipboard.writeText(cmd);
         showToast('✅ Comando PowerShell copiado al portapapeles');
-      }).catch(function() {
-        prompt('Copiá el comando:', cmd);
-      });
+      } catch (err) {
+        const message = err && err.message ? err.message : 'No se pudo generar el comando de enrolamiento';
+        showToast(message, 'error');
+      }
     }
 
     function togglePs1ScriptPreview() {
@@ -3229,7 +3276,7 @@ export function getClientRuntimeScript(): string {
       if (sel) currentWizardSiteId = sel.value;
     }
 
-    function goToWizardStep(step) {
+    async function goToWizardStep(step) {
       const s1 = document.getElementById('wStep1Content');
       const s2 = document.getElementById('wStep2Content');
       const s3 = document.getElementById('wStep3Content');
@@ -3260,11 +3307,15 @@ export function getClientRuntimeScript(): string {
         setVal('wSummaryCust', cust ? cust.name : 'Cliente');
         setVal('wSummarySite', siteName);
 
-        const tokenObj = cust && cust.enrollmentTokens && cust.enrollmentTokens.length > 0 ? cust.enrollmentTokens[0] : null;
-        const tokenStr = tokenObj ? tokenObj.token : ('NL-' + (cust ? cust.code : 'DEMO') + '-TOKEN');
         const cmdEl = document.getElementById('wPs1Command');
         if (cmdEl) {
-          cmdEl.textContent = 'irm "https://monitor.nanolabs.com.ar/install.ps1?token=' + tokenStr + '" | iex';
+          cmdEl.textContent = 'Generando comando seguro...';
+          try {
+            const tokenStr = await fetchCustomerEnrollmentToken(currentWizardCustomerId);
+            cmdEl.textContent = buildEnrollmentCommand(tokenStr);
+          } catch (err) {
+            cmdEl.textContent = err && err.message ? err.message : 'No se pudo obtener el token de enrolamiento.';
+          }
         }
       }
 
