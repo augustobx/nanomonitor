@@ -1,5 +1,5 @@
 import { EventEmitter } from 'node:events';
-import { ActionStatus, ActionType } from '@prisma/client';
+import { ActionStatus, ActionType, RemediationStatus } from '@prisma/client';
 import { db } from '../../lib/db.js';
 import { logger } from '../../lib/logger.js';
 import { logAudit } from '../../middleware/audit.js';
@@ -167,11 +167,15 @@ export class ActionsService {
           tenantId,
           remoteActionId: action.id,
           status: {
-            in: ['QUEUED', 'EXECUTING', 'VALIDATING'] as any,
+            in: [
+              RemediationStatus.QUEUED,
+              RemediationStatus.EXECUTING,
+              RemediationStatus.VALIDATING,
+            ],
           },
         },
         data: {
-          status: 'FAILED',
+          status: RemediationStatus.FAILED,
           completedAt: now,
           error: reason,
           savedIntervention: false,
