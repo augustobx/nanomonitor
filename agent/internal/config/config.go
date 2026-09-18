@@ -207,12 +207,43 @@ func (c *Config) saveProtectedSecrets(dir string) error {
 	if err := os.WriteFile(tmp, data, 0600); err != nil {
 		return err
 	}
-	if err := os.Rename(tmp, path); err != nil {
+	// Protect the temporary file before it ever becomes the live secret store.
+	if err := protectSecretsACL(tmp); err != nil {
 		_ = os.Remove(tmp)
 		return err
 	}
 
-	return protectSecretsACL(path)
+	backup := path + ".bak"
+	_ = os.Remove(backup)
+	hadExisting := false
+	if _, statErr := os.Stat(path); statErr == nil {
+		if err := os.Rename(path, backup); err != nil {
+			_ = os.Remove(tmp)
+			return err
+		}
+		hadExisting = true
+	}
+
+	if err := os.Rename(tmp, path); err != nil {
+		_ = os.Remove(tmp)
+		if hadExisting {
+			_ = os.Rename(backup, path)
+		}
+		return err
+	}
+
+	if err := protectSecretsACL(path); err != nil {
+		_ = os.Remove(path)
+		if hadExisting {
+			_ = os.Rename(backup, path)
+		}
+		return err
+	}
+
+	if hadExisting {
+		_ = os.Remove(backup)
+	}
+	return nil
 }
 
 func protectSecretsACL(path string) error {
