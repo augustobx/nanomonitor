@@ -227,27 +227,27 @@ func (s *Scheduler) runLoopWithJitter(ctx context.Context, name string, baseInte
 
 // collectAndSendHeartbeatAndSecurity runs every 3 minutes (Heartbeat + lightweight SecurityState)
 func (s *Scheduler) collectAndSendHeartbeatAndSecurity(ctx context.Context) {
+	if err := s.collectAndSendHeartbeatAndSecurityConfirmed(ctx); err != nil {
+		s.logger.With("task", "heartbeat_security").Debug("heartbeat cycle not confirmed", "error", err)
+	}
+}
+
+func (s *Scheduler) collectAndSendHeartbeatAndSecurityConfirmed(ctx context.Context) error {
 	log := s.logger.With("task", "heartbeat_security")
 
-	// 1. Collect operational performance snapshot for heartbeat
-	perf, err := collector.CollectPerformance()
-	if err != nil {
-		log.Error("failed to collect performance for heartbeat", "error", err)
+	perf, perfErr := collector.CollectPerformance()
+	if perfErr != nil {
+		log.Error("failed to collect performance for heartbeat", "error", perfErr)
 	}
 
-	// 2. Measure latency to NanoLabs API
-	start := time.Now()
 	latencyMs := collector.MeasureServerLatency(s.cfg.APIUrl)
 	s.lastLatencyMs = latencyMs
-	_ = start
 
-	// 3. Lightweight Security State collection (Antivirus + Firewall profiles)
-	sec, err := collector.CollectSecurity()
-	if err != nil {
-		log.Warn("failed to collect security state", "error", err)
+	sec, secErr := collector.CollectSecurity()
+	if secErr != nil {
+		log.Warn("failed to collect security state", "error", secErr)
 	}
 
-	// 4. State Change Detector: detect immediate transitions
 	if sec != nil {
 		transitions := s.stateDetector.DetectSecurityChanges(sec)
 		if len(transitions) > 0 {
@@ -258,7 +258,6 @@ func (s *Scheduler) collectAndSendHeartbeatAndSecurity(ctx context.Context) {
 		}
 	}
 
-	// 5. Assemble Heartbeat Payload
 	payload := &transport.HeartbeatPayload{
 		DeviceID:        s.cfg.DeviceID,
 		AgentID:         s.cfg.AgentID,
@@ -268,7 +267,6 @@ func (s *Scheduler) collectAndSendHeartbeatAndSecurity(ctx context.Context) {
 		ServerLatencyMs: int64(s.lastLatencyMs),
 		Security:        sec,
 	}
-
 	if perf != nil {
 		payload.UptimeSeconds = perf.UptimeSecs
 		payload.CPUPercent = perf.CPUPercent
@@ -280,62 +278,72 @@ func (s *Scheduler) collectAndSendHeartbeatAndSecurity(ctx context.Context) {
 	resp, err := s.client.SendWithRetry(ctx, func(ctx context.Context) (*transport.Response, error) {
 		return s.client.SendHeartbeat(ctx, payload)
 	}, 2)
-
 	if err != nil {
 		log.Warn("failed to send heartbeat, buffering offline", "error", err)
 		if s.buffer != nil {
-			_ = s.buffer.Enqueue(buffer.PriorityHeartbeat, "/agent/heartbeat", payload)
+			if bufferErr := s.buffer.Enqueue(buffer.PriorityHeartbeat, "/agent/heartbeat", payload); bufferErr != nil {
+				return fmt.Errorf("heartbeat delivery failed and offline buffer write failed: %v; buffer: %w", err, bufferErr)
+			}
 		}
-		return
+		return fmt.Errorf("heartbeat not confirmed by server; buffered for retry: %w", err)
+	}
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		log.Warn("heartbeat rejected by server", "status", resp.StatusCode)
+		return fmt.Errorf("heartbeat rejected by server with HTTP %d", resp.StatusCode)
 	}
 
-	if resp.StatusCode >= 200 && resp.StatusCode < 300 {
-		var hbResp struct {
-			Status           string `json:"status"`
-			TamperProtection *struct {
-				Enabled bool   `json:"enabled"`
-				Key     string `json:"key"`
-			} `json:"tamperProtection"`
+	var hbResp struct {
+		Status           string `json:"status"`
+		TamperProtection *struct {
+			Enabled bool   `json:"enabled"`
+			Key     string `json:"key"`
+		} `json:"tamperProtection"`
+	}
+	if err := json.Unmarshal(resp.Body, &hbResp); err == nil && hbResp.TamperProtection != nil {
+		changed := false
+		if hbResp.TamperProtection.Key != "" && hbResp.TamperProtection.Key != s.cfg.TamperKey {
+			s.cfg.TamperKey = hbResp.TamperProtection.Key
+			changed = true
 		}
-		if err := json.Unmarshal(resp.Body, &hbResp); err == nil && hbResp.TamperProtection != nil {
-			changed := false
-			if hbResp.TamperProtection.Key != "" && hbResp.TamperProtection.Key != s.cfg.TamperKey {
-				s.cfg.TamperKey = hbResp.TamperProtection.Key
-				changed = true
-			}
-			if s.cfg.TamperProtectionEnabled != hbResp.TamperProtection.Enabled {
-				s.cfg.TamperProtectionEnabled = hbResp.TamperProtection.Enabled
-				changed = true
-			}
-			if changed {
-				if err := s.cfg.Save(); err != nil {
-					log.Warn("failed to persist tamper protection state", "error", err)
-				} else {
-					log.Info("tamper protection state synchronized from NOC",
-						"enabled", hbResp.TamperProtection.Enabled,
-					)
-				}
-			}
+		if s.cfg.TamperProtectionEnabled != hbResp.TamperProtection.Enabled {
+			s.cfg.TamperProtectionEnabled = hbResp.TamperProtection.Enabled
+			changed = true
 		}
+		if changed {
+			if err := s.cfg.Save(); err != nil {
+				log.Warn("failed to persist tamper protection state", "error", err)
+				return fmt.Errorf("heartbeat accepted but local tamper state could not be persisted: %w", err)
+			}
+			log.Info("tamper protection state synchronized from NOC",
+				"enabled", hbResp.TamperProtection.Enabled,
+			)
+		}
+	}
 
-		log.Debug("heartbeat + security sent successfully",
-			"latency_ms", s.lastLatencyMs,
-			"defender_active", sec != nil && sec.DefenderActive,
-			"firewall_active", sec != nil && sec.FirewallActive,
-		)
-	} else {
-		log.Warn("heartbeat rejected by server", "status", resp.StatusCode)
+	log.Debug("heartbeat + security sent successfully",
+		"latency_ms", s.lastLatencyMs,
+		"defender_active", sec != nil && sec.DefenderActive,
+		"firewall_active", sec != nil && sec.FirewallActive,
+	)
+
+	if secErr != nil {
+		return fmt.Errorf("heartbeat accepted but security collection was partial: %w", secErr)
+	}
+	return nil
+}
+func (s *Scheduler) collectAndSendMetrics(ctx context.Context) {
+	if err := s.collectAndSendMetricsConfirmed(ctx); err != nil {
+		s.logger.With("task", "metrics").Debug("metrics cycle not confirmed", "error", err)
 	}
 }
 
-// collectAndSendMetrics runs every 5 minutes (CPU, RAM, Volumes)
-func (s *Scheduler) collectAndSendMetrics(ctx context.Context) {
+func (s *Scheduler) collectAndSendMetricsConfirmed(ctx context.Context) error {
 	log := s.logger.With("task", "metrics")
 
 	perf, err := collector.CollectPerformance()
 	if err != nil {
 		log.Error("failed to collect performance metrics", "error", err)
-		return
+		return fmt.Errorf("collecting performance metrics: %w", err)
 	}
 
 	perf.Thermal = collector.CollectThermal()
@@ -350,37 +358,42 @@ func (s *Scheduler) collectAndSendMetrics(ctx context.Context) {
 	resp, err := s.client.SendWithRetry(ctx, func(ctx context.Context) (*transport.Response, error) {
 		return s.client.SendMetrics(ctx, perf)
 	}, 2)
-
 	if err != nil {
 		log.Warn("failed to send metrics, buffering offline", "error", err)
 		if s.buffer != nil {
-			_ = s.buffer.Enqueue(buffer.PriorityMetrics, "/agent/metrics", perf)
+			if bufferErr := s.buffer.Enqueue(buffer.PriorityMetrics, "/agent/metrics", perf); bufferErr != nil {
+				return fmt.Errorf("metrics delivery failed and offline buffer write failed: %v; buffer: %w", err, bufferErr)
+			}
 		}
-		return
+		return fmt.Errorf("metrics not confirmed by server; buffered for retry: %w", err)
+	}
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		log.Warn("metrics rejected by server", "status", resp.StatusCode)
+		return fmt.Errorf("metrics rejected by server with HTTP %d", resp.StatusCode)
 	}
 
-	if resp.StatusCode >= 200 && resp.StatusCode < 300 {
-		log.Debug("performance metrics sent successfully",
-			"cpu", perf.CPUPercent,
-			"ram_percent", perf.RAMPercent,
-			"volumes", len(perf.Volumes),
-		)
-	} else {
-		log.Warn("metrics rejected by server", "status", resp.StatusCode)
+	log.Debug("performance metrics sent successfully",
+		"cpu", perf.CPUPercent,
+		"ram_percent", perf.RAMPercent,
+		"volumes", len(perf.Volumes),
+	)
+	return nil
+}
+func (s *Scheduler) collectAndSendSmart(ctx context.Context) {
+	if err := s.collectAndSendSmartConfirmed(ctx); err != nil {
+		s.logger.With("task", "smart").Debug("SMART cycle not confirmed", "error", err)
 	}
 }
 
-// collectAndSendSmart runs every 60 minutes (Physical drive SMART health)
-func (s *Scheduler) collectAndSendSmart(ctx context.Context) {
+func (s *Scheduler) collectAndSendSmartConfirmed(ctx context.Context) error {
 	log := s.logger.With("task", "smart")
 
 	report, err := collector.CollectSmart()
 	if err != nil {
 		log.Warn("failed to collect SMART report", "error", err)
-		return
+		return fmt.Errorf("collecting SMART report: %w", err)
 	}
 
-	// Detect if physical disk status degraded
 	degradations := s.stateDetector.DetectSmartChanges(report)
 	if len(degradations) > 0 {
 		log.Warn("STORAGE SMART DEGRADATION DETECTED! Sending immediate event", "status", report.OverallStatus)
@@ -389,8 +402,6 @@ func (s *Scheduler) collectAndSendSmart(ctx context.Context) {
 		}
 	}
 
-	// Send SMART disk inventory to API with collection time so buffered replay
-	// can never supersede a fresher snapshot.
 	payload := map[string]interface{}{
 		"collectedAt": time.Now().UTC().Format(time.RFC3339Nano),
 		"smart":       report,
@@ -398,21 +409,22 @@ func (s *Scheduler) collectAndSendSmart(ctx context.Context) {
 	resp, err := s.client.SendWithRetry(ctx, func(ctx context.Context) (*transport.Response, error) {
 		return s.client.SendInventory(ctx, payload)
 	}, 2)
-
 	if err != nil {
 		log.Warn("failed to send smart telemetry, buffering offline", "error", err)
 		if s.buffer != nil {
-			_ = s.buffer.Enqueue(buffer.PriorityMetrics, "/agent/inventory", payload)
+			if bufferErr := s.buffer.Enqueue(buffer.PriorityMetrics, "/agent/inventory", payload); bufferErr != nil {
+				return fmt.Errorf("SMART delivery failed and offline buffer write failed: %v; buffer: %w", err, bufferErr)
+			}
 		}
-		return
+		return fmt.Errorf("SMART telemetry not confirmed by server; buffered for retry: %w", err)
+	}
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return fmt.Errorf("SMART telemetry rejected by server with HTTP %d", resp.StatusCode)
 	}
 
-	if resp.StatusCode >= 200 && resp.StatusCode < 300 {
-		log.Debug("SMART health telemetry sent", "overall", report.OverallStatus, "disks", len(report.Disks))
-	}
+	log.Debug("SMART health telemetry sent", "overall", report.OverallStatus, "disks", len(report.Disks))
+	return nil
 }
-
-// collectAndSendWindowsUpdate runs every 4 hours + boot
 func (s *Scheduler) collectAndSendWindowsUpdate(ctx context.Context) {
 	log := s.logger.With("task", "windows_update")
 
@@ -519,21 +531,31 @@ func (s *Scheduler) ReportPatches(ctx context.Context, scanResult *patch.ScanRes
 
 // collectAndSendInventory runs every 24 hours + boot
 func (s *Scheduler) collectAndSendInventory(ctx context.Context) {
+	if err := s.collectAndSendInventoryConfirmed(ctx); err != nil {
+		s.logger.With("task", "inventory").Debug("inventory cycle not confirmed", "error", err)
+	}
+}
+
+func (s *Scheduler) collectAndSendInventoryConfirmed(ctx context.Context) error {
 	log := s.logger.With("task", "inventory")
+	var collectionIssues []string
 
 	identity, err := collector.CollectIdentity()
 	if err != nil {
 		log.Error("failed to collect identity", "error", err)
+		collectionIssues = append(collectionIssues, "identity: "+err.Error())
 	}
 
 	hardware, err := collector.CollectHardware()
 	if err != nil {
 		log.Error("failed to collect hardware", "error", err)
+		collectionIssues = append(collectionIssues, "hardware: "+err.Error())
 	}
 
 	network, err := collector.CollectNetwork()
 	if err != nil {
 		log.Error("failed to collect network", "error", err)
+		collectionIssues = append(collectionIssues, "network: "+err.Error())
 	}
 	if network != nil {
 		network.ServerLatencyMs = s.lastLatencyMs
@@ -549,39 +571,46 @@ func (s *Scheduler) collectAndSendInventory(ctx context.Context) {
 	resp, err := s.client.SendWithRetry(ctx, func(ctx context.Context) (*transport.Response, error) {
 		return s.client.SendInventory(ctx, payload)
 	}, 2)
-
 	if err != nil {
 		log.Warn("failed to send inventory, buffering offline", "error", err)
 		if s.buffer != nil {
-			_ = s.buffer.Enqueue(buffer.PriorityInventory, "/agent/inventory", payload)
+			if bufferErr := s.buffer.Enqueue(buffer.PriorityInventory, "/agent/inventory", payload); bufferErr != nil {
+				return fmt.Errorf("inventory delivery failed and offline buffer write failed: %v; buffer: %w", err, bufferErr)
+			}
 		}
-		return
+		return fmt.Errorf("inventory not confirmed by server; buffered for retry: %w", err)
+	}
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return fmt.Errorf("inventory rejected by server with HTTP %d", resp.StatusCode)
 	}
 
-	if resp.StatusCode >= 200 && resp.StatusCode < 300 {
-		log.Info("heavy general inventory sent successfully")
-	} else {
-		log.Warn("inventory rejected by server", "status", resp.StatusCode)
+	log.Info("heavy general inventory sent successfully")
+	if len(collectionIssues) > 0 {
+		return fmt.Errorf("inventory accepted but local collection was partial: %s", strings.Join(collectionIssues, "; "))
+	}
+	return nil
+}
+func (s *Scheduler) collectAndSendSoftware(ctx context.Context) {
+	if err := s.collectAndSendSoftwareConfirmed(ctx); err != nil {
+		s.logger.With("task", "software").Debug("software cycle not confirmed", "error", err)
 	}
 }
 
-// collectAndSendSoftware runs every 24 hours + boot (uses checksum to avoid unnecessary uploads)
-func (s *Scheduler) collectAndSendSoftware(ctx context.Context) {
+func (s *Scheduler) collectAndSendSoftwareConfirmed(ctx context.Context) error {
 	log := s.logger.With("task", "software")
 
 	sw, err := collector.CollectSoftware()
 	if err != nil {
 		log.Error("failed to collect software inventory", "error", err)
-		return
+		return fmt.Errorf("collecting software inventory: %w", err)
 	}
 
-	// Check if software has changed since last sync
 	if s.lastSoftwareChecksum == sw.Checksum && len(s.lastSoftwareItems) > 0 {
 		log.Debug("software inventory unchanged (checksum matches), skipping upload",
 			"count", sw.Count,
 			"checksum", sw.Checksum,
 		)
-		return
+		return nil
 	}
 
 	changes := collector.ComputeSoftwareDelta(s.lastSoftwareItems, sw.Items)
@@ -596,29 +625,28 @@ func (s *Scheduler) collectAndSendSoftware(ctx context.Context) {
 	resp, err := s.client.SendWithRetry(ctx, func(ctx context.Context) (*transport.Response, error) {
 		return s.client.SendSoftware(ctx, payload)
 	}, 2)
-
 	if err != nil {
 		log.Warn("failed to send software inventory, buffering offline", "error", err)
 		if s.buffer != nil {
-			_ = s.buffer.Enqueue(buffer.PriorityInventory, "/agent/software", payload)
+			if bufferErr := s.buffer.Enqueue(buffer.PriorityInventory, "/agent/software", payload); bufferErr != nil {
+				return fmt.Errorf("software delivery failed and offline buffer write failed: %v; buffer: %w", err, bufferErr)
+			}
 		}
-		return
+		return fmt.Errorf("software inventory not confirmed by server; buffered for retry: %w", err)
+	}
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return fmt.Errorf("software inventory rejected by server with HTTP %d", resp.StatusCode)
 	}
 
-	if resp.StatusCode >= 200 && resp.StatusCode < 300 {
-		log.Info("software inventory sent successfully",
-			"count", sw.Count,
-			"changes", len(changes),
-			"checksum", sw.Checksum,
-		)
-		s.lastSoftwareChecksum = sw.Checksum
-		s.lastSoftwareItems = sw.Items
-	} else {
-		log.Warn("software inventory rejected", "status", resp.StatusCode)
-	}
+	log.Info("software inventory sent successfully",
+		"count", sw.Count,
+		"changes", len(changes),
+		"checksum", sw.Checksum,
+	)
+	s.lastSoftwareChecksum = sw.Checksum
+	s.lastSoftwareItems = sw.Items
+	return nil
 }
-
-// collectAndSendEvents runs every 60 seconds (critical Windows events using watermark bookmark)
 func (s *Scheduler) collectAndSendEvents(ctx context.Context) {
 	log := s.logger.With("task", "events")
 
