@@ -469,6 +469,7 @@ export class ActionsService {
       ActionStatus.EXPIRED,
       ActionStatus.CANCELLED,
     ]);
+    let recoveringExecutionLease = false;
 
     if (terminalStatuses.has(action.status)) {
       if (action.status === (status as ActionStatus)) {
@@ -486,7 +487,12 @@ export class ActionsService {
       // result arriving later is authoritative and may repair that provisional
       // FAILED state.
       const metadata = (action.auditMetadata || {}) as any;
-      if (!(action.status === ActionStatus.FAILED && metadata.executionLeaseExpired === true)) {
+      recoveringExecutionLease =
+        action.status === ActionStatus.FAILED &&
+        metadata.executionLeaseExpired === true &&
+        (status === 'SUCCESS' || status === 'FAILED');
+
+      if (!recoveringExecutionLease) {
         throw new Error(`Action "${actionId}" is already terminal with status ${action.status}`);
       }
     }
@@ -500,16 +506,24 @@ export class ActionsService {
       throw new Error(`Invalid transition ${action.status} -> RUNNING`);
     }
 
-    if ((status === 'SUCCESS' || status === 'FAILED') && !([
-      ActionStatus.DELIVERED,
-      ActionStatus.RUNNING,
-    ] as ActionStatus[]).includes(action.status)) {
+    if (
+      (status === 'SUCCESS' || status === 'FAILED') &&
+      !recoveringExecutionLease &&
+      !([ActionStatus.DELIVERED, ActionStatus.RUNNING] as ActionStatus[]).includes(action.status)
+    ) {
       throw new Error(`Invalid transition ${action.status} -> ${status}`);
     }
 
     const dataUpdates: any = {
       status: status as ActionStatus,
     };
+    if (recoveringExecutionLease) {
+      dataUpdates.auditMetadata = {
+        ...((action.auditMetadata || {}) as any),
+        executionLeaseExpired: false,
+        lateTerminalResultAcceptedAt: new Date().toISOString(),
+      };
+    }
 
     if (startedAt) {
       dataUpdates.startedAt = new Date(startedAt);
