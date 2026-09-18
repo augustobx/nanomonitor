@@ -1224,7 +1224,7 @@ export function getClientRuntimeScript(): string {
       }
     }
 
-    async function fetchCustomerEnrollmentToken(customerId) {
+    async function fetchCustomerEnrollmentToken(customerId, siteId) {
       if (!canManageEnrollment()) {
         throw new Error('Permisos insuficientes para generar comandos de enrolamiento.');
       }
@@ -1234,13 +1234,25 @@ export function getClientRuntimeScript(): string {
         throw new Error('Sesión no disponible.');
       }
 
-      const res = await fetch('/api/v1/customers/' + customerId + '/token', {
-        headers: { 'Authorization': 'Bearer ' + token }
+      const body = {
+        customerId: customerId,
+        maxUses: 1,
+        expiresInHours: 24
+      };
+      if (siteId) body.siteId = siteId;
+
+      const res = await fetch('/api/v1/enrollment/tokens', {
+        method: 'POST',
+        headers: {
+          'Authorization': 'Bearer ' + token,
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify(body)
       });
 
       const json = await res.json().catch(function() { return {}; });
       if (!res.ok || !json.data || !json.data.token) {
-        throw new Error(json.message || 'No se pudo obtener el token de enrolamiento.');
+        throw new Error(json.message || 'No se pudo generar el token de enrolamiento.');
       }
 
       return json.data.token;
@@ -3311,7 +3323,10 @@ export function getClientRuntimeScript(): string {
         if (cmdEl) {
           cmdEl.textContent = 'Generando comando seguro...';
           try {
-            const tokenStr = await fetchCustomerEnrollmentToken(currentWizardCustomerId);
+            const tokenStr = await fetchCustomerEnrollmentToken(
+              currentWizardCustomerId,
+              siteSel && siteSel.value ? siteSel.value : null
+            );
             cmdEl.textContent = buildEnrollmentCommand(tokenStr);
           } catch (err) {
             cmdEl.textContent = err && err.message ? err.message : 'No se pudo obtener el token de enrolamiento.';
