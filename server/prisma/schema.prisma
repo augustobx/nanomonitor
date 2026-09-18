@@ -394,6 +394,7 @@ model DeviceMetric {
   ramUsedMB        Int?
   ramAvailMB       Int?
   volumes          Json?
+  thermal          Json?
   uptimeSeconds    BigInt?
   networkLatencyMs Int?
 
