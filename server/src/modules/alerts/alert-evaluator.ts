@@ -273,7 +273,13 @@ export async function evaluateDeviceAlerts(
         .sort((a, b) => b.realCount - a.realCount);
 
       const legacyAlert = activeAlerts.find(
-        (a) => a.ruleId === rule.id && a.source === 'engine:APP_CRASH'
+        (a) =>
+          a.ruleId === rule.id &&
+          (
+            a.source === 'engine:APP_CRASH' ||
+            a.source === `engine:${rule.category}` ||
+            a.title === rule.name
+          )
       );
       let legacyConsumed = false;
       const matchedAlertIds = new Set<string>();
@@ -336,7 +342,12 @@ export async function evaluateDeviceAlerts(
       const staleCrashAlerts = activeAlerts.filter(
         (a) =>
           a.ruleId === rule.id &&
-          (a.source === 'engine:APP_CRASH' || a.source.startsWith('engine:APP_CRASH:')) &&
+          (
+            a.source === 'engine:APP_CRASH' ||
+            a.source.startsWith('engine:APP_CRASH:') ||
+            a.source === `engine:${rule.category}` ||
+            a.title === rule.name
+          ) &&
           !matchedAlertIds.has(a.id)
       );
 
