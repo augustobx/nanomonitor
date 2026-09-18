@@ -376,17 +376,20 @@ func (s *Scheduler) collectAndSendSmart(ctx context.Context) {
 		}
 	}
 
-	// Send SMART disk inventory to API
+	// Send SMART disk inventory to API with collection time so buffered replay
+	// can never supersede a fresher snapshot.
+	payload := map[string]interface{}{
+		"collectedAt": time.Now().UTC().Format(time.RFC3339Nano),
+		"smart":       report,
+	}
 	resp, err := s.client.SendWithRetry(ctx, func(ctx context.Context) (*transport.Response, error) {
-		return s.client.SendInventory(ctx, map[string]interface{}{
-			"smart": report,
-		})
+		return s.client.SendInventory(ctx, payload)
 	}, 2)
 
 	if err != nil {
 		log.Warn("failed to send smart telemetry, buffering offline", "error", err)
 		if s.buffer != nil {
-			_ = s.buffer.Enqueue(buffer.PriorityMetrics, "/agent/inventory", map[string]interface{}{"smart": report})
+			_ = s.buffer.Enqueue(buffer.PriorityMetrics, "/agent/inventory", payload)
 		}
 		return
 	}
@@ -407,16 +410,18 @@ func (s *Scheduler) collectAndSendWindowsUpdate(ctx context.Context) {
 		return
 	}
 
+	wuPayload := map[string]interface{}{
+		"collectedAt":    time.Now().UTC().Format(time.RFC3339Nano),
+		"windowsUpdate": wu,
+	}
 	resp, err := s.client.SendWithRetry(ctx, func(ctx context.Context) (*transport.Response, error) {
-		return s.client.SendInventory(ctx, map[string]interface{}{
-			"windowsUpdate": wu,
-		})
+		return s.client.SendInventory(ctx, wuPayload)
 	}, 2)
 
 	if err != nil {
 		log.Warn("failed to send windows update telemetry, buffering offline", "error", err)
 		if s.buffer != nil {
-			_ = s.buffer.Enqueue(buffer.PriorityInventory, "/agent/inventory", map[string]interface{}{"windowsUpdate": wu})
+			_ = s.buffer.Enqueue(buffer.PriorityInventory, "/agent/inventory", wuPayload)
 		}
 	} else if resp.StatusCode >= 200 && resp.StatusCode < 300 {
 		log.Debug("windows update telemetry sent", "reboot_pending", wu.RebootPending, "hotfixes", wu.HotfixCount)
@@ -477,6 +482,7 @@ func (s *Scheduler) ReportPatches(ctx context.Context, scanResult *patch.ScanRes
 		"patches":       patchItems,
 		"rebootPending": scanResult.RebootPending,
 		"rebootReason":  scanResult.RebootReason,
+		"scannedAt":     time.Now().UTC().Format(time.RFC3339Nano),
 	}
 
 	resp, err := s.client.SendWithRetry(ctx, func(ctx context.Context) (*transport.Response, error) {
@@ -521,9 +527,10 @@ func (s *Scheduler) collectAndSendInventory(ctx context.Context) {
 	}
 
 	payload := map[string]interface{}{
-		"identity": identity,
-		"hardware": hardware,
-		"network":  network,
+		"collectedAt": time.Now().UTC().Format(time.RFC3339Nano),
+		"identity":    identity,
+		"hardware":    hardware,
+		"network":     network,
 	}
 
 	resp, err := s.client.SendWithRetry(ctx, func(ctx context.Context) (*transport.Response, error) {
@@ -566,10 +573,11 @@ func (s *Scheduler) collectAndSendSoftware(ctx context.Context) {
 
 	changes := collector.ComputeSoftwareDelta(s.lastSoftwareItems, sw.Items)
 	payload := map[string]interface{}{
-		"checksum": sw.Checksum,
-		"count":    sw.Count,
-		"items":    sw.Items,
-		"changes":  changes,
+		"collectedAt": time.Now().UTC().Format(time.RFC3339Nano),
+		"checksum":    sw.Checksum,
+		"count":       sw.Count,
+		"items":       sw.Items,
+		"changes":     changes,
 	}
 
 	resp, err := s.client.SendWithRetry(ctx, func(ctx context.Context) (*transport.Response, error) {
