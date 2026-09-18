@@ -23,9 +23,9 @@ import { SoftwareComplianceService } from './modules/inventory/software-complian
 import { authenticateUser } from './middleware/user-auth.js';
 import { db } from './lib/db.js';
 import { getLandingHtml } from './views/landing.html.js';
-import { generateRandomString } from './lib/crypto.js';
 import { applyDevicePresence } from './lib/device-presence.js';
 import { NANOMONITOR_VERSION } from './lib/release-version.js';
+import { getTenantId } from './middleware/tenant-isolation.js';
 
 // Global BigInt JSON serialization polyfill
 if (!('toJSON' in BigInt.prototype)) {
@@ -109,102 +109,18 @@ export async function buildApp(): Promise<FastifyInstance> {
   app.get('/', async (request, reply) => {
     const accept = request.headers.accept || '';
     if (accept.includes('text/html')) {
-      let devices: any[] = [];
-      let customers: any[] = [];
-      let recentEvents: any[] = [];
-      let activeAlerts: any[] = [];
-      try {
-        devices = await db.device.findMany({
-          include: {
-            customer: { select: { id: true, name: true, code: true } },
-            site: { select: { id: true, name: true } },
-            agent: { select: { id: true, agentVersion: true, status: true, lastAuthAt: true } },
-            inventories: { take: 1, orderBy: { collectedAt: 'desc' } },
-            softwareInventories: { take: 1, orderBy: { collectedAt: 'desc' } },
-            metrics: { take: 15, orderBy: { timestamp: 'desc' } },
-            events: { take: 20, orderBy: { timestamp: 'desc' } },
-            healthScores: { take: 1, orderBy: { calculatedAt: 'desc' } },
-            heartbeats: { take: 1, orderBy: { timestamp: 'desc' } },
-          },
-          orderBy: { lastSeenAt: 'desc' },
-        });
-
-        customers = await db.customer.findMany({
-          include: {
-            sites: { select: { id: true, name: true } },
-            enrollmentTokens: {
-              select: { id: true, token: true, expiresAt: true },
-              where: { expiresAt: { gt: new Date() } },
-              orderBy: { createdAt: 'desc' },
-              take: 1,
-            },
-            _count: {
-              select: {
-                devices: true,
-                sites: true,
-                alerts: { where: { status: 'OPEN' } },
-              },
-            },
-          },
-          orderBy: { name: 'asc' },
-        });
-
-        // Ensure every customer has a dedicated enrollment token
-        for (const cust of customers) {
-          if (!cust.enrollmentTokens || cust.enrollmentTokens.length === 0) {
-            const cleanCode = cust.code.replace(/[^A-Z0-9]/gi, '').toUpperCase();
-            const tokenStr = `NL-${cleanCode}-${generateRandomString(8).toUpperCase()}`;
-            const newToken = await db.enrollmentToken.create({
-              data: {
-                tenantId: cust.tenantId,
-                customerId: cust.id,
-                token: tokenStr,
-                maxUses: 500,
-                expiresAt: new Date(Date.now() + 365 * 24 * 3600 * 1000),
-              },
-              select: { id: true, token: true, expiresAt: true },
-            });
-            cust.enrollmentTokens = [newToken];
-          }
-        }
-
-        recentEvents = await db.deviceEvent.findMany({
-          take: 8,
-          orderBy: { timestamp: 'desc' },
-          include: {
-            device: { select: { id: true, hostname: true } },
-          },
-        });
-
-        activeAlerts = await db.alert.findMany({
-          where: { status: { in: ['OPEN', 'ACKNOWLEDGED'] } },
-          include: {
-            device: { select: { id: true, hostname: true, displayName: true } },
-            customer: { select: { id: true, name: true, code: true } },
-            rule: { select: { id: true, name: true, category: true } },
-            acknowledger: { select: { id: true, name: true, email: true } },
-          },
-          orderBy: [
-            { severity: 'asc' },
-            { lastSeenAt: 'desc' },
-          ],
-          take: 100,
-        });
-      } catch (err) {
-        request.log.error(err, 'Failed to fetch dashboard data for landing');
-      }
-
-      devices = devices.map((device) => applyDevicePresence(device));
-
+      // Never embed protected RMM data in the unauthenticated HTML response.
+      // The browser loads tenant-scoped data only after /api/v1/public/live
+      // authenticates the user.
       const html = getLandingHtml({
         uptimeSeconds: Math.floor(process.uptime()),
         serverTime: new Date().toISOString(),
         version: NANOMONITOR_VERSION,
         env: config.NODE_ENV,
-        devices,
-        customers,
-        recentEvents,
-        alerts: activeAlerts,
+        devices: [],
+        customers: [],
+        recentEvents: [],
+        alerts: [],
       });
       return reply
         .header('Cache-Control', 'no-cache, no-store, must-revalidate')
@@ -226,12 +142,14 @@ export async function buildApp(): Promise<FastifyInstance> {
 
   // Live data endpoint for real-time dashboard auto-refresh (Protected with authenticateUser)
   app.get('/api/v1/public/live', { preHandler: [authenticateUser] }, async (request, reply) => {
+    const tenantId = getTenantId(request);
     let devices: any[] = [];
     let customers: any[] = [];
     let recentEvents: any[] = [];
     let activeAlerts: any[] = [];
     try {
       devices = await db.device.findMany({
+        where: { tenantId },
         include: {
           customer: { select: { id: true, name: true, code: true } },
           site: { select: { id: true, name: true } },
@@ -247,14 +165,9 @@ export async function buildApp(): Promise<FastifyInstance> {
       });
 
       customers = await db.customer.findMany({
+        where: { tenantId },
         include: {
           sites: { select: { id: true, name: true } },
-          enrollmentTokens: {
-            select: { id: true, token: true, expiresAt: true },
-            where: { expiresAt: { gt: new Date() } },
-            orderBy: { createdAt: 'desc' },
-            take: 1,
-          },
           _count: {
             select: {
               devices: true,
@@ -266,26 +179,8 @@ export async function buildApp(): Promise<FastifyInstance> {
         orderBy: { name: 'asc' },
       });
 
-      // Ensure every customer has a dedicated enrollment token
-      for (const cust of customers) {
-        if (!cust.enrollmentTokens || cust.enrollmentTokens.length === 0) {
-          const cleanCode = cust.code.replace(/[^A-Z0-9]/gi, '').toUpperCase();
-          const tokenStr = `NL-${cleanCode}-${generateRandomString(8).toUpperCase()}`;
-          const newToken = await db.enrollmentToken.create({
-            data: {
-              tenantId: cust.tenantId,
-              customerId: cust.id,
-              token: tokenStr,
-              maxUses: 500,
-              expiresAt: new Date(Date.now() + 365 * 24 * 3600 * 1000),
-            },
-            select: { id: true, token: true, expiresAt: true },
-          });
-          cust.enrollmentTokens = [newToken];
-        }
-      }
-
       recentEvents = await db.deviceEvent.findMany({
+        where: { tenantId },
         take: 8,
         orderBy: { timestamp: 'desc' },
         include: {
@@ -294,7 +189,7 @@ export async function buildApp(): Promise<FastifyInstance> {
       });
 
       activeAlerts = await db.alert.findMany({
-        where: { status: { in: ['OPEN', 'ACKNOWLEDGED'] } },
+        where: { tenantId, status: { in: ['OPEN', 'ACKNOWLEDGED'] } },
         include: {
           device: { select: { id: true, hostname: true, displayName: true } },
           customer: { select: { id: true, name: true, code: true } },
