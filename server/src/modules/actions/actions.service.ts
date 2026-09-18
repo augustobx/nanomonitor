@@ -9,6 +9,7 @@ export const actionEvents = new EventEmitter();
 actionEvents.setMaxListeners(500);
 
 const DELIVERY_LEASE_MS = 60 * 1000;
+const MAX_RUNNING_AGE_MS = 2 * 60 * 60 * 1000;
 
 export interface CreateActionParams {
   tenantId: string;
@@ -39,6 +40,110 @@ export interface UpdateActionStatusParams {
 }
 
 export class ActionsService {
+  private static async reconcileNeverExecutedAction(action: any, reason: string) {
+    if (
+      action.actionType === ActionType.WINDOWS_UPDATE_INSTALL_KB ||
+      action.actionType === ActionType.WINDOWS_UPDATE_INSTALL_APPROVED
+    ) {
+      const ids = Array.isArray(action.parameters?.kbArticleIds)
+        ? action.parameters.kbArticleIds
+            .filter((v: unknown): v is string => typeof v === 'string')
+            .map((v: string) => v.trim().toUpperCase())
+        : [];
+
+      if (ids.length > 0) {
+        await db.devicePatch.updateMany({
+          where: {
+            tenantId: action.tenantId,
+            deviceId: action.deviceId,
+            kbArticleId: { in: ids },
+            status: 'INSTALLING',
+          },
+          data: { status: 'MISSING' },
+        });
+
+        await db.patchHistory.updateMany({
+          where: {
+            tenantId: action.tenantId,
+            deviceId: action.deviceId,
+            kbArticleId: { in: ids },
+            status: 'IN_PROGRESS',
+          },
+          data: {
+            status: 'FAILED',
+            exitCode: 1,
+            errorDetails: reason,
+          },
+        });
+      }
+    }
+
+    if (action.actionType === ActionType.WINDOWS_UPDATE_SCHEDULE_REBOOT) {
+      await db.device.updateMany({
+        where: {
+          id: action.deviceId,
+          tenantId: action.tenantId,
+          rebootState: 'REBOOT_SCHEDULED',
+        },
+        data: {
+          rebootState: 'REBOOT_REQUIRED',
+          rebootScheduledAt: null,
+        },
+      });
+    }
+  }
+
+  private static async expirePendingActions(tenantId: string, deviceId: string, now: Date) {
+    const expiring = await db.remoteAction.findMany({
+      where: {
+        tenantId,
+        deviceId,
+        status: { in: [ActionStatus.PENDING, ActionStatus.QUEUED, ActionStatus.DELIVERED] },
+        expiresAt: { lt: now },
+      },
+    });
+
+    for (const action of expiring) {
+      const changed = await db.remoteAction.updateMany({
+        where: {
+          id: action.id,
+          tenantId,
+          deviceId,
+          status: { in: [ActionStatus.PENDING, ActionStatus.QUEUED, ActionStatus.DELIVERED] },
+        },
+        data: {
+          status: ActionStatus.EXPIRED,
+          finishedAt: now,
+        },
+      });
+
+      if (changed.count === 1) {
+        await this.reconcileNeverExecutedAction(
+          action,
+          'La acción expiró antes de comenzar su ejecución en el agente.'
+        );
+      }
+    }
+
+    // A process can die after RUNNING is acknowledged but before a durable
+    // terminal report exists. Do not leave that action RUNNING forever.
+    const staleRunningBefore = new Date(now.getTime() - MAX_RUNNING_AGE_MS);
+    await db.remoteAction.updateMany({
+      where: {
+        tenantId,
+        deviceId,
+        status: ActionStatus.RUNNING,
+        startedAt: { lt: staleRunningBefore },
+      },
+      data: {
+        status: ActionStatus.FAILED,
+        finishedAt: now,
+        error: 'Execution lease expired: the agent did not return a terminal result within 2 hours.',
+        auditMetadata: { executionLeaseExpired: true },
+      },
+    });
+  }
+
   /**
    * Enqueue a new remote action for a device
    */
@@ -58,6 +163,18 @@ export class ActionsService {
     } = params;
 
     const expiresAt = new Date(Date.now() + expiresInMinutes * 60 * 1000);
+
+    const targetDevice = await db.device.findFirst({
+      where: {
+        id: deviceId,
+        tenantId,
+        customerId,
+      },
+      select: { id: true },
+    });
+    if (!targetDevice) {
+      throw new Error('Target device does not belong to the requested tenant/customer scope');
+    }
 
     const action = await db.remoteAction.create({
       data: {
@@ -105,19 +222,9 @@ export class ActionsService {
    * Get active and past actions for a device
    */
   static async getDeviceActions(tenantId: string, deviceId: string, limit = 50) {
-    // 1. Automatically mark expired actions
+    // 1. Expire and reconcile actions that never began.
     const now = new Date();
-    await db.remoteAction.updateMany({
-      where: {
-        tenantId,
-        deviceId,
-        status: { in: [ActionStatus.PENDING, ActionStatus.QUEUED, ActionStatus.DELIVERED] },
-        expiresAt: { lt: now },
-      },
-      data: {
-        status: ActionStatus.EXPIRED,
-      },
-    });
+    await this.expirePendingActions(tenantId, deviceId, now);
 
     // 2. Query recent actions
     const actions = await db.remoteAction.findMany({
@@ -171,6 +278,11 @@ export class ActionsService {
       },
     });
 
+    await this.reconcileNeverExecutedAction(
+      action,
+      reason || 'La acción fue cancelada antes de ejecutarse.'
+    );
+
     await logAudit({
       tenantId,
       userId,
@@ -199,15 +311,7 @@ export class ActionsService {
     const now = new Date();
     const deliveryLeaseCutoff = new Date(now.getTime() - DELIVERY_LEASE_MS);
 
-    await db.remoteAction.updateMany({
-      where: {
-        tenantId,
-        deviceId,
-        status: { in: [ActionStatus.PENDING, ActionStatus.QUEUED, ActionStatus.DELIVERED] },
-        expiresAt: { lt: now },
-      },
-      data: { status: ActionStatus.EXPIRED },
-    });
+    await this.expirePendingActions(tenantId, deviceId, now);
 
     const availableWhere: any = {
       tenantId,
@@ -225,7 +329,7 @@ export class ActionsService {
     const pendingActions = await db.remoteAction.findMany({
       where: availableWhere,
       orderBy: { createdAt: 'asc' },
-      take: 5,
+      take: 1,
     });
 
     if (pendingActions.length > 0) {
@@ -370,7 +474,21 @@ export class ActionsService {
       if (action.status === (status as ActionStatus)) {
         return { action, changed: false };
       }
-      throw new Error(`Action "${actionId}" is already terminal with status ${action.status}`);
+
+      // Agent checks expiresAt before any side effect. If the server expired the
+      // record first, its FAILED "not executed because expired" report is an
+      // idempotent acknowledgement, not a conflicting transition.
+      if (action.status === ActionStatus.EXPIRED && status === 'FAILED') {
+        return { action, changed: false };
+      }
+
+      // If a RUNNING lease was force-closed after two hours, a durable terminal
+      // result arriving later is authoritative and may repair that provisional
+      // FAILED state.
+      const metadata = (action.auditMetadata || {}) as any;
+      if (!(action.status === ActionStatus.FAILED && metadata.executionLeaseExpired === true)) {
+        throw new Error(`Action "${actionId}" is already terminal with status ${action.status}`);
+      }
     }
 
     if (status === 'RUNNING' && !([
