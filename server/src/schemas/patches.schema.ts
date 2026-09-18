@@ -89,7 +89,7 @@ export const upsertPatchPolicySchema = z
 export type UpsertPatchPolicyInput = z.infer<typeof upsertPatchPolicySchema>;
 
 export const patchItemReportSchema = z.object({
-  kbArticleId: z.string().min(2).max(50),
+  kbArticleId: z.string().min(2).max(50).transform((v) => v.trim().toUpperCase()),
   title: z.string().min(1).max(500),
   description: z.string().max(2000).optional(),
   category: z.enum(PATCH_CATEGORIES).default('OTHER'),
