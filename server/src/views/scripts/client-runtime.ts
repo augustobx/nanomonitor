@@ -4212,7 +4212,9 @@ export function getClientRuntimeScript(): string {
         cachedCurrentDevicePatches = patches;
 
         // Counters & KPIs
-        const missing = patches.filter(function(p) { return p.status === 'MISSING' || p.status === 'DOWNLOADING'; });
+        const missing = patches.filter(function(p) {
+          return p.status === 'MISSING' || p.status === 'PENDING_DOWNLOAD' || p.status === 'DOWNLOADED';
+        });
         const critical = missing.filter(function(p) { return p.category === 'CRITICAL' || p.category === 'SECURITY' || p.severity === 'CRITICAL' || p.severity === 'IMPORTANT'; });
         const installed = patches.filter(function(p) { return p.status === 'INSTALLED'; });
 
@@ -4282,8 +4284,10 @@ export function getClientRuntimeScript(): string {
 
       function statusBadge(st) {
         if (st === 'MISSING') return '<span class="badge badge-warning">PENDIENTE</span>';
+        if (st === 'PENDING_DOWNLOAD') return '<span class="badge badge-warning">PENDIENTE DESCARGA</span>';
+        if (st === 'DOWNLOADED') return '<span class="badge badge-info">DESCARGADO</span>';
+        if (st === 'INSTALLING') return '<span class="badge badge-info">INSTALANDO</span>';
         if (st === 'INSTALLED') return '<span class="badge badge-success">INSTALADO</span>';
-        if (st === 'DOWNLOADING') return '<span class="badge badge-info">DESCARGANDO</span>';
         if (st === 'FAILED') return '<span class="badge badge-danger">ERROR</span>';
         if (st === 'PENDING_REBOOT') return '<span class="badge" style="background: #3b82f6; color: #fff;">REINICIO</span>';
         return '<span class="badge badge-secondary">' + st + '</span>';
@@ -4298,7 +4302,10 @@ export function getClientRuntimeScript(): string {
 
       let html = '';
       patches.forEach(function(p) {
-        const isMissing = p.status === 'MISSING';
+        const isMissing =
+          p.status === 'MISSING' ||
+          p.status === 'PENDING_DOWNLOAD' ||
+          p.status === 'DOWNLOADED';
         const isChecked = selectedPatchKBs.has(p.kbArticleId);
 
         html += '<tr>' +
@@ -4355,7 +4362,9 @@ export function getClientRuntimeScript(): string {
     }
 
     function toggleSelectAllDevicePatches(checked) {
-      const missing = (cachedCurrentDevicePatches || []).filter(function(p) { return p.status === 'MISSING'; });
+      const missing = (cachedCurrentDevicePatches || []).filter(function(p) {
+        return p.status === 'MISSING' || p.status === 'PENDING_DOWNLOAD' || p.status === 'DOWNLOADED';
+      });
       if (checked) {
         missing.forEach(function(p) { selectedPatchKBs.add(p.kbArticleId); });
       } else {
