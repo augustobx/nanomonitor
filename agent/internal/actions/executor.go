@@ -700,8 +700,10 @@ $out | ConvertTo-Json -Compress`, safeIsoDatePsSnippet, defenderReactivationPsSn
 	if err := json.Unmarshal([]byte(combined), &result); err == nil {
 		var sb strings.Builder
 
-		if success, ok := result["success"].(bool); ok && !success {
-			errDetail := "Fallo en la ejecución del escaneo de Windows Defender"
+		success, successOK := result["success"].(bool)
+		confirmed, confirmedOK := result["scanConfirmed"].(bool)
+		if !successOK || !success || !confirmedOK || !confirmed {
+			errDetail := "Fallo en la ejecución o validación del escaneo de Windows Defender"
 			if e, ok := result["error"].(string); ok && e != "" {
 				errDetail = e
 			}
@@ -726,7 +728,7 @@ $out | ConvertTo-Json -Compress`, safeIsoDatePsSnippet, defenderReactivationPsSn
 		if reactivated, ok := result["reactivated"].(bool); ok && reactivated {
 			sb.WriteString("⚡ La protección estaba desactivada y fue REACTIVADA automáticamente antes del examen.\n")
 		}
-		if confirmed, ok := result["scanConfirmed"].(bool); ok && confirmed {
+		if confirmed {
 			sb.WriteString("✅ Escaneo confirmado por el motor de Defender.\n")
 		}
 		if dur, ok := result["scanDurationSeconds"].(float64); ok {
@@ -835,13 +837,23 @@ $out | ConvertTo-Json -Compress`, safeIsoDatePsSnippet)
 			sb.WriteString(fmt.Sprintf("⚙️ Motor AM: %s\n", engine))
 		}
 
-		exitCode := 0
-		if success, ok := result["success"].(bool); ok && !success {
-			exitCode = 1
+		success, ok := result["success"].(bool)
+		if !ok || !success {
+			detail := "Windows Defender no confirmó la actualización de firmas."
+			if msg, msgOK := result["error"].(string); msgOK && msg != "" {
+				detail = msg
+			}
+			sb.WriteString(fmt.Sprintf("❌ %s\n", detail))
+			return &ExecutionResult{
+				ExitCode: 1,
+				Output:   sb.String(),
+				Error:    detail,
+				Result:   result,
+			}
 		}
 
 		return &ExecutionResult{
-			ExitCode: exitCode,
+			ExitCode: 0,
 			Output:   sb.String(),
 			Result:   result,
 		}
@@ -881,6 +893,7 @@ $out = @{
     antivirusEnabled = $false
     realTimeProtection = $false
     serviceRunning = $false
+    tamperProtected = $false
     signatureVersion = ''
     error = ''
 }
@@ -895,6 +908,7 @@ try {
     $out.preferenceApplied = $react.preferenceApplied
     $out.mpCmdSuccess = $react.mpCmdSuccess
     $out.activeAfter = $react.activeAfter
+    $out.tamperProtected = $react.tamperProtected
     $out.error = $react.error
 
     $post = Get-MpComputerStatus -ErrorAction Stop
@@ -921,7 +935,7 @@ $out | ConvertTo-Json -Compress`, defenderReactivationPsSnippet)
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
-	_ = cmd.Run()
+	err := cmd.Run()
 
 	combined := strings.TrimSpace(stdout.String())
 	errStr := strings.TrimSpace(stderr.String())
