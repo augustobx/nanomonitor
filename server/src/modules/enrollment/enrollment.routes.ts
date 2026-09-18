@@ -81,6 +81,7 @@ export const enrollmentRoutes: FastifyPluginAsync = async (fastify: FastifyInsta
         request,
       });
 
+      reply.header('Cache-Control', 'no-store');
       return reply.status(201).send({
         statusCode: 201,
         data: {
@@ -110,14 +111,25 @@ export const enrollmentRoutes: FastifyPluginAsync = async (fastify: FastifyInsta
           tenantId,
           expiresAt: { gt: new Date() },
         },
-        include: {
+        select: {
+          id: true,
+          customerId: true,
+          siteId: true,
+          maxUses: true,
+          usedCount: true,
+          expiresAt: true,
+          createdAt: true,
+          usedAt: true,
+          usedByDeviceId: true,
           customer: { select: { id: true, name: true, code: true } },
           site: { select: { id: true, name: true } },
         },
         orderBy: { createdAt: 'desc' },
       });
 
-      return reply.send({ statusCode: 200, data: tokens });
+      return reply
+        .header('Cache-Control', 'no-store')
+        .send({ statusCode: 200, data: tokens });
     }
   );
 
@@ -396,6 +408,7 @@ export const enrollmentRoutes: FastifyPluginAsync = async (fastify: FastifyInsta
       request,
     });
 
+    reply.header('Cache-Control', 'no-store');
     return reply.status(201).send({
       agentId: agent.id,
       agentSecret,
