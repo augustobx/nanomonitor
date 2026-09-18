@@ -87,6 +87,8 @@ func ScanWindowsUpdates(ctx context.Context, timeout time.Duration) (*ScanResult
 
 	// PowerShell script using native Microsoft.Update.Session COM
 	script := `$ErrorActionPreference = 'Stop'
+[Console]::OutputEncoding = [System.Text.UTF8Encoding]::new($false)
+$OutputEncoding = [Console]::OutputEncoding
 try {
     $Session = New-Object -ComObject Microsoft.Update.Session
     $Searcher = $Session.CreateUpdateSearcher()
@@ -131,7 +133,7 @@ try {
             severity = $sev
             isDownloaded = [bool]$u.IsDownloaded
             requiresReboot = [bool]$u.RebootRequired
-            sizeBytes = [long]$u.MaxDownloadSize
+            sizeBytes = [long](if ($u.MinDownloadSize -gt 0) { $u.MinDownloadSize } else { $u.MaxDownloadSize })
         }
     }
     
@@ -206,6 +208,8 @@ func InstallTargetKBs(ctx context.Context, targetKBs []string, timeout time.Dura
 	kbArrayLiteral := "@(" + strings.Join(kbList, ", ") + ")"
 
 	script := fmt.Sprintf(`$ErrorActionPreference = 'Stop'
+[Console]::OutputEncoding = [System.Text.UTF8Encoding]::new($false)
+$OutputEncoding = [Console]::OutputEncoding
 $targetIds = %s
 try {
     $Session = New-Object -ComObject Microsoft.Update.Session
