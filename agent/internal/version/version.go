@@ -3,7 +3,7 @@ package version
 // These variables are set at build time via -ldflags
 var (
 	// Version is the semantic version of the agent
-	Version = "1.4.5"
+	Version = "1.4.6"
 	// Commit is the git commit hash
 	Commit = "unknown"
 	// BuildDate is the date the binary was built
