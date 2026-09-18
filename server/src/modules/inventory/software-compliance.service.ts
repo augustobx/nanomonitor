@@ -194,6 +194,16 @@ export class SoftwareComplianceService {
       customerId?: string;
     }
   ) {
+    if (data.customerId) {
+      const customer = await db.customer.findFirst({
+        where: { id: data.customerId, tenantId },
+        select: { id: true },
+      });
+      if (!customer) {
+        throw new Error('Customer not found in tenant');
+      }
+    }
+
     return db.softwareBlacklistRule.create({
       data: {
         tenantId,
