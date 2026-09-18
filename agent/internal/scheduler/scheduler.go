@@ -298,10 +298,23 @@ func (s *Scheduler) collectAndSendHeartbeatAndSecurity(ctx context.Context) {
 			} `json:"tamperProtection"`
 		}
 		if err := json.Unmarshal(resp.Body, &hbResp); err == nil && hbResp.TamperProtection != nil {
+			changed := false
 			if hbResp.TamperProtection.Key != "" && hbResp.TamperProtection.Key != s.cfg.TamperKey {
 				s.cfg.TamperKey = hbResp.TamperProtection.Key
-				_ = s.cfg.Save()
-				log.Info("tamper protection key synced from NOC", "tamper_key", hbResp.TamperProtection.Key)
+				changed = true
+			}
+			if s.cfg.TamperProtectionEnabled != hbResp.TamperProtection.Enabled {
+				s.cfg.TamperProtectionEnabled = hbResp.TamperProtection.Enabled
+				changed = true
+			}
+			if changed {
+				if err := s.cfg.Save(); err != nil {
+					log.Warn("failed to persist tamper protection state", "error", err)
+				} else {
+					log.Info("tamper protection state synchronized from NOC",
+						"enabled", hbResp.TamperProtection.Enabled,
+					)
+				}
 			}
 		}
 
