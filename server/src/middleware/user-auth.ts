@@ -27,14 +27,21 @@ export async function authenticateUser(request: FastifyRequest, reply: FastifyRe
   // Quick lookup to ensure user is still active
   const user = await db.user.findUnique({
     where: { id: payload.userId },
-    select: { id: true, tenantId: true, email: true, role: true, status: true },
+    select: {
+      id: true,
+      tenantId: true,
+      email: true,
+      role: true,
+      status: true,
+      tenant: { select: { status: true } },
+    },
   });
 
-  if (!user || user.status !== 'ACTIVE') {
+  if (!user || user.status !== 'ACTIVE' || user.tenant.status !== 'ACTIVE') {
     return reply.status(401).send({
       statusCode: 401,
       error: 'Unauthorized',
-      message: 'User account is inactive or not found',
+      message: 'User or tenant account is inactive or not found',
     });
   }
 
