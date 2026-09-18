@@ -231,8 +231,8 @@ export class HardwareDiffer {
 
       // Create an alert if critical tampering / hardware reduction is detected
       if (result.criticalTamperingDetected) {
-        const device = await db.device.findUnique({
-          where: { id: deviceId },
+        const device = await db.device.findFirst({
+          where: { id: deviceId, tenantId },
           select: { hostname: true, customerId: true },
         });
 
