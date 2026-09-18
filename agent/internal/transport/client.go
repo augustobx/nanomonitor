@@ -123,9 +123,10 @@ type ActionItem struct {
 
 // PollActionsResponse is the API response for /agent/actions/poll
 type PollActionsResponse struct {
-	Status     string       `json:"status"`
-	Actions    []ActionItem `json:"actions"`
-	ServerTime string       `json:"serverTime"`
+	Status             string       `json:"status"`
+	Actions            []ActionItem `json:"actions"`
+	ActionContractHash string       `json:"actionContractHash"`
+	ServerTime         string       `json:"serverTime"`
 }
 
 // ActionStatusReport is sent by the agent when updating status or reporting completion
@@ -140,21 +141,21 @@ type ActionStatusReport struct {
 }
 
 // PollActions queries the server for pending remote actions
-func (c *Client) PollActions(ctx context.Context, waitSeconds int) ([]ActionItem, error) {
+func (c *Client) PollActions(ctx context.Context, waitSeconds int) ([]ActionItem, string, error) {
 	path := fmt.Sprintf("/agent/actions/poll?wait=%d", waitSeconds*1000)
 	resp, err := c.sendAuthenticatedJSON(ctx, "POST", path, map[string]interface{}{})
 	if err != nil {
-		return nil, err
+		return nil, "", err
 	}
 	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("polling actions returned status: %d", resp.StatusCode)
+		return nil, "", fmt.Errorf("polling actions returned status: %d", resp.StatusCode)
 	}
 
 	var pollResp PollActionsResponse
 	if err := json.Unmarshal(resp.Body, &pollResp); err != nil {
-		return nil, fmt.Errorf("unmarshaling poll response: %w", err)
+		return nil, "", fmt.Errorf("unmarshaling poll response: %w", err)
 	}
-	return pollResp.Actions, nil
+	return pollResp.Actions, pollResp.ActionContractHash, nil
 }
 
 // ReportActionStatus reports the status or completion of an action
