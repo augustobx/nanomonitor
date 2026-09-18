@@ -89,7 +89,11 @@ export async function buildApp(): Promise<FastifyInstance> {
   await app.register(cookie);
 
   await app.register(rateLimit, {
-    max: 300,
+    // A customer office can place many agents behind one public NAT address.
+    // Long-polling alone generates several requests/minute/device, so 300/min
+    // can incorrectly throttle a healthy 100-device site. Sensitive routes
+    // (e.g. login) keep their own much stricter per-route limits.
+    max: 1200,
     timeWindow: '1 minute',
   });
 
