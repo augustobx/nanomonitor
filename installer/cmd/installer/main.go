@@ -336,6 +336,25 @@ func doInstall(token, apiURL string, silent bool) {
 		os.Exit(1)
 	}
 
+	// Expose only the minimum files consumed by the interactive tray. Everything
+	// else under ProgramData remains SYSTEM/Administrators-only by inheritance.
+	logsDir := filepath.Join(DefaultDataDir, "logs")
+	if err := makePublicDirectoryReadable(logsDir); err != nil {
+		showError(fmt.Sprintf("No se pudo restaurar la ACL pública del directorio de logs:\n%v", err), silent)
+		os.Exit(1)
+	}
+	for _, publicPath := range []string{
+		filepath.Join(logsDir, "agent.log"),
+		filepath.Join(DefaultDataDir, "active_action.json"),
+	} {
+		if _, err := os.Stat(publicPath); err == nil {
+			if err := makePublicFileReadable(publicPath); err != nil {
+				showError(fmt.Sprintf("No se pudo restaurar la ACL pública de %s:\n%v", filepath.Base(publicPath), err), silent)
+				os.Exit(1)
+			}
+		}
+	}
+
 	// 9. Launch nanotray.exe in current user session only after the service is confirmed RUNNING
 	pTray, _ := windows.UTF16PtrFromString(trayDest)
 	pDir, _ := windows.UTF16PtrFromString(DefaultInstallDir)
@@ -510,7 +529,9 @@ func secureDataDirectory() error {
 		"/grant:r",
 		"*S-1-5-18:(OI)(CI)F",
 		"*S-1-5-32-544:(OI)(CI)F",
-		"*S-1-5-32-545:(OI)(CI)RX",
+		// Standard users may traverse the data root, but access is NOT inherited
+		// by telemetry queues, pending action reports, watermarks, or credentials.
+		"*S-1-5-32-545:RX",
 	)
 	if out, err := cmd.CombinedOutput(); err != nil {
 		return fmt.Errorf("icacls data directory: %w (%s)", err, string(out))
@@ -560,6 +581,38 @@ func protectSensitiveFile(path string) error {
 	)
 	if out, err := cmd.CombinedOutput(); err != nil {
 		return fmt.Errorf("icacls sensitive file: %w (%s)", err, string(out))
+	}
+	return nil
+}
+
+func makePublicFileReadable(path string) error {
+	cmd := exec.Command(
+		"icacls.exe",
+		path,
+		"/inheritance:r",
+		"/grant:r",
+		"*S-1-5-18:F",
+		"*S-1-5-32-544:F",
+		"*S-1-5-32-545:R",
+	)
+	if out, err := cmd.CombinedOutput(); err != nil {
+		return fmt.Errorf("icacls public file: %w (%s)", err, string(out))
+	}
+	return nil
+}
+
+func makePublicDirectoryReadable(path string) error {
+	cmd := exec.Command(
+		"icacls.exe",
+		path,
+		"/inheritance:r",
+		"/grant:r",
+		"*S-1-5-18:(OI)(CI)F",
+		"*S-1-5-32-544:(OI)(CI)F",
+		"*S-1-5-32-545:(OI)(CI)RX",
+	)
+	if out, err := cmd.CombinedOutput(); err != nil {
+		return fmt.Errorf("icacls public directory: %w (%s)", err, string(out))
 	}
 	return nil
 }
