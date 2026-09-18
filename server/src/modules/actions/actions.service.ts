@@ -126,22 +126,63 @@ export class ActionsService {
     }
 
     // A process can die after RUNNING is acknowledged but before a durable
-    // terminal report exists. Do not leave that action RUNNING forever.
+    // terminal report exists. Close each stale action conditionally so its
+    // related patch/remediation state is reconciled exactly once.
     const staleRunningBefore = new Date(now.getTime() - MAX_RUNNING_AGE_MS);
-    await db.remoteAction.updateMany({
+    const staleRunning = await db.remoteAction.findMany({
       where: {
         tenantId,
         deviceId,
         status: ActionStatus.RUNNING,
         startedAt: { lt: staleRunningBefore },
       },
-      data: {
-        status: ActionStatus.FAILED,
-        finishedAt: now,
-        error: 'Execution lease expired: the agent did not return a terminal result within 2 hours.',
-        auditMetadata: { executionLeaseExpired: true },
-      },
     });
+
+    for (const action of staleRunning) {
+      const reason =
+        'Execution lease expired: the agent did not return a terminal result within 2 hours.';
+
+      const changed = await db.remoteAction.updateMany({
+        where: {
+          id: action.id,
+          tenantId,
+          deviceId,
+          status: ActionStatus.RUNNING,
+          startedAt: { lt: staleRunningBefore },
+        },
+        data: {
+          status: ActionStatus.FAILED,
+          finishedAt: now,
+          error: reason,
+          auditMetadata: { executionLeaseExpired: true },
+        },
+      });
+
+      if (changed.count !== 1) continue;
+
+      await this.reconcileNeverExecutedAction(action, reason);
+
+      await db.remediationExecution.updateMany({
+        where: {
+          tenantId,
+          remoteActionId: action.id,
+          status: {
+            in: ['QUEUED', 'EXECUTING', 'VALIDATING'] as any,
+          },
+        },
+        data: {
+          status: 'FAILED',
+          completedAt: now,
+          error: reason,
+          savedIntervention: false,
+        },
+      });
+
+      logger.warn(
+        { tenantId, deviceId, actionId: action.id, actionType: action.actionType },
+        'Closed stale RUNNING remote action after execution lease expiry'
+      );
+    }
   }
 
   /**
