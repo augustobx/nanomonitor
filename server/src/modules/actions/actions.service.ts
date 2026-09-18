@@ -8,6 +8,8 @@ export const actionEvents = new EventEmitter();
 // Increase listener limit to support multiple concurrent device polling loops
 actionEvents.setMaxListeners(500);
 
+const DELIVERY_LEASE_MS = 60 * 1000;
+
 export interface CreateActionParams {
   tenantId: string;
   customerId: string;
@@ -194,46 +196,71 @@ export class ActionsService {
     deviceId: string,
     waitMs = 0
   ): Promise<any[]> {
-    // Clean up expired actions first
     const now = new Date();
+    const deliveryLeaseCutoff = new Date(now.getTime() - DELIVERY_LEASE_MS);
+
     await db.remoteAction.updateMany({
       where: {
         tenantId,
         deviceId,
-        status: { in: [ActionStatus.PENDING, ActionStatus.QUEUED] },
+        status: { in: [ActionStatus.PENDING, ActionStatus.QUEUED, ActionStatus.DELIVERED] },
         expiresAt: { lt: now },
       },
-      data: {
-        status: ActionStatus.EXPIRED,
-      },
+      data: { status: ActionStatus.EXPIRED },
     });
 
-    // Check for immediately available actions
+    const availableWhere: any = {
+      tenantId,
+      deviceId,
+      expiresAt: { gt: now },
+      OR: [
+        { status: { in: [ActionStatus.PENDING, ActionStatus.QUEUED] } },
+        {
+          status: ActionStatus.DELIVERED,
+          deliveredAt: { lt: deliveryLeaseCutoff },
+        },
+      ],
+    };
+
     const pendingActions = await db.remoteAction.findMany({
-      where: {
-        tenantId,
-        deviceId,
-        status: { in: [ActionStatus.PENDING, ActionStatus.QUEUED] },
-        expiresAt: { gt: now },
-      },
+      where: availableWhere,
       orderBy: { createdAt: 'asc' },
       take: 5,
     });
 
     if (pendingActions.length > 0) {
-      // Mark as DELIVERED
       const deliveredAt = new Date();
       const ids = pendingActions.map((a) => a.id);
 
       await db.remoteAction.updateMany({
-        where: { id: { in: ids } },
+        where: {
+          id: { in: ids },
+          tenantId,
+          deviceId,
+          expiresAt: { gt: deliveredAt },
+          OR: [
+            { status: { in: [ActionStatus.PENDING, ActionStatus.QUEUED] } },
+            { status: ActionStatus.DELIVERED, deliveredAt: { lt: deliveryLeaseCutoff } },
+          ],
+        },
         data: {
           status: ActionStatus.DELIVERED,
           deliveredAt,
         },
       });
 
-      return pendingActions.map((a) => ({
+      const claimed = await db.remoteAction.findMany({
+        where: {
+          id: { in: ids },
+          tenantId,
+          deviceId,
+          status: ActionStatus.DELIVERED,
+          deliveredAt,
+        },
+        orderBy: { createdAt: 'asc' },
+      });
+
+      return claimed.map((a) => ({
         id: a.id,
         actionType: a.actionType,
         parameters: a.parameters || {},
@@ -243,9 +270,8 @@ export class ActionsService {
       }));
     }
 
-    // If waitMs is requested (long polling), wait for an action to be emitted
     if (waitMs > 0) {
-      const timeoutCap = Math.min(waitMs, 25000); // maximum 25s hold
+      const timeoutCap = Math.min(waitMs, 25000);
       return new Promise<any[]>((resolve) => {
         let timer: NodeJS.Timeout | null = null;
 
@@ -253,15 +279,33 @@ export class ActionsService {
           if (timer) clearTimeout(timer);
           actionEvents.off(`action:${deviceId}`, onActionEmitted);
 
-          // Claim action by marking DELIVERED
           try {
-            const delivered = await db.remoteAction.update({
-              where: { id: action.id },
+            const deliveredAt = new Date();
+            const claim = await db.remoteAction.updateMany({
+              where: {
+                id: action.id,
+                tenantId,
+                deviceId,
+                status: { in: [ActionStatus.PENDING, ActionStatus.QUEUED] },
+                expiresAt: { gt: deliveredAt },
+              },
               data: {
                 status: ActionStatus.DELIVERED,
-                deliveredAt: new Date(),
+                deliveredAt,
               },
             });
+
+            if (claim.count !== 1) {
+              resolve([]);
+              return;
+            }
+
+            const delivered = await db.remoteAction.findUnique({ where: { id: action.id } });
+            if (!delivered) {
+              resolve([]);
+              return;
+            }
+
             resolve([
               {
                 id: delivered.id,
@@ -315,6 +359,36 @@ export class ActionsService {
       throw new Error(`Action "${actionId}" not found for this device`);
     }
 
+    const terminalStatuses = new Set<ActionStatus>([
+      ActionStatus.SUCCESS,
+      ActionStatus.FAILED,
+      ActionStatus.EXPIRED,
+      ActionStatus.CANCELLED,
+    ]);
+
+    if (terminalStatuses.has(action.status)) {
+      if (action.status === (status as ActionStatus)) {
+        return { action, changed: false };
+      }
+      throw new Error(`Action "${actionId}" is already terminal with status ${action.status}`);
+    }
+
+    if (status === 'RUNNING' && ![
+      ActionStatus.PENDING,
+      ActionStatus.QUEUED,
+      ActionStatus.DELIVERED,
+      ActionStatus.RUNNING,
+    ].includes(action.status)) {
+      throw new Error(`Invalid transition ${action.status} -> RUNNING`);
+    }
+
+    if ((status === 'SUCCESS' || status === 'FAILED') && ![
+      ActionStatus.DELIVERED,
+      ActionStatus.RUNNING,
+    ].includes(action.status)) {
+      throw new Error(`Invalid transition ${action.status} -> ${status}`);
+    }
+
     const dataUpdates: any = {
       status: status as ActionStatus,
     };
@@ -336,7 +410,6 @@ export class ActionsService {
     }
 
     if (typeof output === 'string') {
-      // Limit output storage to 64KB for safety
       dataUpdates.output = output.length > 65536 ? output.slice(0, 65536) + '\n[Truncated...]' : output;
     }
 
@@ -353,7 +426,6 @@ export class ActionsService {
       data: dataUpdates,
     });
 
-    // Audit completion or failure
     await logAudit({
       tenantId,
       agentId,
@@ -373,6 +445,5 @@ export class ActionsService {
       },
     });
 
-    return updated;
-  }
-}
+    return { action: updated, changed: true };
+  }}
