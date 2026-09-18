@@ -29,8 +29,8 @@ export async function evaluateDeviceAlerts(
     alertsResolved: 0,
   };
 
-  const device = await db.device.findUnique({
-    where: { id: deviceId },
+  const device = await db.device.findFirst({
+    where: { id: deviceId, tenantId },
     select: {
       id: true,
       hostname: true,
@@ -100,13 +100,13 @@ export async function evaluateDeviceAlerts(
 
   // Fetch latest metric
   const latestMetric = await db.deviceMetric.findFirst({
-    where: { deviceId },
+    where: { deviceId, tenantId },
     orderBy: { timestamp: 'desc' },
   });
 
   // Fetch latest inventory snapshot
   const latestInventory = await db.deviceInventory.findFirst({
-    where: { deviceId },
+    where: { deviceId, tenantId },
     orderBy: { collectedAt: 'desc' },
   });
 
@@ -115,6 +115,7 @@ export async function evaluateDeviceAlerts(
   const recentEvents = await db.deviceEvent.findMany({
     where: {
       deviceId,
+      tenantId,
       timestamp: { gte: since24h },
     },
     orderBy: { timestamp: 'desc' },
@@ -125,6 +126,7 @@ export async function evaluateDeviceAlerts(
   const activeAlerts = await db.alert.findMany({
     where: {
       deviceId,
+      tenantId,
       status: { in: [AlertStatus.OPEN, AlertStatus.ACKNOWLEDGED] },
     },
     orderBy: { firstSeenAt: 'asc' },
