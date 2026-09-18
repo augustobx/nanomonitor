@@ -236,6 +236,56 @@ export async function evaluateDeviceAlerts(
         break;
       }
 
+      case 'THERMAL': {
+        canAutoHeal = true;
+        const threshold = condition.threshold ?? 90;
+        const thermal = latestMetric?.thermal as any;
+
+        if (!thermal || thermal.available !== true) {
+          isTriggered = false;
+          break;
+        }
+
+        const readings: Array<{ name: string; tempC: number; kind: string }> = [];
+
+        if (thermal.cpu && Number.isFinite(Number(thermal.cpu.temperatureC))) {
+          readings.push({
+            name: String(thermal.cpu.name || 'CPU'),
+            tempC: Number(thermal.cpu.temperatureC),
+            kind: 'CPU',
+          });
+        }
+
+        if (Array.isArray(thermal.gpus)) {
+          for (const gpu of thermal.gpus) {
+            if (gpu && Number.isFinite(Number(gpu.temperatureC))) {
+              readings.push({
+                name: String(gpu.name || 'GPU'),
+                tempC: Number(gpu.temperatureC),
+                kind: 'GPU',
+              });
+            }
+          }
+        }
+
+        if (readings.length === 0) {
+          isTriggered = false;
+          break;
+        }
+
+        readings.sort((a, b) => b.tempC - a.tempC);
+        const hottest = readings[0];
+
+        if (hottest.tempC >= threshold) {
+          isTriggered = true;
+          dynamicDescription =
+            `Temperatura crítica detectada en ${hottest.kind} "${hottest.name}": ${hottest.tempC.toFixed(1)} °C (umbral: >= ${threshold} °C). Lectura provista por un sensor real disponible en el endpoint.`;
+        } else if (hottest.tempC <= threshold - 5) {
+          isTriggered = false;
+        }
+        break;
+      }
+
       case 'RAM': {
         canAutoHeal = true;
         const threshold = condition.threshold ?? 10;
