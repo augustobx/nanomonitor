@@ -354,10 +354,6 @@ func executePatchInstall(ctx context.Context, action *transport.ActionItem, hook
 		}
 	}
 
-	if hook != nil {
-		hook.TriggerWindowsUpdate(ctx)
-	}
-
 	exitCode := 0
 	if !res.Success {
 		exitCode = 1
