@@ -68,13 +68,7 @@ func ExecuteAction(ctx context.Context, action *transport.ActionItem, hook Sched
 		return executeForceSmartCheck(ctx, hook)
 
 	case "FORCE_WINDOWS_UPDATE":
-		if hook != nil {
-			hook.TriggerWindowsUpdate(ctx)
-		}
-		return &ExecutionResult{
-			ExitCode: 0,
-			Output:   "Comprobación de Windows Update y reinicios pendientes disparada con éxito.",
-		}
+		return executePatchScan(ctx, hook)
 
 	// ==================== WINDOWS DEFENDER ====================
 	case "DEFENDER_UPDATE_SIGNATURES":
@@ -377,7 +371,9 @@ func executePatchInstall(ctx context.Context, action *transport.ActionItem, hook
 			"resultCode":     res.ResultCode,
 			"rebootRequired": res.RebootRequired,
 			"installedCount": res.InstalledCount,
+			"matchedCount":   res.MatchedCount,
 			"targetKBs":      res.TargetKBs,
+			"outcomes":       res.Outcomes,
 		},
 	}
 }
