@@ -355,11 +355,20 @@ func doInstall(token, apiURL string, silent bool) {
 		}
 	}
 
-	// 9. Launch nanotray.exe in current user session only after the service is confirmed RUNNING
-	pTray, _ := windows.UTF16PtrFromString(trayDest)
-	pDir, _ := windows.UTF16PtrFromString(DefaultInstallDir)
-	pOp, _ := windows.UTF16PtrFromString("open")
-	shellExecute.Call(0, uintptr(unsafe.Pointer(pOp)), uintptr(unsafe.Pointer(pTray)), 0, uintptr(unsafe.Pointer(pDir)), SW_HIDE)
+	// 9. Interactive installs launch the tray immediately.
+	//
+	// Silent/unattended installs MUST NOT spawn a long-lived tray child here.
+	// PowerShell Start-Process -Wait tracks the spawned process tree on Windows;
+	// a persistent nanotray.exe child can therefore make a successfully
+	// completed installer appear hung forever. HKLM Run already guarantees the
+	// tray starts on the next interactive logon, while the monitoring service is
+	// fully operational independently of the tray.
+	if !silent {
+		pTray, _ := windows.UTF16PtrFromString(trayDest)
+		pDir, _ := windows.UTF16PtrFromString(DefaultInstallDir)
+		pOp, _ := windows.UTF16PtrFromString("open")
+		shellExecute.Call(0, uintptr(unsafe.Pointer(pOp)), uintptr(unsafe.Pointer(pTray)), 0, uintptr(unsafe.Pointer(pDir)), SW_HIDE)
+	}
 
 	// 10. Success notice
 	if !silent {
