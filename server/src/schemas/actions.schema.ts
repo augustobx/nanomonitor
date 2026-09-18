@@ -1,3 +1,5 @@
+import { createHash } from 'node:crypto';
+import { ActionType } from '@prisma/client';
 import { z } from 'zod';
 
 export const ALLOWED_SERVICES_WHITELIST = [
@@ -45,6 +47,44 @@ export const ACTION_TYPES = [
 
 export type ActionTypeEnum = (typeof ACTION_TYPES)[number];
 
+export const AGENT_REPORTABLE_ACTION_STATUSES = ['RUNNING', 'SUCCESS', 'FAILED'] as const;
+
+export const ACTION_PARAMETER_CONTRACTS = [
+  'RESTART_SERVICE:serviceName:string:required',
+  'WINDOWS_UPDATE_INSTALL_KB:kbArticleIds:string[]:required',
+  'WINDOWS_UPDATE_INSTALL_APPROVED:kbArticleIds:string[]:required',
+  'WINDOWS_UPDATE_SCHEDULE_REBOOT:delaySeconds:number:optional,message:string:optional',
+] as const;
+
+function sorted(values: readonly string[]): string[] {
+  return [...values].sort();
+}
+
+const apiActionTypes = sorted(ACTION_TYPES);
+const prismaActionTypes = sorted(Object.values(ActionType));
+
+if (
+  apiActionTypes.length !== prismaActionTypes.length ||
+  apiActionTypes.some((value, index) => value !== prismaActionTypes[index])
+) {
+  const apiOnly = apiActionTypes.filter((value) => !prismaActionTypes.includes(value));
+  const prismaOnly = prismaActionTypes.filter((value) => !apiActionTypes.includes(value));
+  throw new Error(
+    `ACTION CONTRACT DRIFT: API/Prisma mismatch. API-only=[${apiOnly.join(', ')}] Prisma-only=[${prismaOnly.join(', ')}]`
+  );
+}
+
+export const ACTION_CONTRACT_SIGNATURE = [
+  `actions:${apiActionTypes.join(',')}`,
+  `statuses:${sorted(AGENT_REPORTABLE_ACTION_STATUSES).join(',')}`,
+  `services:${sorted(ALLOWED_SERVICES_WHITELIST).join(',')}`,
+  `params:${sorted(ACTION_PARAMETER_CONTRACTS).join(',')}`,
+].join('\n');
+
+export const ACTION_CONTRACT_HASH = createHash('sha256')
+  .update(ACTION_CONTRACT_SIGNATURE, 'utf8')
+  .digest('hex');
+
 export const createActionSchema = z
   .object({
     actionType: z.enum(ACTION_TYPES),
@@ -67,20 +107,23 @@ export const createActionSchema = z
           message: `Service "${serviceName}" is not in the allowed whitelist (${ALLOWED_SERVICES_WHITELIST.join(', ')})`,
         });
       }
-    } else if (data.actionType === 'WINDOWS_UPDATE_INSTALL_KB') {
+    } else if (
+      data.actionType === 'WINDOWS_UPDATE_INSTALL_KB' ||
+      data.actionType === 'WINDOWS_UPDATE_INSTALL_APPROVED'
+    ) {
       const kbs = data.parameters?.kbArticleIds;
       if (!Array.isArray(kbs) || kbs.length === 0) {
         ctx.addIssue({
           code: z.ZodIssueCode.custom,
           path: ['parameters', 'kbArticleIds'],
-          message: 'kbArticleIds array with at least one KB is required for WINDOWS_UPDATE_INSTALL_KB',
+          message: `kbArticleIds array with at least one identifier is required for ${data.actionType}`,
         });
       }
     }
   });
 
 export const updateActionStatusSchema = z.object({
-  status: z.enum(['RUNNING', 'SUCCESS', 'FAILED']),
+  status: z.enum(AGENT_REPORTABLE_ACTION_STATUSES),
   startedAt: z.string().datetime().optional(),
   finishedAt: z.string().datetime().optional(),
   exitCode: z.number().int().optional(),
