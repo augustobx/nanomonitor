@@ -1219,8 +1219,7 @@ $res | ConvertTo-Json -Compress`, defenderReactivationPsSnippet)
 	if syncErr != nil {
 		exitCode = 1
 		resultError = syncErr.Error()
-		sb.WriteString("
-⚠️ El estado local fue auditado, pero el CRM no confirmó la sincronización.")
+		sb.WriteString("\n⚠️ El estado local fue auditado, pero el CRM no confirmó la sincronización.")
 	}
 	if !finalAV || !sec.FirewallActive {
 		exitCode = 1
@@ -1370,8 +1369,7 @@ func executeForceSmartCheck(ctx context.Context, hook SchedTriggerHook) *Executi
 	if syncErr != nil {
 		exitCode = 1
 		resultError = syncErr.Error()
-		sb.WriteString("
-⚠️ El diagnóstico local se completó, pero el CRM no confirmó la sincronización.")
+		sb.WriteString("\n⚠️ El diagnóstico local se completó, pero el CRM no confirmó la sincronización.")
 	}
 	if smart.OverallStatus == "CRITICAL" || smart.OverallStatus == "WARNING" {
 		exitCode = 1
