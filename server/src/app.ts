@@ -25,6 +25,7 @@ import { db } from './lib/db.js';
 import { getLandingHtml } from './views/landing.html.js';
 import { generateRandomString } from './lib/crypto.js';
 import { applyDevicePresence } from './lib/device-presence.js';
+import { NANOMONITOR_VERSION } from './lib/release-version.js';
 
 // Global BigInt JSON serialization polyfill
 if (!('toJSON' in BigInt.prototype)) {
@@ -198,7 +199,7 @@ export async function buildApp(): Promise<FastifyInstance> {
       const html = getLandingHtml({
         uptimeSeconds: Math.floor(process.uptime()),
         serverTime: new Date().toISOString(),
-        version: '1.4.0',
+        version: NANOMONITOR_VERSION,
         env: config.NODE_ENV,
         devices,
         customers,
@@ -215,7 +216,7 @@ export async function buildApp(): Promise<FastifyInstance> {
 
     return reply.send({
       name: 'NanoLabs Control Center',
-      version: '1.4.0',
+      version: NANOMONITOR_VERSION,
       status: 'operational',
       health: '/health',
       docs: 'https://monitor.nanolabs.com.ar',
@@ -408,6 +409,9 @@ export async function buildApp(): Promise<FastifyInstance> {
     }
 
     return reply
+      .header('Cache-Control', 'no-cache, no-store, must-revalidate')
+      .header('Pragma', 'no-cache')
+      .header('Expires', '0')
       .header('Content-Type', 'text/plain; charset=utf-8')
       .send(content);
   };
