@@ -190,6 +190,14 @@ func (p *Poller) processAction(ctx context.Context, action *transport.ActionItem
 		return false
 	}
 
+	// Patch state must be refreshed only after the server has accepted the
+	// terminal action result, otherwise a fresh scan races with INSTALLING.
+	if p.hook != nil &&
+		(action.ActionType == "WINDOWS_UPDATE_INSTALL_KB" ||
+			action.ActionType == "WINDOWS_UPDATE_INSTALL_APPROVED") {
+		p.hook.TriggerWindowsUpdate(ctx)
+	}
+
 	return true
 }
 
