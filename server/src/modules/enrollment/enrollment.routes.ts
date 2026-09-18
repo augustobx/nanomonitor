@@ -1,6 +1,6 @@
 import { FastifyInstance, FastifyPluginAsync } from 'fastify';
 import { db } from '../../lib/db.js';
-import { generateAgentSecret, generateEnrollmentToken } from '../../lib/crypto.js';
+import { generateAgentSecret, generateEnrollmentToken, generateTamperKey } from '../../lib/crypto.js';
 import { createTokenSchema, registerAgentSchema } from '../../schemas/enrollment.schema.js';
 import { authenticateUser, requireRole } from '../../middleware/user-auth.js';
 import { getTenantId } from '../../middleware/tenant-isolation.js';
@@ -300,6 +300,9 @@ export const enrollmentRoutes: FastifyPluginAsync = async (fastify: FastifyInsta
                   architecture: osInfo?.osArchitecture || null,
                   manufacturer: osInfo?.manufacturer || null,
                   model: osInfo?.model || null,
+                  tamperProtectionEnabled: true,
+                  tamperKey: generateTamperKey(),
+                  tamperKeyUpdatedAt: now,
                   status: 'OFFLINE',
                   lastSeenAt: null,
                 },
@@ -318,6 +321,10 @@ export const enrollmentRoutes: FastifyPluginAsync = async (fastify: FastifyInsta
                   manufacturer: osInfo?.manufacturer || device.manufacturer,
                   model: osInfo?.model || device.model,
                   siteId: tokenRecord.siteId || device.siteId,
+                  tamperKey: device.tamperKey || generateTamperKey(),
+                  tamperKeyUpdatedAt: device.tamperKey
+                    ? device.tamperKeyUpdatedAt
+                    : now,
                   status: 'OFFLINE',
                   lastSeenAt: null,
                 },
