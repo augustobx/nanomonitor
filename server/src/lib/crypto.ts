@@ -63,6 +63,50 @@ export function verifyAgentSignature(
   }
 }
 
+/**
+ * HMAC v2 binds the signature to the exact request semantics, preventing a
+ * captured signature from being replayed against another endpoint or with a
+ * replacement nonce.
+ *
+ * Message:
+ * v2 + "\n" + METHOD + "\n" + requestTarget + "\n" + timestamp +
+ * "\n" + nonce + "\n" + sha256_hex(body)
+ */
+export function verifyAgentSignatureV2(
+  rawBody: string | Buffer,
+  method: string,
+  requestTarget: string,
+  timestamp: string,
+  nonce: string,
+  secret: string,
+  providedSignature: string
+): boolean {
+  try {
+    if (!/^[a-f0-9]{64}$/i.test(providedSignature)) return false;
+
+    const bodyHash = crypto.createHash('sha256').update(rawBody).digest('hex');
+    const message = [
+      'v2',
+      method.toUpperCase(),
+      requestTarget,
+      timestamp,
+      nonce,
+      bodyHash,
+    ].join('\n');
+
+    const expectedSignature = crypto.createHmac('sha256', secret).update(message).digest('hex');
+    const expectedBuf = Buffer.from(expectedSignature, 'hex');
+    const providedBuf = Buffer.from(providedSignature, 'hex');
+
+    return (
+      expectedBuf.length === providedBuf.length &&
+      crypto.timingSafeEqual(expectedBuf, providedBuf)
+    );
+  } catch {
+    return false;
+  }
+}
+
 export interface UserJwtPayload {
   userId: string;
   tenantId: string;
