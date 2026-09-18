@@ -24,6 +24,7 @@ import { authenticateUser } from './middleware/user-auth.js';
 import { db } from './lib/db.js';
 import { getLandingHtml } from './views/landing.html.js';
 import { generateRandomString } from './lib/crypto.js';
+import { applyDevicePresence } from './lib/device-presence.js';
 
 // Global BigInt JSON serialization polyfill
 if (!('toJSON' in BigInt.prototype)) {
@@ -122,6 +123,7 @@ export async function buildApp(): Promise<FastifyInstance> {
             metrics: { take: 15, orderBy: { timestamp: 'desc' } },
             events: { take: 20, orderBy: { timestamp: 'desc' } },
             healthScores: { take: 1, orderBy: { calculatedAt: 'desc' } },
+            heartbeats: { take: 1, orderBy: { timestamp: 'desc' } },
           },
           orderBy: { lastSeenAt: 'desc' },
         });
@@ -190,6 +192,8 @@ export async function buildApp(): Promise<FastifyInstance> {
       } catch (err) {
         request.log.error(err, 'Failed to fetch dashboard data for landing');
       }
+
+      devices = devices.map((device) => applyDevicePresence(device));
 
       const html = getLandingHtml({
         uptimeSeconds: Math.floor(process.uptime()),
@@ -304,6 +308,8 @@ export async function buildApp(): Promise<FastifyInstance> {
     } catch (err) {
       request.log.error(err, 'Failed to fetch live dashboard telemetry');
     }
+
+    devices = devices.map((device) => applyDevicePresence(device));
 
     return reply
       .header('Cache-Control', 'no-cache, no-store, must-revalidate')
