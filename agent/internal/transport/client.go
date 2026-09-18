@@ -305,7 +305,12 @@ func (c *Client) SendWithRetry(ctx context.Context, fn func(ctx context.Context)
 			continue
 		}
 
-		// Don't retry client errors (4xx), only server errors (5xx)
+		// 429 is transient rate limiting: retry it so callers can buffer if
+		// the server remains busy. Other 4xx responses are permanent payload/auth errors.
+		if resp.StatusCode == http.StatusTooManyRequests {
+			lastErr = fmt.Errorf("server rate limited request: %d", resp.StatusCode)
+			continue
+		}
 		if resp.StatusCode >= 400 && resp.StatusCode < 500 {
 			return resp, nil
 		}
