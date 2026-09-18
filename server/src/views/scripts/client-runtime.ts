@@ -4345,7 +4345,7 @@ export function getClientRuntimeScript(): string {
 
         let html = '';
         history.forEach(function(h) {
-          const isSuccess = h.resultStatus === 'SUCCESS';
+          const isSuccess = h.status === 'SUCCESS';
           const resBadge = isSuccess
             ? '<span class="badge badge-success">EXITOSA</span>'
             : '<span class="badge badge-danger">FALLIDA</span>';
@@ -4360,8 +4360,8 @@ export function getClientRuntimeScript(): string {
             '<td style="max-width: 260px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;" title="' + (h.title || '') + '">' + (h.title || '-') + '</td>' +
             '<td>' + resBadge + '</td>' +
             '<td>' + (h.rebootRequired ? '<span style="color: #ef4444;">Sí</span>' : '<span style="color: var(--text-muted);">No</span>') + '</td>' +
-            '<td style="font-size: 12px;">' + (h.technician ? h.technician.email : 'POLÍTICA_AUTO') + '</td>' +
-            '<td style="font-size: 11px; color: var(--text-secondary); max-width: 200px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">' + (h.details || ('Code ' + h.exitCode)) + '</td>' +
+            '<td style="font-size: 12px;">' + (h.appliedBy || h.source || 'POLÍTICA_AUTO') + '</td>' +
+            '<td style="font-size: 11px; color: var(--text-secondary); max-width: 200px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">' + (h.errorDetails || ((h.exitCode !== null && h.exitCode !== undefined) ? ('ResultCode ' + h.exitCode) : '-')) + '</td>' +
           '</tr>';
         });
 
@@ -4398,7 +4398,7 @@ export function getClientRuntimeScript(): string {
 
         // Counters & KPIs
         const missing = patches.filter(function(p) {
-          return p.status === 'MISSING' || p.status === 'PENDING_DOWNLOAD' || p.status === 'DOWNLOADED';
+          return p.status === 'MISSING' || p.status === 'PENDING_DOWNLOAD' || p.status === 'DOWNLOADED' || p.status === 'FAILED';
         });
         const critical = missing.filter(function(p) { return p.category === 'CRITICAL' || p.category === 'SECURITY' || p.severity === 'CRITICAL' || p.severity === 'IMPORTANT'; });
         const installed = patches.filter(function(p) { return p.status === 'INSTALLED'; });
@@ -4459,14 +4459,12 @@ export function getClientRuntimeScript(): string {
         if (cat === 'DRIVER') return '<span class="badge" style="background: #8b5cf6; color: #fff;">DRIVER</span>';
         return '<span class="badge badge-secondary">' + (cat || 'OTRO') + '</span>';
       }
-
       function severityBadge(sev) {
         if (sev === 'CRITICAL') return '<span style="color: #ef4444; font-weight: 700;">CRÍTICA</span>';
         if (sev === 'IMPORTANT') return '<span style="color: #f59e0b; font-weight: 700;">IMPORTANTE</span>';
         if (sev === 'MODERATE') return '<span style="color: #38bdf8;">MODERADA</span>';
         return '<span style="color: var(--text-muted);">' + (sev || 'N/A') + '</span>';
       }
-
       function statusBadge(st) {
         if (st === 'MISSING') return '<span class="badge badge-warning">PENDIENTE</span>';
         if (st === 'PENDING_DOWNLOAD') return '<span class="badge badge-warning">PENDIENTE DESCARGA</span>';
@@ -4474,10 +4472,8 @@ export function getClientRuntimeScript(): string {
         if (st === 'INSTALLING') return '<span class="badge badge-info">INSTALANDO</span>';
         if (st === 'INSTALLED') return '<span class="badge badge-success">INSTALADO</span>';
         if (st === 'FAILED') return '<span class="badge badge-danger">ERROR</span>';
-        if (st === 'PENDING_REBOOT') return '<span class="badge" style="background: #3b82f6; color: #fff;">REINICIO</span>';
         return '<span class="badge badge-secondary">' + st + '</span>';
       }
-
       function formatBytes(bytes) {
         if (!bytes || bytes <= 0) return '-';
         const mb = bytes / (1024 * 1024);
@@ -4487,33 +4483,40 @@ export function getClientRuntimeScript(): string {
 
       let html = '';
       patches.forEach(function(p) {
-        const isMissing =
-          p.status === 'MISSING' ||
-          p.status === 'PENDING_DOWNLOAD' ||
-          p.status === 'DOWNLOADED';
+        const isSelectableForInstall = p.status === 'DOWNLOADED';
         const isChecked = selectedPatchKBs.has(p.kbArticleId);
+        const lastAttemptText = p.lastAttemptAt ? new Date(p.lastAttemptAt).toLocaleString() : '';
+        const lastOpText = p.lastOperation === 'DOWNLOAD' ? 'Descarga' : (p.lastOperation === 'INSTALL' ? 'Instalación' : (p.lastOperation || ''));
+        const lastParts = [];
+        if (lastOpText) lastParts.push(lastOpText);
+        if (p.lastResultCode !== null && p.lastResultCode !== undefined) lastParts.push('ResultCode=' + p.lastResultCode);
+        if (p.lastHResult) lastParts.push('HRESULT=' + p.lastHResult);
+        if (lastAttemptText) lastParts.push(lastAttemptText);
+        const evidence = lastParts.length ? '<div style="font-size: 10px; color: var(--text-muted); margin-top: 3px;">Último intento: ' + lastParts.join(' · ') + '</div>' : '';
+
+        let action = '<span style="font-size: 11px; color: var(--text-muted);">Listo</span>';
+        if (p.status === 'MISSING' || p.status === 'PENDING_DOWNLOAD') {
+          action = '<button class="btn btn-secondary btn-sm" onclick="triggerSinglePatchDownload(\\'' + p.kbArticleId + '\\')" title="Descargar sin instalar">Descargar</button>';
+        } else if (p.status === 'FAILED') {
+          action = '<button class="btn btn-secondary btn-sm" onclick="triggerSinglePatchDownload(\\'' + p.kbArticleId + '\\')" title="Reintentar después del último error">Reintentar</button>';
+        } else if (p.status === 'DOWNLOADED') {
+          action = '<button class="btn btn-secondary btn-sm" onclick="triggerSinglePatchInstall(\\'' + p.kbArticleId + '\\')" title="Instalar actualización descargada">Instalar</button>';
+        } else if (p.status === 'INSTALLING') {
+          action = '<span class="badge badge-info">EN CURSO</span>';
+        }
 
         html += '<tr>' +
-          '<td style="text-align: center;">' +
-            (isMissing ? '<input type="checkbox" onchange="toggleSelectPatchKB(\\'' + p.kbArticleId + '\\', this.checked)" ' + (isChecked ? 'checked' : '') + ' />' : '-') +
-          '</td>' +
+          '<td style="text-align: center;">' + (isSelectableForInstall ? '<input type="checkbox" onchange="toggleSelectPatchKB(\\'' + p.kbArticleId + '\\', this.checked)" ' + (isChecked ? 'checked' : '') + ' />' : '-') + '</td>' +
           '<td><code style="color: #60a5fa; font-weight: 700;">' + (p.kbArticleId || '-') + '</code></td>' +
-          '<td style="max-width: 320px;" title="' + (p.title || '') + '">' +
-            '<div style="font-weight: 600; color: #fff; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">' + (p.title || '-') + '</div>' +
-          '</td>' +
+          '<td style="max-width: 320px;" title="' + (p.title || '') + '"><div style="font-weight: 600; color: #fff; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">' + (p.title || '-') + '</div>' + evidence + '</td>' +
           '<td>' + categoryBadge(p.category) + '</td>' +
           '<td>' + severityBadge(p.severity) + '</td>' +
           '<td style="font-size: 12px; color: var(--text-secondary);">' + formatBytes(p.sizeBytes) + '</td>' +
           '<td style="text-align: center;">' + (p.requiresReboot ? '<span style="color: #ef4444; font-weight: 700;">Sí</span>' : '<span style="color: var(--text-muted);">No</span>') + '</td>' +
           '<td>' + statusBadge(p.status) + '</td>' +
-          '<td style="text-align: right;">' +
-            (isMissing 
-              ? '<button class="btn btn-secondary btn-sm" onclick="triggerSinglePatchInstall(\\'' + p.kbArticleId + '\\')" title="Instalar esta actualización">Instalar</button>'
-              : '<span style="font-size: 11px; color: var(--text-muted);">Listo</span>') +
-          '</td>' +
+          '<td style="text-align: right;">' + action + '</td>' +
         '</tr>';
       });
-
       tbody.innerHTML = html;
     }
 
@@ -4547,11 +4550,11 @@ export function getClientRuntimeScript(): string {
     }
 
     function toggleSelectAllDevicePatches(checked) {
-      const missing = (cachedCurrentDevicePatches || []).filter(function(p) {
-        return p.status === 'MISSING' || p.status === 'PENDING_DOWNLOAD' || p.status === 'DOWNLOADED';
+      const downloaded = (cachedCurrentDevicePatches || []).filter(function(p) {
+        return p.status === 'DOWNLOADED';
       });
       if (checked) {
-        missing.forEach(function(p) { selectedPatchKBs.add(p.kbArticleId); });
+        downloaded.forEach(function(p) { selectedPatchKBs.add(p.kbArticleId); });
       } else {
         selectedPatchKBs.clear();
       }
@@ -4623,6 +4626,28 @@ export function getClientRuntimeScript(): string {
         showToast('Instalación encolada para: ' + kbs.join(', '));
         selectedPatchKBs.clear();
         updateSelectedPatchesUI();
+        switchDeviceSubTab('acciones');
+      } catch (e) {
+        showToast('Error de comunicación con el servidor', 'error');
+      }
+    }
+
+    async function triggerSinglePatchDownload(kbArticleId) {
+      if (!selectedDeviceId || !kbArticleId) return;
+      const token = localStorage.getItem('nl_token');
+      if (!token) return;
+      try {
+        const res = await fetch('/api/v1/devices/' + selectedDeviceId + '/patches/download', {
+          method: 'POST',
+          headers: { 'Authorization': 'Bearer ' + token, 'Content-Type': 'application/json' },
+          body: JSON.stringify({ kbArticleIds: [kbArticleId] })
+        });
+        if (!res.ok) {
+          const err = await res.json();
+          showToast(err.message || 'Error al ordenar descarga de ' + kbArticleId, 'error');
+          return;
+        }
+        showToast('Descarga encolada para ' + kbArticleId);
         switchDeviceSubTab('acciones');
       } catch (e) {
         showToast('Error de comunicación con el servidor', 'error');
@@ -4725,6 +4750,7 @@ export function getClientRuntimeScript(): string {
     window.triggerDevicePatchScan = triggerDevicePatchScan;
     window.triggerDeviceInstallAutoApproved = triggerDeviceInstallAutoApproved;
     window.triggerDeviceInstallSelected = triggerDeviceInstallSelected;
+    window.triggerSinglePatchDownload = triggerSinglePatchDownload;
     window.triggerSinglePatchInstall = triggerSinglePatchInstall;
     window.openScheduleRebootModalForCurrentDevice = openScheduleRebootModalForCurrentDevice;
     window.closeScheduleRebootModal = closeScheduleRebootModal;

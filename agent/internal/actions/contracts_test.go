@@ -6,8 +6,8 @@ import (
 )
 
 func TestActionContractHash(t *testing.T) {
-	if got := len(actionHandlers); got != 24 {
-		t.Fatalf("unexpected executable action count: got %d want 24", got)
+	if got := len(actionHandlers); got != 25 {
+		t.Fatalf("unexpected executable action count: got %d want 25", got)
 	}
 
 	services := canonicalAllowedServices()

@@ -113,6 +113,9 @@ var actionHandlers = map[string]actionHandler{
 	"WINDOWS_UPDATE_SCAN": func(ctx context.Context, _ *transport.ActionItem, hook SchedTriggerHook) *ExecutionResult {
 		return executePatchScan(ctx, hook)
 	},
+	"WINDOWS_UPDATE_DOWNLOAD_KB": func(ctx context.Context, action *transport.ActionItem, hook SchedTriggerHook) *ExecutionResult {
+		return executePatchDownload(ctx, action, hook)
+	},
 	"WINDOWS_UPDATE_INSTALL_KB": func(ctx context.Context, action *transport.ActionItem, hook SchedTriggerHook) *ExecutionResult {
 		return executePatchInstall(ctx, action, hook)
 	},
@@ -137,6 +140,7 @@ var agentReportableActionStatuses = []string{ActionStatusRunning, ActionStatusSu
 
 var actionParameterContracts = []string{
 	"RESTART_SERVICE:serviceName:string:required",
+	"WINDOWS_UPDATE_DOWNLOAD_KB:kbArticleIds:string[]:required",
 	"WINDOWS_UPDATE_INSTALL_KB:kbArticleIds:string[]:required",
 	"WINDOWS_UPDATE_INSTALL_APPROVED:kbArticleIds:string[]:required",
 	"WINDOWS_UPDATE_SCHEDULE_REBOOT:delaySeconds:number:optional,message:string:optional",
@@ -405,6 +409,38 @@ func executePatchScan(ctx context.Context, hook SchedTriggerHook) *ExecutionResu
 			"scanDurationMs": res.ScanDurationMs,
 		},
 	}
+}
+
+
+func executePatchDownload(ctx context.Context, action *transport.ActionItem, hook SchedTriggerHook) *ExecutionResult {
+	var targetKBs []string
+	if rawKBs, ok := action.Parameters["kbArticleIds"]; ok {
+		switch v := rawKBs.(type) {
+		case []interface{}:
+			for _, item := range v {
+				if s, ok := item.(string); ok && strings.TrimSpace(s) != "" { targetKBs = append(targetKBs, strings.TrimSpace(s)) }
+			}
+		case []string: targetKBs = v
+		case string:
+			if strings.TrimSpace(v) != "" { targetKBs = append(targetKBs, strings.TrimSpace(v)) }
+		}
+	}
+	if len(targetKBs) == 0 { return &ExecutionResult{ExitCode: 1, Error: "Se requiere al menos un KB (kbArticleIds) para la descarga dirigida"} }
+	res, err := patch.DownloadTargetKBs(ctx, targetKBs, 30*time.Minute)
+	if err != nil { return &ExecutionResult{ExitCode: 1, Error: err.Error()} }
+	exitCode := 0
+	if !res.Success { exitCode = 1 }
+	var sb strings.Builder
+	sb.WriteString(res.Details)
+	for _, outcome := range res.Outcomes {
+		if outcome.Downloaded { sb.WriteString(fmt.Sprintf("\n✅ %s — descarga confirmada por Windows Update.", outcome.Identifier)) } else {
+			sb.WriteString(fmt.Sprintf("\n❌ %s — descarga fallida (ResultCode=%d, HResult=%d).", outcome.Identifier, outcome.ResultCode, outcome.HResult))
+		}
+	}
+	return &ExecutionResult{ExitCode: exitCode, Output: sb.String(), Result: map[string]interface{}{
+		"success": res.Success, "resultCode": res.ResultCode, "downloadedCount": res.DownloadedCount,
+		"matchedCount": res.MatchedCount, "targetKBs": res.TargetKBs, "outcomes": res.Outcomes,
+	}}
 }
 
 func executePatchInstall(ctx context.Context, action *transport.ActionItem, hook SchedTriggerHook) *ExecutionResult {

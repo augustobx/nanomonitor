@@ -4,6 +4,7 @@ import { applyDevicePresence } from '../../lib/device-presence.js';
 import {
   UpsertPatchPolicyInput,
   ReportDevicePatchesInput,
+  DownloadPatchesRequestInput,
   InstallPatchesRequestInput,
   PatchCategory,
   PatchSeverity,
@@ -32,7 +33,7 @@ export class PatchesService {
     const criticalPendingCount = await db.devicePatch.count({
       where: {
         tenantId,
-        status: { in: ['MISSING', 'PENDING_DOWNLOAD', 'DOWNLOADED'] },
+        status: { in: ['MISSING', 'PENDING_DOWNLOAD', 'DOWNLOADED', 'FAILED'] },
         category: 'CRITICAL',
       },
     });
@@ -40,7 +41,7 @@ export class PatchesService {
     const securityPendingCount = await db.devicePatch.count({
       where: {
         tenantId,
-        status: { in: ['MISSING', 'PENDING_DOWNLOAD', 'DOWNLOADED'] },
+        status: { in: ['MISSING', 'PENDING_DOWNLOAD', 'DOWNLOADED', 'FAILED'] },
         category: 'SECURITY',
       },
     });
@@ -50,7 +51,7 @@ export class PatchesService {
         tenantId,
         patches: {
           some: {
-            status: { in: ['MISSING', 'PENDING_DOWNLOAD', 'DOWNLOADED'] },
+            status: { in: ['MISSING', 'PENDING_DOWNLOAD', 'DOWNLOADED', 'FAILED'] },
           },
         },
       },
@@ -71,7 +72,7 @@ export class PatchesService {
     const totalMissingPatches = await db.devicePatch.count({
       where: {
         tenantId,
-        status: { in: ['MISSING', 'PENDING_DOWNLOAD', 'DOWNLOADED'] },
+        status: { in: ['MISSING', 'PENDING_DOWNLOAD', 'DOWNLOADED', 'FAILED'] },
       },
     });
 
@@ -270,7 +271,7 @@ export class PatchesService {
         where: {
           tenantId,
           deviceId,
-          status: { in: ['MISSING', 'PENDING_DOWNLOAD', 'DOWNLOADED'] },
+          status: { in: ['MISSING', 'PENDING_DOWNLOAD', 'DOWNLOADED', 'FAILED'] },
           ...(reportedIds.length > 0
             ? { kbArticleId: { notIn: reportedIds } }
             : {}),
@@ -333,6 +334,11 @@ export class PatchesService {
             publishedAt: p.publishedAt ? new Date(p.publishedAt) : null,
             installedAt: p.installedAt ? new Date(p.installedAt) : null,
             requiresReboot: p.requiresReboot,
+            updateId: p.updateId || null,
+            lastAttemptAt: p.lastAttemptAt ? new Date(p.lastAttemptAt) : null,
+            lastOperation: p.lastOperation || null,
+            lastResultCode: p.lastAttemptAt ? (p.lastResultCode ?? null) : null,
+            lastHResult: p.lastHResult || null,
             lastScannedAt: scanAt,
           },
           update: {
@@ -344,6 +350,11 @@ export class PatchesService {
             sizeBytes: p.sizeBytes != null ? BigInt(p.sizeBytes) : null,
             installedAt: p.installedAt ? new Date(p.installedAt) : undefined,
             requiresReboot: p.requiresReboot,
+            updateId: p.updateId || undefined,
+            lastAttemptAt: p.lastAttemptAt ? new Date(p.lastAttemptAt) : undefined,
+            lastOperation: p.lastOperation || undefined,
+            lastResultCode: p.lastAttemptAt ? (p.lastResultCode ?? null) : undefined,
+            lastHResult: p.lastHResult || undefined,
             lastScannedAt: scanAt,
           },
         });
@@ -523,6 +534,64 @@ export class PatchesService {
     });
   }
 
+
+  static async triggerPatchDownload(
+    tenantId: string,
+    deviceId: string,
+    requestedBy: { id?: string; email: string },
+    input: DownloadPatchesRequestInput
+  ) {
+    const device = await db.device.findFirst({ where: { id: deviceId, tenantId }, select: { id: true, customerId: true } });
+    if (!device) throw new Error('Dispositivo no encontrado.');
+    const targetKBs = [...new Set(input.kbArticleIds.map((id) => id.trim().toUpperCase()).filter(Boolean))];
+    const eligible = await db.devicePatch.findMany({
+      where: { tenantId, deviceId, kbArticleId: { in: targetKBs }, status: { in: ['MISSING', 'PENDING_DOWNLOAD', 'FAILED'] } },
+      select: { kbArticleId: true, status: true },
+    });
+    const eligibleMap = new Map(eligible.map((p) => [p.kbArticleId.toUpperCase(), p.status]));
+    const invalidTargets = targetKBs.filter((id) => !eligibleMap.has(id));
+    if (invalidTargets.length > 0) throw new Error(`Estas actualizaciones no están pendientes de descarga: ${invalidTargets.join(', ')}. Ejecutá un nuevo escaneo.`);
+
+    const prepared = await db.$transaction(async (tx: any) => {
+      const historyIds: string[] = [];
+      for (const kb of targetKBs) {
+        const previousStatus = eligibleMap.get(kb)!;
+        const changed = await tx.devicePatch.updateMany({
+          where: { tenantId, deviceId, kbArticleId: kb, status: previousStatus },
+          data: { status: 'PENDING_DOWNLOAD' },
+        });
+        if (changed.count !== 1) throw new Error(`El estado de ${kb} cambió. Volvé a escanear antes de reintentar.`);
+        const history = await tx.patchHistory.create({
+          data: { tenantId, deviceId, kbArticleId: kb, title: `Descarga solicitada de ${kb}`, actionType: 'DOWNLOAD',
+            status: 'IN_PROGRESS', source: requestedBy.id ? 'MANUAL_TECHNICIAN' : 'AUTO_POLICY', appliedBy: requestedBy.email },
+          select: { id: true },
+        });
+        historyIds.push(history.id);
+      }
+      return { previousStatuses: Object.fromEntries(eligibleMap), historyIds };
+    });
+
+    try {
+      const action = await ActionsService.createAction({
+        tenantId, customerId: device.customerId, deviceId: device.id, actionType: 'WINDOWS_UPDATE_DOWNLOAD_KB',
+        parameters: { kbArticleIds: targetKBs }, requestedById: requestedBy.id, requestedBy: requestedBy.email,
+        source: 'DASHBOARD_PATCH_DOWNLOAD', expiresInMinutes: 60,
+      });
+      return { success: true, actionId: action.id, queuedKBs: targetKBs, status: action.status };
+    } catch (err) {
+      await db.$transaction(async (tx: any) => {
+        for (const kb of targetKBs) {
+          await tx.devicePatch.updateMany({
+            where: { tenantId, deviceId, kbArticleId: kb, status: 'PENDING_DOWNLOAD' },
+            data: { status: prepared.previousStatuses[kb] as any },
+          });
+        }
+        if (prepared.historyIds.length > 0) await tx.patchHistory.deleteMany({ where: { id: { in: prepared.historyIds } } });
+      });
+      throw err;
+    }
+  }
+
   /**
    * Inicia una orden de instalación de parches en un dispositivo
    */
@@ -554,7 +623,7 @@ export class PatchesService {
           deviceId,
           tenantId,
           category: 'CRITICAL',
-          status: { in: ['MISSING', 'PENDING_DOWNLOAD', 'DOWNLOADED'] },
+          status: { in: ['MISSING', 'PENDING_DOWNLOAD', 'DOWNLOADED', 'FAILED'] },
         },
       });
       targetKBs = patches.map((p: any) => p.kbArticleId);
@@ -564,7 +633,7 @@ export class PatchesService {
           deviceId,
           tenantId,
           category: { in: ['CRITICAL', 'SECURITY'] },
-          status: { in: ['MISSING', 'PENDING_DOWNLOAD', 'DOWNLOADED'] },
+          status: { in: ['MISSING', 'PENDING_DOWNLOAD', 'DOWNLOADED', 'FAILED'] },
         },
       });
       targetKBs = patches.map((p: any) => p.kbArticleId);
@@ -583,7 +652,7 @@ export class PatchesService {
           deviceId,
           tenantId,
           category: { in: approvedCategories as any },
-          status: { in: ['MISSING', 'PENDING_DOWNLOAD', 'DOWNLOADED'] },
+          status: { in: ['MISSING', 'PENDING_DOWNLOAD', 'DOWNLOADED', 'FAILED'] },
         },
       });
       targetKBs = patches.map((p: any) => p.kbArticleId);
@@ -604,7 +673,7 @@ export class PatchesService {
         tenantId,
         deviceId,
         kbArticleId: { in: targetKBs },
-        status: { in: ['MISSING', 'PENDING_DOWNLOAD', 'DOWNLOADED'] },
+        status: { in: ['MISSING', 'PENDING_DOWNLOAD', 'DOWNLOADED', 'FAILED'] },
       },
       select: {
         kbArticleId: true,

@@ -501,21 +501,24 @@ func (s *Scheduler) ReportPatches(ctx context.Context, scanResult *patch.ScanRes
 
 	patchItems := make([]map[string]interface{}, 0, len(scanResult.Patches))
 	for _, p := range scanResult.Patches {
-		status := "MISSING"
-		if p.IsDownloaded {
-			status = "DOWNLOADED"
+		status := p.Status
+		if strings.TrimSpace(status) == "" {
+			status = "PENDING_DOWNLOAD"
+			if p.IsDownloaded { status = "DOWNLOADED" }
 		}
-
-		patchItems = append(patchItems, map[string]interface{}{
-			"kbArticleId":    p.KBArticleID,
-			"title":          p.Title,
-			"description":    p.Title,
-			"category":       p.Category,
-			"severity":       p.Severity,
-			"status":         status,
-			"sizeBytes":      p.SizeBytes,
-			"requiresReboot": p.RequiresReboot,
-		})
+		item := map[string]interface{}{
+			"kbArticleId": p.KBArticleID, "title": p.Title, "description": p.Title,
+			"category": p.Category, "severity": p.Severity, "status": status,
+			"sizeBytes": p.SizeBytes, "requiresReboot": p.RequiresReboot,
+		}
+		if strings.TrimSpace(p.UpdateID) != "" { item["updateId"] = p.UpdateID }
+		if strings.TrimSpace(p.LastAttemptAt) != "" {
+			item["lastAttemptAt"] = p.LastAttemptAt
+			item["lastOperation"] = p.LastOperation
+			item["lastResultCode"] = p.LastResultCode
+			item["lastHResult"] = p.LastHResult
+		}
+		patchItems = append(patchItems, item)
 	}
 
 	reportPayload := map[string]interface{}{

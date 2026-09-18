@@ -41,6 +41,22 @@ export interface UpdateActionStatusParams {
 
 export class ActionsService {
   private static async reconcileNeverExecutedAction(action: any, reason: string) {
+    if (action.actionType === ActionType.WINDOWS_UPDATE_DOWNLOAD_KB) {
+      const ids = Array.isArray(action.parameters?.kbArticleIds)
+        ? action.parameters.kbArticleIds.filter((v: unknown): v is string => typeof v === 'string').map((v: string) => v.trim().toUpperCase())
+        : [];
+      if (ids.length > 0) {
+        await db.devicePatch.updateMany({
+          where: { tenantId: action.tenantId, deviceId: action.deviceId, kbArticleId: { in: ids }, status: 'PENDING_DOWNLOAD' },
+          data: { status: 'MISSING' },
+        });
+        await db.patchHistory.updateMany({
+          where: { tenantId: action.tenantId, deviceId: action.deviceId, kbArticleId: { in: ids }, actionType: 'DOWNLOAD', status: 'IN_PROGRESS' },
+          data: { status: 'FAILED', exitCode: 1, errorDetails: reason },
+        });
+      }
+    }
+
     if (
       action.actionType === ActionType.WINDOWS_UPDATE_INSTALL_KB ||
       action.actionType === ActionType.WINDOWS_UPDATE_INSTALL_APPROVED
@@ -682,6 +698,51 @@ export class ActionsService {
       },
     });
 
+
+    if ((status === 'SUCCESS' || status === 'FAILED') && action.actionType === ActionType.WINDOWS_UPDATE_DOWNLOAD_KB) {
+      const actionResult = (result || {}) as any;
+      const outcomes = Array.isArray(actionResult.outcomes) ? actionResult.outcomes : [];
+      const now = new Date();
+      const fallbackTargets = Array.isArray((action.parameters as any)?.kbArticleIds)
+        ? ((action.parameters as any).kbArticleIds as unknown[]).filter((v): v is string => typeof v === 'string').map((v) => v.toUpperCase())
+        : [];
+      const outcomeIds = new Set<string>();
+
+      for (const outcome of outcomes) {
+        const identifier = typeof outcome?.identifier === 'string' ? outcome.identifier.toUpperCase() : '';
+        if (!identifier) continue;
+        outcomeIds.add(identifier);
+        const downloaded = outcome.downloaded === true;
+        await db.devicePatch.updateMany({
+          where: { tenantId, deviceId, kbArticleId: identifier },
+          data: {
+            status: downloaded ? 'DOWNLOADED' : 'FAILED', lastAttemptAt: now, lastOperation: 'DOWNLOAD',
+            lastResultCode: typeof outcome.resultCode === 'number' ? outcome.resultCode : null,
+            lastHResult: outcome.hResult != null ? String(outcome.hResult) : null, lastScannedAt: now,
+          },
+        });
+        await db.patchHistory.updateMany({
+          where: { tenantId, deviceId, kbArticleId: identifier, actionType: 'DOWNLOAD', status: 'IN_PROGRESS' },
+          data: {
+            status: downloaded ? 'SUCCESS' : 'FAILED',
+            exitCode: typeof outcome.resultCode === 'number' ? outcome.resultCode : (downloaded ? 0 : 1),
+            errorDetails: downloaded ? null : `Windows Update no confirmó la descarga. ResultCode=${outcome.resultCode ?? 'N/A'}, HResult=${outcome.hResult ?? 'N/A'}`,
+          },
+        });
+      }
+      for (const identifier of fallbackTargets) {
+        if (outcomeIds.has(identifier)) continue;
+        await db.devicePatch.updateMany({
+          where: { tenantId, deviceId, kbArticleId: identifier, status: 'PENDING_DOWNLOAD' },
+          data: { status: 'FAILED', lastAttemptAt: now, lastOperation: 'DOWNLOAD', lastResultCode: exitCode ?? 1, lastHResult: null, lastScannedAt: now },
+        });
+        await db.patchHistory.updateMany({
+          where: { tenantId, deviceId, kbArticleId: identifier, actionType: 'DOWNLOAD', status: 'IN_PROGRESS' },
+          data: { status: 'FAILED', exitCode: exitCode ?? 1, errorDetails: error || 'El agente no devolvió verificación individual de descarga.' },
+        });
+      }
+    }
+
     if (
       (status === 'SUCCESS' || status === 'FAILED') &&
       (action.actionType === ActionType.WINDOWS_UPDATE_INSTALL_KB ||
@@ -706,7 +767,8 @@ export class ActionsService {
 
         outcomeIds.add(identifier);
         const installed = outcome.installed === true;
-        const patchStatus = installed ? 'INSTALLED' : 'FAILED';
+        const downloaded = outcome.downloaded === true;
+        const patchStatus = installed ? 'INSTALLED' : (downloaded ? 'DOWNLOADED' : 'FAILED');
 
         await db.devicePatch.updateMany({
           where: {
@@ -717,6 +779,10 @@ export class ActionsService {
           data: {
             status: patchStatus,
             installedAt: installed ? now : null,
+            lastAttemptAt: now,
+            lastOperation: 'INSTALL',
+            lastResultCode: typeof outcome.resultCode === 'number' ? outcome.resultCode : null,
+            lastHResult: outcome.hResult != null ? String(outcome.hResult) : null,
             lastScannedAt: now,
           },
         });
@@ -756,6 +822,10 @@ export class ActionsService {
           data: {
             status: 'FAILED',
             installedAt: null,
+            lastAttemptAt: now,
+            lastOperation: 'INSTALL',
+            lastResultCode: exitCode ?? 1,
+            lastHResult: null,
             lastScannedAt: now,
           },
         });

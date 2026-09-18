@@ -99,6 +99,11 @@ export const patchItemReportSchema = z.object({
   publishedAt: z.string().datetime().nullable().optional(),
   installedAt: z.string().datetime().nullable().optional(),
   requiresReboot: z.boolean().default(false),
+  updateId: z.string().max(100).optional(),
+  lastAttemptAt: z.string().datetime().optional(),
+  lastOperation: z.string().max(32).optional(),
+  lastResultCode: z.number().int().optional(),
+  lastHResult: z.string().max(64).optional(),
 });
 
 export const reportDevicePatchesSchema = z.object({
@@ -109,6 +114,11 @@ export const reportDevicePatchesSchema = z.object({
 });
 
 export type ReportDevicePatchesInput = z.infer<typeof reportDevicePatchesSchema>;
+
+export const downloadPatchesRequestSchema = z.object({
+  kbArticleIds: z.array(z.string().min(2)).min(1),
+});
+export type DownloadPatchesRequestInput = z.infer<typeof downloadPatchesRequestSchema>;
 
 export const installPatchesRequestSchema = z.object({
   mode: z.enum(['SELECTED_KBS', 'CRITICAL_ONLY', 'SECURITY_ONLY', 'ALL_APPROVED']).default('SELECTED_KBS'),

@@ -117,6 +117,7 @@ enum ActionType {
   FORCE_SMART_CHECK
   FORCE_WINDOWS_UPDATE
   WINDOWS_UPDATE_SCAN
+  WINDOWS_UPDATE_DOWNLOAD_KB
   WINDOWS_UPDATE_INSTALL_KB
   WINDOWS_UPDATE_INSTALL_APPROVED
   WINDOWS_UPDATE_SCHEDULE_REBOOT
@@ -930,6 +931,11 @@ model DevicePatch {
   publishedAt     DateTime?
   installedAt     DateTime?
   requiresReboot  Boolean        @default(false)
+  updateId        String?
+  lastAttemptAt   DateTime?
+  lastOperation   String?
+  lastResultCode  Int?
+  lastHResult     String?
   lastScannedAt   DateTime       @default(now())
   createdAt       DateTime       @default(now())
   updatedAt       DateTime       @updatedAt

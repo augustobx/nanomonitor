@@ -40,6 +40,7 @@ export const ACTION_TYPES = [
   'RESTART_SERVICE',
   'CLEAN_TEMP_FILES',
   'WINDOWS_UPDATE_SCAN',
+  'WINDOWS_UPDATE_DOWNLOAD_KB',
   'WINDOWS_UPDATE_INSTALL_KB',
   'WINDOWS_UPDATE_INSTALL_APPROVED',
   'WINDOWS_UPDATE_SCHEDULE_REBOOT',
@@ -51,6 +52,7 @@ export const AGENT_REPORTABLE_ACTION_STATUSES = ['RUNNING', 'SUCCESS', 'FAILED']
 
 export const ACTION_PARAMETER_CONTRACTS = [
   'RESTART_SERVICE:serviceName:string:required',
+  'WINDOWS_UPDATE_DOWNLOAD_KB:kbArticleIds:string[]:required',
   'WINDOWS_UPDATE_INSTALL_KB:kbArticleIds:string[]:required',
   'WINDOWS_UPDATE_INSTALL_APPROVED:kbArticleIds:string[]:required',
   'WINDOWS_UPDATE_SCHEDULE_REBOOT:delaySeconds:number:optional,message:string:optional',
@@ -108,6 +110,7 @@ export const createActionSchema = z
         });
       }
     } else if (
+      data.actionType === 'WINDOWS_UPDATE_DOWNLOAD_KB' ||
       data.actionType === 'WINDOWS_UPDATE_INSTALL_KB' ||
       data.actionType === 'WINDOWS_UPDATE_INSTALL_APPROVED'
     ) {

@@ -15,12 +15,17 @@ type PatchItem struct {
 	Title          string   `json:"title"`
 	KBArticleID    string   `json:"kbArticleId"`
 	AllKBs         []string `json:"allKBs"`
+	UpdateID       string   `json:"updateId,omitempty"`
 	Category       string   `json:"category"`
 	Severity       string   `json:"severity"`
 	IsDownloaded   bool     `json:"isDownloaded"`
 	RequiresReboot bool     `json:"requiresReboot"`
 	SizeBytes      int64    `json:"sizeBytes"`
 	Status         string   `json:"status,omitempty"`
+	LastOperation  string   `json:"lastOperation,omitempty"`
+	LastResultCode int      `json:"lastResultCode,omitempty"`
+	LastHResult    string   `json:"lastHResult,omitempty"`
+	LastAttemptAt  string   `json:"lastAttemptAt,omitempty"`
 }
 
 // ScanResult contains discovered updates and system reboot status
@@ -37,7 +42,26 @@ type PatchInstallOutcome struct {
 	Title      string `json:"title"`
 	ResultCode int    `json:"resultCode"`
 	HResult    int64  `json:"hResult"`
+	Downloaded bool   `json:"downloaded"`
 	Installed  bool   `json:"installed"`
+}
+
+type PatchDownloadOutcome struct {
+	Identifier string `json:"identifier"`
+	Title      string `json:"title"`
+	ResultCode int    `json:"resultCode"`
+	HResult    int64  `json:"hResult"`
+	Downloaded bool   `json:"downloaded"`
+}
+
+type DownloadResult struct {
+	Success         bool                   `json:"success"`
+	ResultCode      int                    `json:"resultCode"`
+	DownloadedCount int                    `json:"downloadedCount"`
+	MatchedCount    int                    `json:"matchedCount"`
+	TargetKBs       []string               `json:"targetKBs"`
+	Outcomes        []PatchDownloadOutcome `json:"outcomes"`
+	Details         string                 `json:"details"`
 }
 
 type InstallResult struct {
@@ -93,12 +117,47 @@ try {
     $Session = New-Object -ComObject Microsoft.Update.Session
     $Searcher = $Session.CreateUpdateSearcher()
     $SearchResult = $Searcher.Search("IsInstalled=0 and IsHidden=0")
+
+    $historyById = @{}
+    try {
+        $historyCount = [Math]::Min([int]$Searcher.GetTotalHistoryCount(), 250)
+        if ($historyCount -gt 0) {
+            $history = $Searcher.QueryHistory(0, $historyCount)
+            foreach ($h in $history) {
+                $hid = ""
+                try { $hid = "$($h.UpdateIdentity.UpdateID)".ToUpperInvariant() } catch {}
+                if (-not $hid) { continue }
+                $existing = $historyById[$hid]
+                if ($null -eq $existing -or $h.Date -gt $existing.date) {
+                    $op = switch ([int]$h.Operation) {
+                        1 { "INSTALL" }
+                        2 { "UNINSTALL" }
+                        default { "OTHER" }
+                    }
+                    $historyById[$hid] = [PSCustomObject]@{
+                        date = $h.Date
+                        operation = $op
+                        resultCode = [int]$h.ResultCode
+                        hResult = [long]$h.HResult
+                    }
+                }
+            }
+        }
+    } catch {}
+
     $list = @()
     foreach ($u in $SearchResult.Updates) {
         $kbs = @()
         foreach ($kb in $u.KBArticleIDs) { $kbs += "KB$kb" }
+        $updateId = if ($u.Identity.UpdateID) { $u.Identity.UpdateID.ToUpperInvariant() } else { "" }
         $mainKB = if ($kbs.Count -gt 0) { $kbs[0] } else {
-            if ($u.Identity.UpdateID) { "WU:" + $u.Identity.UpdateID.ToUpperInvariant() } else { "WU:UNKNOWN" }
+            if ($updateId) { "WU:" + $updateId } else { "WU:UNKNOWN" }
+        }
+
+        $last = if ($updateId -and $historyById.ContainsKey($updateId)) { $historyById[$updateId] } else { $null }
+        $status = if ([bool]$u.IsDownloaded) { "DOWNLOADED" } else { "PENDING_DOWNLOAD" }
+        if (-not [bool]$u.IsDownloaded -and $null -ne $last -and ($last.resultCode -eq 4 -or $last.resultCode -eq 5)) {
+            $status = "FAILED"
         }
         
         $cat = "OTHER"
@@ -134,11 +193,17 @@ try {
             title = $u.Title
             kbArticleId = $mainKB
             allKBs = $kbs
+            updateId = $updateId
             category = $cat
             severity = $sev
             isDownloaded = [bool]$u.IsDownloaded
             requiresReboot = [bool]$u.RebootRequired
             sizeBytes = $reportedSize
+            status = $status
+            lastOperation = if ($null -ne $last) { $last.operation } else { "" }
+            lastResultCode = if ($null -ne $last) { [int]$last.resultCode } else { 0 }
+            lastHResult = if ($null -ne $last) { "$([long]$last.hResult)" } else { "" }
+            lastAttemptAt = if ($null -ne $last) { $last.date.ToUniversalTime().ToString("o") } else { "" }
         }
     }
     
@@ -194,6 +259,114 @@ try {
 	}
 
 	res.ScanDurationMs = time.Since(startTime).Milliseconds()
+	return &res, nil
+}
+
+
+func DownloadTargetKBs(ctx context.Context, targetKBs []string, timeout time.Duration) (*DownloadResult, error) {
+	if len(targetKBs) == 0 { return nil, fmt.Errorf("no se proporcionaron KBs para descargar") }
+
+	kbList := make([]string, len(targetKBs))
+	for i, kb := range targetKBs {
+		clean := strings.ToUpper(strings.TrimSpace(kb))
+		clean = strings.ReplaceAll(clean, "'", "''")
+		kbList[i] = fmt.Sprintf("'%s'", clean)
+	}
+	kbArrayLiteral := "@(" + strings.Join(kbList, ", ") + ")"
+
+	script := fmt.Sprintf(`$ErrorActionPreference = 'Stop'
+[Console]::OutputEncoding = [System.Text.UTF8Encoding]::new($false)
+$OutputEncoding = [Console]::OutputEncoding
+$targetIds = %s
+try {
+    $Session = New-Object -ComObject Microsoft.Update.Session
+    $Searcher = $Session.CreateUpdateSearcher()
+    $SearchResult = $Searcher.Search("IsInstalled=0 and IsHidden=0")
+    $UpdatesToDownload = New-Object -ComObject Microsoft.Update.UpdateColl
+    $matchedMeta = @{}
+
+    foreach ($u in $SearchResult.Updates) {
+        $ids = @()
+        foreach ($kb in $u.KBArticleIDs) { $ids += ("KB" + $kb).ToUpperInvariant() }
+        if ($u.Identity.UpdateID) { $ids += ("WU:" + $u.Identity.UpdateID).ToUpperInvariant() }
+        $matchedIdentifier = $null
+        foreach ($target in $targetIds) {
+            $normalizedTarget = "$target".ToUpperInvariant()
+            if ($ids -contains $normalizedTarget) { $matchedIdentifier = $normalizedTarget; break }
+        }
+        if ($matchedIdentifier) {
+            $UpdatesToDownload.Add($u) | Out-Null
+            $matchedMeta[$u.Identity.UpdateID] = @{ identifier = $matchedIdentifier; title = "$($u.Title)" }
+        }
+    }
+
+    $matchedCount = [int]$UpdatesToDownload.Count
+    $outcomes = @()
+    $overallCode = 4
+    if ($matchedCount -gt 0) {
+        $Downloader = $Session.CreateUpdateDownloader()
+        $Downloader.Updates = $UpdatesToDownload
+        $DownloadResult = $Downloader.Download()
+        $overallCode = [int]$DownloadResult.ResultCode
+        for ($i = 0; $i -lt $UpdatesToDownload.Count; $i++) {
+            $u = $UpdatesToDownload.Item($i)
+            $meta = $matchedMeta[$u.Identity.UpdateID]
+            $perUpdate = $DownloadResult.GetUpdateResult($i)
+            $outcomes += [PSCustomObject]@{
+                identifier = $meta.identifier
+                title = $meta.title
+                resultCode = [int]$perUpdate.ResultCode
+                hResult = [long]$perUpdate.HResult
+                downloaded = [bool]$u.IsDownloaded
+            }
+        }
+    }
+
+    foreach ($target in $targetIds) {
+        $normalizedTarget = "$target".ToUpperInvariant()
+        if (@($outcomes | Where-Object { $_.identifier -eq $normalizedTarget }).Count -eq 0) {
+            $outcomes += [PSCustomObject]@{
+                identifier = $normalizedTarget
+                title = ""
+                resultCode = -1
+                hResult = 0
+                downloaded = $false
+            }
+        }
+    }
+
+    $downloadedCount = @($outcomes | Where-Object { $_.downloaded -eq $true }).Count
+    $allSucceeded = ($downloadedCount -eq $targetIds.Count -and $matchedCount -eq $targetIds.Count)
+    [PSCustomObject]@{
+        success = [bool]$allSucceeded
+        resultCode = [int]$overallCode
+        downloadedCount = [int]$downloadedCount
+        matchedCount = [int]$matchedCount
+        outcomes = @($outcomes)
+        details = "Windows Update confirmó $downloadedCount de $($targetIds.Count) actualización(es) como descargadas."
+    } | ConvertTo-Json -Depth 5 -Compress
+} catch {
+    Write-Error $_.Exception.Message
+    exit 1
+}`, kbArrayLiteral)
+
+	cmdCtx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+	cmd := exec.CommandContext(cmdCtx, "powershell.exe", "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-Command", script)
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+	if err := cmd.Run(); err != nil {
+		errText := strings.TrimSpace(stderr.String())
+		if errText == "" { errText = err.Error() }
+		return nil, fmt.Errorf("error ejecutando descarga de parches: %s", errText)
+	}
+	output := strings.TrimSpace(stdout.String())
+	var res DownloadResult
+	if err := json.Unmarshal([]byte(output), &res); err != nil {
+		return nil, fmt.Errorf("error decodificando resultado de descarga: %w (salida: %s)", err, output)
+	}
+	res.TargetKBs = targetKBs
 	return &res, nil
 }
 
@@ -256,6 +429,7 @@ try {
                 title = ""
                 resultCode = -1
                 hResult = 0
+                downloaded = $false
                 installed = $false
             }
         }
@@ -284,13 +458,16 @@ try {
 
     if ($UpdatesToInstall.Count -ne $UpdatesToDownload.Count) {
         $outcomes = @()
-        foreach ($u in $UpdatesToDownload) {
+        for ($i = 0; $i -lt $UpdatesToDownload.Count; $i++) {
+            $u = $UpdatesToDownload.Item($i)
             $meta = $matchedMeta[$u.Identity.UpdateID]
+            $perDownload = $DownloadResult.GetUpdateResult($i)
             $outcomes += [PSCustomObject]@{
                 identifier = $meta.identifier
                 title = $meta.title
-                resultCode = -1
-                hResult = 0
+                resultCode = [int]$perDownload.ResultCode
+                hResult = [long]$perDownload.HResult
+                downloaded = [bool]$u.IsDownloaded
                 installed = $false
             }
         }
@@ -331,6 +508,7 @@ try {
             title = $meta.title
             resultCode = [int]$perUpdate.ResultCode
             hResult = [long]$perUpdate.HResult
+            downloaded = [bool]$u.IsDownloaded
             installed = [bool]$installed
         }
     }
@@ -346,6 +524,7 @@ try {
                 title = ""
                 resultCode = -1
                 hResult = 0
+                downloaded = $false
                 installed = $false
             }
         }

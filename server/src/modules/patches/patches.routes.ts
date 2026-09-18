@@ -8,6 +8,7 @@ import { ActionsService } from '../actions/actions.service.js';
 import {
   upsertPatchPolicySchema,
   reportDevicePatchesSchema,
+  downloadPatchesRequestSchema,
   installPatchesRequestSchema,
   scheduleRebootRequestSchema,
 } from '../../schemas/patches.schema.js';
@@ -131,6 +132,27 @@ export const devicePatchRoutes: FastifyPluginAsync = async (fastify: FastifyInst
         error: 'Bad Request',
         message: err.message,
       });
+    }
+  });
+
+
+  // POST /api/v1/devices/:id/patches/download - Download selected patches without installing
+  fastify.post('/:id/patches/download', async (request, reply) => {
+    const tenantId = getTenantId(request);
+    const { id } = request.params as { id: string };
+    const user = request.user!;
+    if (user.role === 'VIEWER' || user.role === 'CLIENT') {
+      return reply.status(403).send({ statusCode: 403, error: 'Forbidden', message: 'Permiso insuficiente para descargar parches.' });
+    }
+    const parsed = downloadPatchesRequestSchema.safeParse(request.body);
+    if (!parsed.success) {
+      return reply.status(400).send({ statusCode: 400, error: 'Bad Request', message: 'Datos de descarga inválidos.', details: parsed.error.format() });
+    }
+    try {
+      const result = await PatchesService.triggerPatchDownload(tenantId, id, { id: user.userId, email: user.email }, parsed.data);
+      return reply.send({ statusCode: 200, message: 'Orden de descarga encolada exitosamente.', data: result });
+    } catch (err: any) {
+      return reply.status(400).send({ statusCode: 400, error: 'Bad Request', message: err.message });
     }
   });
 
