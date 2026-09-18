@@ -125,6 +125,20 @@ export const customersRoutes: FastifyPluginAsync = async (fastify: FastifyInstan
       select: { id: true, token: true, expiresAt: true, maxUses: true },
     });
 
+    await logAudit({
+      tenantId,
+      userId: request.user?.userId,
+      action: 'enrollment.compatibility_token_created',
+      entityType: 'EnrollmentToken',
+      entityId: token.id,
+      details: {
+        customerId: customer.id,
+        maxUses: token.maxUses,
+        expiresAt: token.expiresAt,
+      },
+      request,
+    });
+
     return reply
       .header('Cache-Control', 'no-store')
       .send({ statusCode: 200, data: token });
