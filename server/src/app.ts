@@ -240,6 +240,7 @@ export async function buildApp(): Promise<FastifyInstance> {
           metrics: { take: 15, orderBy: { timestamp: 'desc' } },
           events: { take: 20, orderBy: { timestamp: 'desc' } },
           healthScores: { take: 1, orderBy: { calculatedAt: 'desc' } },
+          heartbeats: { take: 1, orderBy: { timestamp: 'desc' } },
         },
         orderBy: { lastSeenAt: 'desc' },
       });
