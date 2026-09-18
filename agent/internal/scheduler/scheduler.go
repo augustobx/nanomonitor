@@ -703,10 +703,17 @@ func (s *Scheduler) flushOfflineBuffer(ctx context.Context) {
 			if err = json.Unmarshal(item.Payload, &payload); err == nil {
 				resp, err = s.client.SendSoftware(ctx, payload)
 			}
+		case "/agent/patches/report":
+			var payload interface{}
+			if err = json.Unmarshal(item.Payload, &payload); err == nil {
+				resp, err = s.client.SendPatchReport(ctx, payload)
+			}
 		default:
-			s.logger.Warn("unknown offline buffer endpoint, dropping item", "endpoint", item.Endpoint)
-			_ = s.buffer.Remove(item.ID)
-			continue
+			s.logger.Error("unknown offline buffer endpoint; preserving item for diagnosis",
+				"endpoint", item.Endpoint,
+				"item_id", item.ID,
+			)
+			return
 		}
 
 		// Check for transient network error or server 5xx/429
