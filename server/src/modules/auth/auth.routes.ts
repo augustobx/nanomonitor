@@ -14,7 +14,10 @@ import { config } from '../../config/index.js';
 
 export const authRoutes: FastifyPluginAsync = async (fastify: FastifyInstance) => {
   // POST /api/v1/auth/login
-  fastify.post('/login', async (request, reply) => {
+  fastify.post(
+    '/login',
+    { config: { rateLimit: { max: 10, timeWindow: '1 minute' } } },
+    async (request, reply) => {
     const parseResult = loginSchema.safeParse(request.body);
     if (!parseResult.success) {
       return reply.status(400).send({
@@ -98,7 +101,6 @@ export const authRoutes: FastifyPluginAsync = async (fastify: FastifyInstance) =
       statusCode: 200,
       data: {
         accessToken,
-        refreshToken: rawRefreshToken,
         user: {
           id: user.id,
           email: user.email,
@@ -112,7 +114,7 @@ export const authRoutes: FastifyPluginAsync = async (fastify: FastifyInstance) =
         },
       },
     });
-  });
+  );
 
   // POST /api/v1/auth/refresh
   fastify.post('/refresh', async (request, reply) => {
@@ -193,7 +195,6 @@ export const authRoutes: FastifyPluginAsync = async (fastify: FastifyInstance) =
       statusCode: 200,
       data: {
         accessToken: newAccessToken,
-        refreshToken: newRawRefreshToken,
       },
     });
   });
