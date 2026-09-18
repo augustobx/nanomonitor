@@ -436,6 +436,19 @@ export const devicesRoutes: FastifyPluginAsync = async (fastify: FastifyInstance
         });
       }
 
+      await logAudit({
+        tenantId,
+        userId: request.user?.userId,
+        action: 'device.tamper_key_revealed',
+        entityType: 'Device',
+        entityId: device.id,
+        details: {
+          hostname: device.hostname,
+          generatedOnDemand: !device.tamperKey,
+        },
+        request,
+      });
+
       reply.header('Cache-Control', 'no-store');
       return reply.send({
         statusCode: 200,
