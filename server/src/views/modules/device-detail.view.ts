@@ -162,7 +162,7 @@ export function getDeviceDetailViewHtml(): string {
         <div class="section-card">
           <div class="section-header">
             <div class="section-title"><span>📈 Telemetría de Rendimiento Reciente</span></div>
-            <span style="font-size: 11px; color: var(--text-muted);">Muestras de CPU y Memoria RAM</span>
+            <span style="font-size: 11px; color: var(--text-muted);">CPU, memoria RAM y sensores térmicos disponibles</span>
           </div>
           <div class="section-body">
             <div id="metricsChartContainer" style="width: 100%; overflow-x: auto; min-height: 200px;">
