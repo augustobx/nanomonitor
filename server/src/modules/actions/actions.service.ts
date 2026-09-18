@@ -303,25 +303,52 @@ export class ActionsService {
       return null;
     }
 
-    if (
-      action.status === ActionStatus.SUCCESS ||
-      action.status === ActionStatus.FAILED ||
-      action.status === ActionStatus.RUNNING
-    ) {
+    const cancellableStatuses = [
+      ActionStatus.PENDING,
+      ActionStatus.QUEUED,
+      ActionStatus.DELIVERED,
+    ];
+
+    if (!cancellableStatuses.includes(action.status)) {
       throw new Error(`Cannot cancel action in status "${action.status}"`);
     }
 
-    const updated = await db.remoteAction.update({
-      where: { id: actionId },
+    const cancelledAt = new Date();
+    const changed = await db.remoteAction.updateMany({
+      where: {
+        id: actionId,
+        tenantId,
+        deviceId,
+        status: { in: cancellableStatuses },
+      },
       data: {
         status: ActionStatus.CANCELLED,
+        finishedAt: cancelledAt,
         auditMetadata: {
           cancelledBy: userEmail,
-          cancelledAt: new Date().toISOString(),
+          cancelledAt: cancelledAt.toISOString(),
           reason: reason || 'Cancelled by operator',
         },
       },
     });
+
+    // The agent may claim/start the action between our initial read and the
+    // cancellation write. Never overwrite a newer RUNNING/terminal state.
+    if (changed.count !== 1) {
+      const current = await db.remoteAction.findFirst({
+        where: { id: actionId, tenantId, deviceId },
+      });
+      throw new Error(
+        `Cannot cancel action in status "${current?.status || 'UNKNOWN'}"`
+      );
+    }
+
+    const updated = await db.remoteAction.findFirst({
+      where: { id: actionId, tenantId, deviceId },
+    });
+    if (!updated) {
+      throw new Error('Action disappeared after cancellation');
+    }
 
     await this.reconcileNeverExecutedAction(
       action,
