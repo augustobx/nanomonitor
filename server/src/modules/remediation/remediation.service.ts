@@ -1,7 +1,9 @@
-import { ActionStatus, ActionType, AlertStatus, RemediationMode, RemediationStatus } from '@prisma/client';
+import { ActionType, AlertStatus, RemediationMode, RemediationStatus } from '@prisma/client';
 import { db } from '../../lib/db.js';
 import { logger } from '../../lib/logger.js';
 import { logAudit } from '../../middleware/audit.js';
+import { ActionsService } from '../actions/actions.service.js';
+import { createActionSchema } from '../../schemas/actions.schema.js';
 
 export interface RemediationStats {
   totalAttempted: number;
@@ -15,6 +17,23 @@ export interface RemediationStats {
 }
 
 export class RemediationService {
+  private static validateRemediationContract(actionType: ActionType, parameters: any) {
+    const parsed = createActionSchema.safeParse({
+      actionType,
+      parameters: parameters || {},
+      expiresInMinutes: 15,
+    });
+
+    if (!parsed.success) {
+      const details = parsed.error.issues
+        .map((issue) => `${issue.path.join('.') || 'action'}: ${issue.message}`)
+        .join('; ');
+      throw new Error(`Contrato de remediación inválido para ${actionType}: ${details}`);
+    }
+
+    return parsed.data;
+  }
+
   /**
    * Evaluates whether an alert should trigger auto-remediation or manual approval,
    * taking into account cooldowns, circuit breakers, and rule configuration.
@@ -37,6 +56,7 @@ export class RemediationService {
     if (rule.remediationMode === RemediationMode.MONITOR_ONLY) return;
 
     const actionType = rule.remediationAction as ActionType;
+    this.validateRemediationContract(actionType, rule.remediationParams || {});
 
     // 1. Circuit Breaker Check: Check consecutive failures in the last 2 hours
     const twoHoursAgo = new Date(Date.now() - 2 * 60 * 60 * 1000);
@@ -162,18 +182,21 @@ export class RemediationService {
     if (!execution) return;
 
     try {
-      const remoteAction = await db.remoteAction.create({
-        data: {
-          tenantId: execution.tenantId,
-          customerId,
-          deviceId: execution.deviceId,
-          actionType: execution.actionType,
-          parameters: execution.parameters || undefined,
-          status: ActionStatus.PENDING,
-          requestedBy: 'NanoMonitor Auto-Remediation Engine',
-          source: 'AUTO_REMEDIATION',
-          expiresAt: new Date(Date.now() + 15 * 60 * 1000), // 15 minutes timeout
-        },
+      const validated = this.validateRemediationContract(
+        execution.actionType,
+        execution.parameters || {}
+      );
+
+      const remoteAction = await ActionsService.createAction({
+        tenantId: execution.tenantId,
+        customerId,
+        deviceId: execution.deviceId,
+        actionType: validated.actionType as ActionType,
+        parameters: validated.parameters,
+        requestedBy: 'NanoMonitor Auto-Remediation Engine',
+        requestedById: null,
+        source: 'AUTO_REMEDIATION',
+        expiresInMinutes: 15,
       });
 
       await db.remediationExecution.update({
@@ -428,6 +451,17 @@ export class RemediationService {
 
     if (!rule) {
       throw new Error('Regla de alerta no encontrada');
+    }
+
+    if (data.remediationMode !== RemediationMode.MONITOR_ONLY) {
+      const candidateAction = (data.remediationAction ?? rule.remediationAction) as ActionType | null;
+      if (!candidateAction) {
+        throw new Error('Una remediación activa requiere remediationAction.');
+      }
+      this.validateRemediationContract(
+        candidateAction,
+        data.remediationParams ?? rule.remediationParams ?? {}
+      );
     }
 
     const updated = await db.alertRule.update({
