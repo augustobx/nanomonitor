@@ -578,7 +578,7 @@ export async function evaluateDeviceAlerts(
  * Evaluates alerts across all active devices in the database.
  * Used by the background job scheduler.
  */
-export async function evaluateAllDevicesAlerts(): Promise<{
+export async function evaluateAllDevicesAlerts(tenantId?: string): Promise<{
   totalDevices: number;
   totalCreated: number;
   totalUpdated: number;
@@ -587,6 +587,7 @@ export async function evaluateAllDevicesAlerts(): Promise<{
 }> {
   const start = Date.now();
   const devices = await db.device.findMany({
+    where: tenantId ? { tenantId } : undefined,
     select: { id: true, tenantId: true },
   });
 
