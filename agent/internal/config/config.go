@@ -2,7 +2,9 @@ package config
 
 import (
 	"fmt"
+	"encoding/json"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"sync"
 
@@ -16,6 +18,8 @@ const (
 	DefaultConfigFile = "config.yaml"
 	// DefaultLogDir is the directory for agent logs
 	DefaultLogDir = `C:\ProgramData\NanoLabs\NanoMonitor\logs`
+	// ProtectedSecretsFile stores credentials readable only by SYSTEM/Administrators.
+	ProtectedSecretsFile = "agent.secrets.json"
 )
 
 // Config holds the agent's runtime configuration
@@ -31,12 +35,12 @@ type Config struct {
 	DeviceID string `yaml:"deviceId,omitempty"`
 	TenantID string `yaml:"tenantId,omitempty"`
 
-	// Agent secret is stored separately with DPAPI when available
-	// This field is only used during initial enrollment
-	AgentSecret string `yaml:"agentSecret,omitempty"`
+	// Sensitive values are never serialized into the public YAML.
+	AgentSecret string `yaml:"-"`
+	TamperKey   string `yaml:"-"`
 
-	// Tamper Protection key
-	TamperKey string `yaml:"tamperKey,omitempty"`
+	// Public state needed by the tray; the actual key remains protected.
+	TamperProtectionEnabled bool `yaml:"tamperProtectionEnabled,omitempty"`
 
 	// Intervals (in seconds)
 	HeartbeatInterval     int `yaml:"heartbeatInterval"`
@@ -95,6 +99,33 @@ func LoadFromFile(path string) (*Config, error) {
 		return nil, fmt.Errorf("parsing config file: %w", err)
 	}
 
+	// Load credentials from the protected sidecar. During upgrade from <=1.4.0,
+	// migrate legacy secrets that were stored in config.yaml.
+	if err := cfg.loadProtectedSecrets(filepath.Dir(path)); err != nil {
+		var legacy struct {
+			AgentSecret string `yaml:"agentSecret"`
+			TamperKey   string `yaml:"tamperKey"`
+		}
+		if legacyErr := yaml.Unmarshal(data, &legacy); legacyErr == nil {
+			cfg.AgentSecret = legacy.AgentSecret
+			cfg.TamperKey = legacy.TamperKey
+			cfg.TamperProtectionEnabled = legacy.TamperKey != ""
+			if cfg.AgentSecret != "" || cfg.TamperKey != "" {
+				if saveErr := cfg.saveProtectedSecrets(filepath.Dir(path)); saveErr != nil {
+					return nil, fmt.Errorf("migrating protected agent secrets: %w", saveErr)
+				}
+				// Re-save public YAML to remove legacy clear-text secrets.
+				if publicData, marshalErr := yaml.Marshal(cfg); marshalErr == nil {
+					_ = os.WriteFile(path, publicData, 0640)
+				}
+			}
+		}
+	}
+
+	if cfg.TamperKey != "" {
+		cfg.TamperProtectionEnabled = true
+	}
+
 	if cfg.APIUrlAlt != "" && (cfg.APIUrl == "" || cfg.APIUrl == "https://control-api.nanoapps.site/api") {
 		cfg.APIUrl = cfg.APIUrlAlt
 	}
@@ -123,10 +154,80 @@ func (c *Config) SaveToFile(path string) error {
 		return fmt.Errorf("marshaling config: %w", err)
 	}
 
-	if err := os.WriteFile(path, data, 0600); err != nil {
+	if err := os.WriteFile(path, data, 0640); err != nil {
 		return fmt.Errorf("writing config file: %w", err)
 	}
 
+	if err := c.saveProtectedSecrets(filepath.Dir(path)); err != nil {
+		return fmt.Errorf("writing protected secrets: %w", err)
+	}
+
+	return nil
+}
+
+type protectedSecrets struct {
+	AgentSecret string `json:"agentSecret,omitempty"`
+	TamperKey   string `json:"tamperKey,omitempty"`
+}
+
+func (c *Config) loadProtectedSecrets(dir string) error {
+	path := filepath.Join(dir, ProtectedSecretsFile)
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return err
+	}
+
+	var secrets protectedSecrets
+	if err := json.Unmarshal(data, &secrets); err != nil {
+		return err
+	}
+	c.AgentSecret = secrets.AgentSecret
+	c.TamperKey = secrets.TamperKey
+	return nil
+}
+
+func (c *Config) saveProtectedSecrets(dir string) error {
+	if c.AgentSecret == "" && c.TamperKey == "" {
+		return nil
+	}
+
+	if err := os.MkdirAll(dir, 0750); err != nil {
+		return err
+	}
+	path := filepath.Join(dir, ProtectedSecretsFile)
+	data, err := json.Marshal(protectedSecrets{
+		AgentSecret: c.AgentSecret,
+		TamperKey:   c.TamperKey,
+	})
+	if err != nil {
+		return err
+	}
+
+	tmp := path + ".tmp"
+	if err := os.WriteFile(tmp, data, 0600); err != nil {
+		return err
+	}
+	if err := os.Rename(tmp, path); err != nil {
+		_ = os.Remove(tmp)
+		return err
+	}
+
+	return protectSecretsACL(path)
+}
+
+func protectSecretsACL(path string) error {
+	// Stable SIDs avoid localized Windows group names.
+	cmd := exec.Command(
+		"icacls.exe",
+		path,
+		"/inheritance:r",
+		"/grant:r",
+		"*S-1-5-18:F",
+		"*S-1-5-32-544:F",
+	)
+	if out, err := cmd.CombinedOutput(); err != nil {
+		return fmt.Errorf("protecting secret ACL: %w (%s)", err, string(out))
+	}
 	return nil
 }
 
