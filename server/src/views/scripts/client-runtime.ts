@@ -1260,9 +1260,10 @@ export function getClientRuntimeScript(): string {
 
     function buildEnrollmentCommand(token) {
       // Keep the one-shot bearer token out of HTTP URLs / reverse-proxy access logs.
-      // It is supplied locally through the environment and consumed by install.ps1.
-      return '$env:NANOMONITOR_TOKEN=\'' + token.replace(/'/g, "''") +
-        '\'; irm "https://monitor.nanolabs.com.ar/install.ps1" | iex; Remove-Item Env:NANOMONITOR_TOKEN -ErrorAction SilentlyContinue';
+      // Enrollment tokens are NL-[A-Z0-9-], so a double-quoted JS string can
+      // safely emit single-quoted PowerShell values without nested escaping.
+      return "$env:NANOMONITOR_TOKEN='" + token +
+        "'; irm 'https://monitor.nanolabs.com.ar/install.ps1' | iex; Remove-Item Env:NANOMONITOR_TOKEN -ErrorAction SilentlyContinue";
     }
 
     function openCustomerWorkspace(customerId) {
