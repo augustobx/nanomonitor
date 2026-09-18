@@ -17,12 +17,6 @@ export const customersRoutes: FastifyPluginAsync = async (fastify: FastifyInstan
       where: { tenantId },
       include: {
         sites: { select: { id: true, name: true } },
-        enrollmentTokens: {
-          select: { id: true, token: true, expiresAt: true },
-          where: { expiresAt: { gt: new Date() } },
-          orderBy: { createdAt: 'desc' },
-          take: 1,
-        },
         _count: {
           select: {
             sites: true,
@@ -33,26 +27,6 @@ export const customersRoutes: FastifyPluginAsync = async (fastify: FastifyInstan
       },
       orderBy: { name: 'asc' },
     });
-
-    // Ensure every customer has at least one active enrollment token
-    for (const c of customers) {
-      if (!c.enrollmentTokens || c.enrollmentTokens.length === 0) {
-        const cleanCode = c.code.replace(/[^A-Z0-9]/gi, '').toUpperCase();
-        const tokenString = `NL-${cleanCode}-${generateRandomString(8).toUpperCase()}`;
-        const expiresAt = new Date(Date.now() + 365 * 24 * 3600 * 1000);
-        const newToken = await db.enrollmentToken.create({
-          data: {
-            tenantId,
-            customerId: c.id,
-            token: tokenString,
-            maxUses: 500,
-            expiresAt,
-          },
-          select: { id: true, token: true, expiresAt: true },
-        });
-        c.enrollmentTokens = [newToken];
-      }
-    }
 
     return reply.send({ statusCode: 200, data: customers });
   });
@@ -141,7 +115,10 @@ export const customersRoutes: FastifyPluginAsync = async (fastify: FastifyInstan
   );
 
   // GET /api/v1/customers/:id/token - Get or create enrollment token for customer
-  fastify.get('/:id/token', async (request, reply) => {
+  fastify.get(
+    '/:id/token',
+    { preHandler: [requireRole(['SUPER_ADMIN', 'ADMIN', 'TECHNICIAN'])] },
+    async (request, reply) => {
     const tenantId = getTenantId(request);
     const { id } = request.params as { id: string };
 
@@ -178,7 +155,7 @@ export const customersRoutes: FastifyPluginAsync = async (fastify: FastifyInstan
     }
 
     return reply.send({ statusCode: 200, data: token });
-  });
+  );
 
   // GET /api/v1/customers/:id
   fastify.get('/:id', async (request, reply) => {
