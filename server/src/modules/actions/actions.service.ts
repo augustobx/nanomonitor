@@ -446,4 +446,5 @@ export class ActionsService {
     });
 
     return { action: updated, changed: true };
-  }}
+  }
+}
