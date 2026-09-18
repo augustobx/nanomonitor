@@ -5,7 +5,7 @@
   "main": "dist/server.js",
   "scripts": {
     "dev": "tsx watch src/server.ts",
-    "build": "tsc",
+    "build": "tsx src/contracts/validate-action-contract.ts && tsc",
     "start": "node dist/server.js",
     "seed": "tsx src/seed.ts",
     "worker": "tsx src/jobs/scheduler.ts",
