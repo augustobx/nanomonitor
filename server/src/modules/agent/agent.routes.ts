@@ -100,8 +100,8 @@ export const agentRoutes: FastifyPluginAsync = async (fastify: FastifyInstance) 
     if (agentVersion) {
       try {
         const cleanVer = agentVersion.replace(/^v/, '').trim();
-        await db.agent.updateMany({
-          where: { deviceId },
+        await db.agent.update({
+          where: { id: agentId },
           data: {
             agentVersion: cleanVer,
             lastAuthAt: new Date(),
