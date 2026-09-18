@@ -20,13 +20,13 @@ import (
 
 // SchedTriggerHook allows remote actions to trigger internal agent collectors directly
 type SchedTriggerHook interface {
-	TriggerHeartbeat(ctx context.Context)
-	TriggerMetrics(ctx context.Context)
-	TriggerSecurity(ctx context.Context)
-	TriggerInventory(ctx context.Context)
-	TriggerSmart(ctx context.Context)
+	TriggerHeartbeat(ctx context.Context) error
+	TriggerMetrics(ctx context.Context) error
+	TriggerSecurity(ctx context.Context) error
+	TriggerInventory(ctx context.Context) error
+	TriggerSmart(ctx context.Context) error
 	TriggerWindowsUpdate(ctx context.Context)
-	ReportPatches(ctx context.Context, scanResult *patch.ScanResult)
+	ReportPatches(ctx context.Context, scanResult *patch.ScanResult) error
 }
 
 // ExecutionResult holds the sanitized output and exit code of a completed action
@@ -56,12 +56,19 @@ var actionHandlers = map[string]actionHandler{
 		return executeForceSecurityScan(ctx, hook)
 	},
 	"FORCE_INVENTORY": func(ctx context.Context, _ *transport.ActionItem, hook SchedTriggerHook) *ExecutionResult {
-		if hook != nil {
-			hook.TriggerInventory(ctx)
+		if hook == nil {
+			return &ExecutionResult{ExitCode: 1, Error: "scheduler integration unavailable"}
+		}
+		if err := hook.TriggerInventory(ctx); err != nil {
+			return &ExecutionResult{
+				ExitCode: 1,
+				Output:   "La recolección de inventario se ejecutó, pero el CRM no confirmó una sincronización completa.",
+				Error:    err.Error(),
+			}
 		}
 		return &ExecutionResult{
 			ExitCode: 0,
-			Output:   "Recolección de inventario de hardware y software disparada y sincronizada con éxito.",
+			Output:   "Recolección de inventario de hardware y software sincronizada y confirmada por el CRM.",
 		}
 	},
 	"FORCE_SMART_CHECK": func(ctx context.Context, _ *transport.ActionItem, hook SchedTriggerHook) *ExecutionResult {
@@ -340,8 +347,24 @@ func executePatchScan(ctx context.Context, hook SchedTriggerHook) *ExecutionResu
 		}
 	}
 
-	if hook != nil {
-		hook.ReportPatches(ctx, res)
+	if hook == nil {
+		return &ExecutionResult{
+			ExitCode: 1,
+			Error:    "scheduler integration unavailable; patch scan was not synchronized",
+		}
+	}
+	if err := hook.ReportPatches(ctx, res); err != nil {
+		return &ExecutionResult{
+			ExitCode: 1,
+			Output:   fmt.Sprintf("Escaneo local completado: %d parches detectados, pero el CRM no confirmó el reporte.", len(res.Patches)),
+			Error:    err.Error(),
+			Result: map[string]interface{}{
+				"patches":        res.Patches,
+				"rebootPending":  res.RebootPending,
+				"rebootReason":   res.RebootReason,
+				"scanDurationMs": res.ScanDurationMs,
+			},
+		}
 	}
 
 	var sb strings.Builder
@@ -935,17 +958,22 @@ $out | ConvertTo-Json -Compress`, safeIsoDatePsSnippet)
 }
 
 func executeForceHeartbeat(ctx context.Context, hook SchedTriggerHook) *ExecutionResult {
-	if hook != nil {
-		hook.TriggerHeartbeat(ctx)
+	if hook == nil {
+		return &ExecutionResult{ExitCode: 1, Error: "scheduler integration unavailable"}
+	}
+	if err := hook.TriggerHeartbeat(ctx); err != nil {
+		return &ExecutionResult{
+			ExitCode: 1,
+			Output:   "Heartbeat recolectado, pero la sincronización no fue confirmada por el CRM.",
+			Error:    err.Error(),
+		}
 	}
 
 	return &ExecutionResult{
 		ExitCode: 0,
-		Output:   "Ciclo de Heartbeat, Seguridad y Telemetría disparado y sincronizado exitosamente con el servidor central.",
+		Output:   "Heartbeat, seguridad y telemetría sincronizados y confirmados por el servidor central.",
 	}
 }
-
-// executeDefenderEnableProtection performs deep reactivation and remediation of Microsoft Defender
 func executeDefenderEnableProtection(ctx context.Context, hook SchedTriggerHook) *ExecutionResult {
 	script := fmt.Sprintf(`$ErrorActionPreference = 'Stop'
 %s
@@ -1145,9 +1173,12 @@ $res | ConvertTo-Json -Compress`, defenderReactivationPsSnippet)
 		}
 	}
 
-	// Disparar hook para que el NOC y dashboard se sincronicen de inmediato
-	if hook != nil {
-		hook.TriggerSecurity(ctx)
+	// Sync the resulting posture and require server acknowledgement.
+	var syncErr error
+	if hook == nil {
+		syncErr = fmt.Errorf("scheduler integration unavailable")
+	} else {
+		syncErr = hook.TriggerSecurity(ctx)
 	}
 
 	finalAV := sec.HasEnabledAV()
@@ -1184,6 +1215,13 @@ $res | ConvertTo-Json -Compress`, defenderReactivationPsSnippet)
 	sb.WriteString(fmt.Sprintf("   • Perfil Público: %s\n", formatStatusBool(sec.FirewallProfiles.Public)))
 
 	exitCode := 0
+	resultError := ""
+	if syncErr != nil {
+		exitCode = 1
+		resultError = syncErr.Error()
+		sb.WriteString("
+⚠️ El estado local fue auditado, pero el CRM no confirmó la sincronización.")
+	}
 	if !finalAV || !sec.FirewallActive {
 		exitCode = 1
 		sb.WriteString("\n🚨 ESTADO CRÍTICO: El equipo presenta protecciones de seguridad desactivadas.")
@@ -1196,6 +1234,7 @@ $res | ConvertTo-Json -Compress`, defenderReactivationPsSnippet)
 	return &ExecutionResult{
 		ExitCode: exitCode,
 		Output:   sb.String(),
+		Error:    resultError,
 		Result: map[string]interface{}{
 			"antivirusEnabled": finalAV,
 			"wasReactivated":   reactivated,
@@ -1208,15 +1247,18 @@ $res | ConvertTo-Json -Compress`, defenderReactivationPsSnippet)
 }
 
 func executeForceMetrics(ctx context.Context, hook SchedTriggerHook) *ExecutionResult {
-	if hook != nil {
-		hook.TriggerMetrics(ctx)
+	var syncErr error
+	if hook == nil {
+		syncErr = fmt.Errorf("scheduler integration unavailable")
+	} else {
+		syncErr = hook.TriggerMetrics(ctx)
 	}
 
 	perf, err := collector.CollectPerformance()
 	if err != nil {
 		return &ExecutionResult{
-			ExitCode: 0,
-			Output:   "Recolección de métricas de rendimiento disparada y sincronizada con éxito.",
+			ExitCode: 1,
+			Error:    fmt.Sprintf("collecting local performance snapshot: %v", err),
 		}
 	}
 	perf.Thermal = collector.CollectThermal()
@@ -1284,15 +1326,18 @@ func executeForceMetrics(ctx context.Context, hook SchedTriggerHook) *ExecutionR
 }
 
 func executeForceSmartCheck(ctx context.Context, hook SchedTriggerHook) *ExecutionResult {
-	if hook != nil {
-		hook.TriggerSmart(ctx)
+	var syncErr error
+	if hook == nil {
+		syncErr = fmt.Errorf("scheduler integration unavailable")
+	} else {
+		syncErr = hook.TriggerSmart(ctx)
 	}
 
 	smart, err := collector.CollectSmart()
 	if err != nil {
 		return &ExecutionResult{
-			ExitCode: 0,
-			Output:   "Comprobación física SMART de discos disparada y sincronizada con éxito.",
+			ExitCode: 1,
+			Error:    fmt.Sprintf("collecting local SMART state: %v", err),
 		}
 	}
 
@@ -1321,6 +1366,13 @@ func executeForceSmartCheck(ctx context.Context, hook SchedTriggerHook) *Executi
 	}
 
 	exitCode := 0
+	resultError := ""
+	if syncErr != nil {
+		exitCode = 1
+		resultError = syncErr.Error()
+		sb.WriteString("
+⚠️ El diagnóstico local se completó, pero el CRM no confirmó la sincronización.")
+	}
 	if smart.OverallStatus == "CRITICAL" || smart.OverallStatus == "WARNING" {
 		exitCode = 1
 		sb.WriteString("\n⚠️ ALERTA: Se detectaron discos con degradación o advertencia física.")
@@ -1331,6 +1383,7 @@ func executeForceSmartCheck(ctx context.Context, hook SchedTriggerHook) *Executi
 	return &ExecutionResult{
 		ExitCode: exitCode,
 		Output:   sb.String(),
+		Error:    resultError,
 		Result: map[string]interface{}{
 			"overallStatus": smart.OverallStatus,
 			"diskCount":     len(smart.Disks),
