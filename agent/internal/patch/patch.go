@@ -125,6 +125,11 @@ try {
             elseif ($cat -eq "SECURITY") { $sev = "IMPORTANT" }
         }
 
+        $reportedSize = [long]$u.MinDownloadSize
+        if ($reportedSize -le 0) {
+            $reportedSize = [long]$u.MaxDownloadSize
+        }
+
         $list += [PSCustomObject]@{
             title = $u.Title
             kbArticleId = $mainKB
@@ -133,7 +138,7 @@ try {
             severity = $sev
             isDownloaded = [bool]$u.IsDownloaded
             requiresReboot = [bool]$u.RebootRequired
-            sizeBytes = [long](if ($u.MinDownloadSize -gt 0) { $u.MinDownloadSize } else { $u.MaxDownloadSize })
+            sizeBytes = $reportedSize
         }
     }
     
