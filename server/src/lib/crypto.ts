@@ -23,6 +23,15 @@ export function generateAgentSecret(): string {
   return crypto.randomBytes(32).toString('hex');
 }
 
+export function generateTamperKey(): string {
+  const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+  let p1 = '';
+  let p2 = '';
+  for (let i = 0; i < 4; i++) p1 += chars[crypto.randomInt(0, chars.length)];
+  for (let i = 0; i < 4; i++) p2 += chars[crypto.randomInt(0, chars.length)];
+  return `NL-${p1}-${p2}`;
+}
+
 export function hashAgentSecret(secret: string): string {
   return crypto.createHash('sha256').update(secret).digest('hex');
 }
