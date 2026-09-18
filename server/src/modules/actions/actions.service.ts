@@ -445,6 +445,121 @@ export class ActionsService {
       },
     });
 
+    if (
+      (status === 'SUCCESS' || status === 'FAILED') &&
+      (action.actionType === ActionType.WINDOWS_UPDATE_INSTALL_KB ||
+        action.actionType === ActionType.WINDOWS_UPDATE_INSTALL_APPROVED)
+    ) {
+      const actionResult = (result || {}) as any;
+      const outcomes = Array.isArray(actionResult.outcomes) ? actionResult.outcomes : [];
+      const now = new Date();
+
+      const fallbackTargets = Array.isArray((action.parameters as any)?.kbArticleIds)
+        ? ((action.parameters as any).kbArticleIds as unknown[])
+            .filter((v): v is string => typeof v === 'string')
+            .map((v) => v.toUpperCase())
+        : [];
+
+      const outcomeIds = new Set<string>();
+
+      for (const outcome of outcomes) {
+        const identifier =
+          typeof outcome?.identifier === 'string' ? outcome.identifier.toUpperCase() : '';
+        if (!identifier) continue;
+
+        outcomeIds.add(identifier);
+        const installed = outcome.installed === true;
+        const patchStatus = installed ? 'INSTALLED' : 'FAILED';
+
+        await db.devicePatch.updateMany({
+          where: {
+            tenantId,
+            deviceId,
+            kbArticleId: identifier,
+          },
+          data: {
+            status: patchStatus,
+            installedAt: installed ? now : null,
+            lastScannedAt: now,
+          },
+        });
+
+        await db.patchHistory.updateMany({
+          where: {
+            tenantId,
+            deviceId,
+            kbArticleId: identifier,
+            status: 'IN_PROGRESS',
+          },
+          data: {
+            status: installed ? 'SUCCESS' : 'FAILED',
+            exitCode:
+              typeof outcome.resultCode === 'number'
+                ? outcome.resultCode
+                : installed
+                  ? 0
+                  : 1,
+            errorDetails: installed
+              ? null
+              : `Windows Update no confirmó la instalación. ResultCode=${outcome.resultCode ?? 'N/A'}, HResult=${outcome.hResult ?? 'N/A'}`,
+          },
+        });
+      }
+
+      for (const identifier of fallbackTargets) {
+        if (outcomeIds.has(identifier)) continue;
+
+        await db.devicePatch.updateMany({
+          where: {
+            tenantId,
+            deviceId,
+            kbArticleId: identifier,
+            status: 'INSTALLING',
+          },
+          data: {
+            status: status === 'SUCCESS' ? 'INSTALLED' : 'FAILED',
+            installedAt: status === 'SUCCESS' ? now : null,
+            lastScannedAt: now,
+          },
+        });
+
+        await db.patchHistory.updateMany({
+          where: {
+            tenantId,
+            deviceId,
+            kbArticleId: identifier,
+            status: 'IN_PROGRESS',
+          },
+          data: {
+            status: status === 'SUCCESS' ? 'SUCCESS' : 'FAILED',
+            exitCode: exitCode ?? (status === 'SUCCESS' ? 0 : 1),
+            errorDetails: status === 'SUCCESS' ? null : error || 'Instalación no confirmada por el agente.',
+          },
+        });
+      }
+
+      if (actionResult.rebootRequired === true) {
+        await db.device.update({
+          where: { id: deviceId },
+          data: { rebootState: 'REBOOT_REQUIRED' },
+        });
+      }
+    }
+
+    if (
+      (status === 'SUCCESS' || status === 'FAILED') &&
+      action.actionType === ActionType.WINDOWS_UPDATE_SCHEDULE_REBOOT &&
+      status === 'FAILED'
+    ) {
+      await db.device.update({
+        where: { id: deviceId },
+        data: {
+          rebootState: 'REBOOT_REQUIRED',
+          rebootScheduledAt: null,
+        },
+      });
+    }
+
     return { action: updated, changed: true };
   }
 }
