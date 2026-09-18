@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/yusufpapurcu/wmi"
 	"golang.org/x/sys/windows/registry"
@@ -61,8 +62,16 @@ func CollectWindowsUpdate() (*WindowsUpdateInfo, error) {
 			})
 		}
 
-		// Sort by InstalledOn descending if available
-		sort.Slice(hotfixes, func(i, j int) bool {
+		// Sort by actual date, not by localized date text.
+		sort.SliceStable(hotfixes, func(i, j int) bool {
+			di, iOK := parseWindowsInstalledOn(hotfixes[i].InstalledOn)
+			dj, jOK := parseWindowsInstalledOn(hotfixes[j].InstalledOn)
+			if iOK && jOK {
+				return di.After(dj)
+			}
+			if iOK != jOK {
+				return iOK
+			}
 			return hotfixes[i].InstalledOn > hotfixes[j].InstalledOn
 		})
 
@@ -79,6 +88,31 @@ func CollectWindowsUpdate() (*WindowsUpdateInfo, error) {
 	}
 
 	return info, nil
+}
+
+func parseWindowsInstalledOn(value string) (time.Time, bool) {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return time.Time{}, false
+	}
+
+	layouts := []string{
+		"1/2/2006",
+		"01/02/2006",
+		"2/1/2006",
+		"02/01/2006",
+		"2006-01-02",
+		"20060102",
+		time.RFC3339,
+	}
+
+	for _, layout := range layouts {
+		if parsed, err := time.Parse(layout, value); err == nil {
+			return parsed, true
+		}
+	}
+
+	return time.Time{}, false
 }
 
 // checkPendingReboot checks standard Windows registry flags for pending reboots
