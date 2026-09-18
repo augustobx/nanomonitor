@@ -1219,6 +1219,7 @@ func executeForceMetrics(ctx context.Context, hook SchedTriggerHook) *ExecutionR
 			Output:   "Recolección de métricas de rendimiento disparada y sincronizada con éxito.",
 		}
 	}
+	perf.Thermal = collector.CollectThermal()
 
 	var sb strings.Builder
 	sb.WriteString("Métricas de Rendimiento en Tiempo Real:\n\n")
@@ -1239,7 +1240,35 @@ func executeForceMetrics(ctx context.Context, hook SchedTriggerHook) *ExecutionR
 	hours := perf.UptimeSecs / 3600
 	mins := (perf.UptimeSecs % 3600) / 60
 	sb.WriteString(fmt.Sprintf("\n⏱️ Tiempo activo del sistema: %d horas, %d minutos\n", hours, mins))
-	sb.WriteString("✅ Métricas sincronizadas con el NOC.")
+
+	sb.WriteString("\n🌡️ Temperaturas:\n")
+	if perf.Thermal != nil && perf.Thermal.Available {
+		if perf.Thermal.CPU != nil {
+			sb.WriteString(fmt.Sprintf("   • CPU %s: %.1f °C [%s]\n",
+				perf.Thermal.CPU.Name,
+				perf.Thermal.CPU.TemperatureC,
+				perf.Thermal.CPU.Status,
+			))
+		} else {
+			sb.WriteString("   • CPU: No disponible\n")
+		}
+		if len(perf.Thermal.GPUs) > 0 {
+			for _, gpu := range perf.Thermal.GPUs {
+				sb.WriteString(fmt.Sprintf("   • GPU %s: %.1f °C [%s]\n",
+					gpu.Name,
+					gpu.TemperatureC,
+					gpu.Status,
+				))
+			}
+		} else {
+			sb.WriteString("   • GPU: No disponible\n")
+		}
+	} else {
+		sb.WriteString("   • CPU: No disponible\n")
+		sb.WriteString("   • GPU: No disponible\n")
+	}
+
+	sb.WriteString("\n✅ Métricas sincronizadas con el NOC.")
 
 	return &ExecutionResult{
 		ExitCode: 0,
@@ -1249,6 +1278,7 @@ func executeForceMetrics(ctx context.Context, hook SchedTriggerHook) *ExecutionR
 			"ramPercent": perf.RAMPercent,
 			"ramUsedMb":  perf.RAMUsedMB,
 			"uptimeSecs": perf.UptimeSecs,
+			"thermal":    perf.Thermal,
 		},
 	}
 }
