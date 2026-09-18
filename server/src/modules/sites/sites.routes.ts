@@ -108,6 +108,30 @@ export const sitesRoutes: FastifyPluginAsync = async (fastify: FastifyInstance) 
         return reply.status(404).send({ statusCode: 404, message: 'Site not found' });
       }
 
+      if (parsed.data.customerId && parsed.data.customerId !== site.customerId) {
+        const targetCustomer = await db.customer.findFirst({
+          where: { id: parsed.data.customerId, tenantId },
+          select: { id: true },
+        });
+        if (!targetCustomer) {
+          return reply.status(404).send({
+            statusCode: 404,
+            message: 'Target customer not found in tenant',
+          });
+        }
+
+        const attachedDevices = await db.device.count({
+          where: { tenantId, siteId: site.id },
+        });
+        if (attachedDevices > 0) {
+          return reply.status(409).send({
+            statusCode: 409,
+            error: 'Conflict',
+            message: 'Cannot move a site to another customer while devices are attached',
+          });
+        }
+      }
+
       const updated = await db.site.update({
         where: { id },
         data: parsed.data,
