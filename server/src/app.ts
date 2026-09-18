@@ -206,7 +206,13 @@ export async function buildApp(): Promise<FastifyInstance> {
       request.log.error(err, 'Failed to fetch live dashboard telemetry');
     }
 
-    devices = devices.map((device) => applyDevicePresence(device));
+    devices = devices.map((device) => {
+      // Never expose the local tamper unlock credential through the broad
+      // dashboard payload. Privileged admins retrieve it explicitly from the
+      // dedicated no-store endpoint.
+      const { tamperKey: _tamperKey, ...safeDevice } = device;
+      return applyDevicePresence(safeDevice);
+    });
 
     return reply
       .header('Cache-Control', 'no-cache, no-store, must-revalidate')
