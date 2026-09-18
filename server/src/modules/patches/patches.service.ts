@@ -97,6 +97,7 @@ export class PatchesService {
             severity: true,
             status: true,
             requiresReboot: true,
+            lastScannedAt: true,
           },
         },
       },
@@ -139,7 +140,12 @@ export class PatchesService {
         missingCriticalOrSecurity: criticalOrSecurity.length,
         rebootState: d.rebootState,
         isCompliant: missing.length === 0,
-        lastScanAt: d.lastSeenAt,
+        lastScanAt:
+          d.patches.reduce(
+            (latest: Date | null, p: any) =>
+              !latest || p.lastScannedAt > latest ? p.lastScannedAt : latest,
+            null
+          ) || d.lastSeenAt,
       };
     });
 
@@ -217,6 +223,27 @@ export class PatchesService {
 
     // Process patches in batch transaction
     await db.$transaction(async (tx: any) => {
+      const reportedIds = report.patches.map((p) => p.kbArticleId);
+
+      // A fresh WUA scan is authoritative for what is currently pending.
+      // Anything that was pending previously but disappeared from the scan is
+      // no longer advertised as missing. We mark it SUPERSEDED rather than
+      // guessing that it was installed externally.
+      await tx.devicePatch.updateMany({
+        where: {
+          tenantId,
+          deviceId,
+          status: { in: ['MISSING', 'PENDING_DOWNLOAD', 'DOWNLOADED'] },
+          ...(reportedIds.length > 0
+            ? { kbArticleId: { notIn: reportedIds } }
+            : {}),
+        },
+        data: {
+          status: 'SUPERSEDED',
+          lastScannedAt: now,
+        },
+      });
+
       for (const p of report.patches) {
         if (p.requiresReboot && p.status !== 'INSTALLED') {
           hasRebootFlag = true;
@@ -258,15 +285,17 @@ export class PatchesService {
         });
       }
 
-      // Update device reboot state
-      if (hasRebootFlag && device.rebootState === 'NONE') {
-        await tx.device.update({
-          where: { id: deviceId },
-          data: {
-            rebootState: 'REBOOT_REQUIRED',
-          },
-        });
-      } else if (!hasRebootFlag && device.rebootState === 'REBOOT_COMPLETED') {
+      // Keep reboot state aligned with the fresh Windows report.
+      if (hasRebootFlag) {
+        if (device.rebootState !== 'REBOOT_SCHEDULED') {
+          await tx.device.update({
+            where: { id: deviceId },
+            data: {
+              rebootState: 'REBOOT_REQUIRED',
+            },
+          });
+        }
+      } else if (device.rebootState !== 'NONE') {
         await tx.device.update({
           where: { id: deviceId },
           data: {
