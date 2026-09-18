@@ -519,7 +519,7 @@ export class PatchesService {
     let targetKBs: string[] = [];
 
     if (input.mode === 'SELECTED_KBS') {
-      targetKBs = input.kbArticleIds;
+      targetKBs = input.kbArticleIds.map((id) => id.trim().toUpperCase());
       if (targetKBs.length === 0) {
         throw new Error('Debes seleccionar al menos un artículo KB para instalar.');
       }
@@ -564,6 +564,8 @@ export class PatchesService {
       targetKBs = patches.map((p: any) => p.kbArticleId);
     }
 
+    targetKBs = [...new Set(targetKBs.map((id) => id.trim().toUpperCase()).filter(Boolean))];
+
     if (targetKBs.length === 0) {
       return {
         success: true,
@@ -572,57 +574,123 @@ export class PatchesService {
       };
     }
 
-    // Mark target patches as INSTALLING in database
-    await db.devicePatch.updateMany({
+    const eligible = await db.devicePatch.findMany({
       where: {
+        tenantId,
         deviceId,
         kbArticleId: { in: targetKBs },
+        status: { in: ['MISSING', 'PENDING_DOWNLOAD', 'DOWNLOADED'] },
       },
-      data: {
-        status: 'INSTALLING',
+      select: {
+        kbArticleId: true,
+        status: true,
       },
     });
 
-    // Enqueue RemoteAction
-    const action = await ActionsService.createAction({
-      tenantId,
-      customerId: device.customerId,
-      deviceId: device.id,
-      actionType: 'WINDOWS_UPDATE_INSTALL_KB',
-      parameters: {
-        kbArticleIds: targetKBs,
-        allowReboot: input.allowReboot,
-      },
-      requestedById: requestedBy.id,
-      requestedBy: requestedBy.email,
-      source: 'DASHBOARD_PATCH_MANAGER',
-      expiresInMinutes: 60, // Patch installations can take longer
-    });
-
-    // Record initial history entries
-    for (const kb of targetKBs) {
-      await db.patchHistory.create({
-        data: {
-          tenantId,
-          deviceId,
-          kbArticleId: kb,
-          title: `Instalación solicitada de ${kb}`,
-          actionType: 'INSTALL',
-          status: 'IN_PROGRESS',
-          source: requestedBy.id ? 'MANUAL_TECHNICIAN' : 'AUTO_POLICY',
-          appliedBy: requestedBy.email,
-        },
-      });
+    const eligibleMap = new Map(eligible.map((p) => [p.kbArticleId.toUpperCase(), p.status]));
+    const invalidTargets = targetKBs.filter((id) => !eligibleMap.has(id));
+    if (invalidTargets.length > 0) {
+      throw new Error(
+        `Los siguientes parches ya no están disponibles para instalación: ${invalidTargets.join(', ')}. Ejecutá un nuevo escaneo.`
+      );
     }
 
-    return {
-      success: true,
-      actionId: action.id,
-      queuedKBs: targetKBs,
-      status: action.status,
-    };
+    const prepared = await db.$transaction(async (tx: any) => {
+      const historyIds: string[] = [];
+
+      for (const kb of targetKBs) {
+        const previousStatus = eligibleMap.get(kb)!;
+        const changed = await tx.devicePatch.updateMany({
+          where: {
+            tenantId,
+            deviceId,
+            kbArticleId: kb,
+            status: previousStatus,
+          },
+          data: { status: 'INSTALLING' },
+        });
+
+        if (changed.count !== 1) {
+          throw new Error(
+            `El estado de ${kb} cambió mientras se preparaba la instalación. Volvé a escanear antes de reintentar.`
+          );
+        }
+
+        const history = await tx.patchHistory.create({
+          data: {
+            tenantId,
+            deviceId,
+            kbArticleId: kb,
+            title: `Instalación solicitada de ${kb}`,
+            actionType: 'INSTALL',
+            status: 'IN_PROGRESS',
+            source: requestedBy.id ? 'MANUAL_TECHNICIAN' : 'AUTO_POLICY',
+            appliedBy: requestedBy.email,
+          },
+          select: { id: true },
+        });
+        historyIds.push(history.id);
+      }
+
+      return {
+        previousStatuses: Object.fromEntries(eligibleMap),
+        historyIds,
+      };
+    });
+
+    try {
+      const action = await ActionsService.createAction({
+        tenantId,
+        customerId: device.customerId,
+        deviceId: device.id,
+        actionType: 'WINDOWS_UPDATE_INSTALL_KB',
+        parameters: {
+          kbArticleIds: targetKBs,
+          allowReboot: input.allowReboot,
+        },
+        requestedById: requestedBy.id,
+        requestedBy: requestedBy.email,
+        source: 'DASHBOARD_PATCH_MANAGER',
+        expiresInMinutes: 60,
+      });
+
+      return {
+        success: true,
+        actionId: action.id,
+        queuedKBs: targetKBs,
+        status: action.status,
+      };
+    } catch (err) {
+      // No action was successfully created, therefore no endpoint execution can
+      // legitimately be in progress. Restore the exact pre-request state.
+      await db.$transaction(async (tx: any) => {
+        for (const kb of targetKBs) {
+          await tx.devicePatch.updateMany({
+            where: {
+              tenantId,
+              deviceId,
+              kbArticleId: kb,
+              status: 'INSTALLING',
+            },
+            data: {
+              status: prepared.previousStatuses[kb] as any,
+            },
+          });
+        }
+
+        if (prepared.historyIds.length > 0) {
+          await tx.patchHistory.deleteMany({
+            where: { id: { in: prepared.historyIds } },
+          });
+        }
+      });
+      throw err;
+    }
   }
 
+  /**
+   * Schedule a Windows reboot only when Windows actually reports one pending.
+   */
   /**
    * Programa un reinicio seguro para aplicar parches
    */
@@ -640,23 +708,24 @@ export class PatchesService {
     if (!device) {
       throw new Error('Dispositivo no encontrado.');
     }
+    if (device.rebootState !== 'REBOOT_REQUIRED') {
+      throw new Error('Windows no reporta un reinicio pendiente para este equipo.');
+    }
+
+    const existing = await db.remoteAction.findFirst({
+      where: {
+        tenantId,
+        deviceId,
+        actionType: 'WINDOWS_UPDATE_SCHEDULE_REBOOT',
+        status: { in: ['PENDING', 'QUEUED', 'DELIVERED', 'RUNNING'] as any },
+      },
+      select: { id: true },
+    });
+    if (existing) {
+      throw new Error('Ya existe un reinicio programado o en ejecución para este equipo.');
+    }
 
     const scheduledAt = new Date(Date.now() + delayMinutes * 60 * 1000);
-
-    const action = await ActionsService.createAction({
-      tenantId,
-      customerId: device.customerId,
-      deviceId: device.id,
-      actionType: 'WINDOWS_UPDATE_SCHEDULE_REBOOT',
-      parameters: {
-        delaySeconds: delayMinutes * 60,
-        message,
-      },
-      requestedById: requestedBy.id,
-      requestedBy: requestedBy.email,
-      source: 'PATCH_MANAGER_REBOOT',
-      expiresInMinutes: 30,
-    });
 
     await db.device.update({
       where: { id: deviceId },
@@ -666,10 +735,41 @@ export class PatchesService {
       },
     });
 
-    return {
-      success: true,
-      actionId: action.id,
-      scheduledAt,
-    };
+    try {
+      const action = await ActionsService.createAction({
+        tenantId,
+        customerId: device.customerId,
+        deviceId: device.id,
+        actionType: 'WINDOWS_UPDATE_SCHEDULE_REBOOT',
+        parameters: {
+          delaySeconds: delayMinutes * 60,
+          message,
+        },
+        requestedById: requestedBy.id,
+        requestedBy: requestedBy.email,
+        source: 'PATCH_MANAGER_REBOOT',
+        expiresInMinutes: 30,
+      });
+
+      return {
+        success: true,
+        actionId: action.id,
+        scheduledAt,
+      };
+    } catch (err) {
+      await db.device.updateMany({
+        where: {
+          id: deviceId,
+          tenantId,
+          rebootState: 'REBOOT_SCHEDULED',
+          rebootScheduledAt: scheduledAt,
+        },
+        data: {
+          rebootState: 'REBOOT_REQUIRED',
+          rebootScheduledAt: null,
+        },
+      });
+      throw err;
+    }
   }
 }
