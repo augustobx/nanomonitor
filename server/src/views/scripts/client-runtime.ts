@@ -3357,6 +3357,47 @@ export function getClientRuntimeScript(): string {
         prompt('Copiá el comando:', cmd);
       });
     }
+    async function copyCustomerPs1FromCard(customerId) {
+      try {
+        if (!customerId) {
+          throw new Error('Seleccioná un cliente antes de copiar el script.');
+        }
+
+        const tokenStr = await fetchCustomerEnrollmentToken(
+          customerId,
+          currentWizardSiteId || null
+        );
+
+        const res = await fetch('/install.ps1', {
+          method: 'GET',
+          cache: 'no-store',
+          headers: {
+            'Cache-Control': 'no-cache',
+            'Pragma': 'no-cache'
+          }
+        });
+
+        if (!res.ok) {
+          throw new Error('No se pudo descargar install.ps1.');
+        }
+
+        const script = await res.text();
+        const safeToken = tokenStr.replace(/'/g, "''");
+        const bootstrap =
+          "$env:NANOMONITOR_TOKEN='" + safeToken + "';" + "\\r\\n" +
+          "try {" + "\\r\\n" +
+          script + "\\r\\n" +
+          "} finally {" + "\\r\\n" +
+          "  Remove-Item Env:NANOMONITOR_TOKEN -ErrorAction SilentlyContinue" + "\\r\\n" +
+          "}";
+
+        await navigator.clipboard.writeText(bootstrap);
+        showToast('✅ Script install.ps1 seguro copiado al portapapeles');
+      } catch (err) {
+        const message = err && err.message ? err.message : 'No se pudo copiar install.ps1';
+        showToast(message, 'error');
+      }
+    }
 
     // ==========================================
     // PLATFORM MODULE
@@ -3857,6 +3898,7 @@ export function getClientRuntimeScript(): string {
     window.handleWizardSiteChange = handleWizardSiteChange;
     window.goToWizardStep = goToWizardStep;
     window.copyWizardCmd = copyWizardCmd;
+    window.copyCustomerPs1FromCard = copyCustomerPs1FromCard;
     window.switchSettingsSubTab = switchSettingsSubTab;
     window.renderPlatformView = renderPlatformView;
     window.fetchAndRenderSettingsRules = fetchAndRenderSettingsRules;
