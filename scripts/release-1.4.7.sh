@@ -107,7 +107,8 @@ EOF
 
 echo "=== 5/7 DEPLOY SERVER + SAFE ADDITIVE SCHEMA SYNC ==="
 # Container startup runs prisma db push before starting the API.
-docker compose up -d nanomonitor-server
+# Always recreate the API after a fresh image build so production cannot keep the previous image.
+docker compose up -d --force-recreate nanomonitor-server
 
 healthy=0
 for i in $(seq 1 30); do
