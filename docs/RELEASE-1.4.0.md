@@ -26,6 +26,8 @@ NanoMonitor 1.4.0 consolidates the hardened RMM/NOC agent produced during phases
   - WARNING: 80–89.9 °C
   - CRITICAL: 90 °C or above
 - Device performance view shows available CPU/GPU sensors and surfaces warning/critical thermal state.
+- A real sensor reading at or above 90 °C opens a critical NanoMonitor alert; unavailable sensors never trigger one.
+- The unified Windows installer executes an agent runtime self-check before registering the Windows service.
 
 ## Production build
 
