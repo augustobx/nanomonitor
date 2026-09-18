@@ -124,35 +124,23 @@ export const customersRoutes: FastifyPluginAsync = async (fastify: FastifyInstan
 
     const customer = await db.customer.findFirst({
       where: { id, tenantId },
-      include: {
-        enrollmentTokens: {
-          where: { expiresAt: { gt: new Date() } },
-          orderBy: { createdAt: 'desc' },
-          take: 1,
-        },
-      },
+      select: { id: true },
     });
 
     if (!customer) {
       return reply.status(404).send({ statusCode: 404, message: 'Customer not found' });
     }
 
-    let token: any = customer.enrollmentTokens[0];
-    if (!token) {
-      const cleanCode = customer.code.replace(/[^A-Z0-9]/gi, '').toUpperCase();
-      const tokenString = `NL-${cleanCode}-${generateRandomString(8).toUpperCase()}`;
-      const expiresAt = new Date(Date.now() + 365 * 24 * 3600 * 1000);
-      token = await db.enrollmentToken.create({
-        data: {
-          tenantId,
-          customerId: customer.id,
-          token: tokenString,
-          maxUses: 500,
-          expiresAt,
-        },
-        select: { id: true, token: true, expiresAt: true },
-      });
-    }
+    const token = await db.enrollmentToken.create({
+      data: {
+        tenantId,
+        customerId: customer.id,
+        token: generateEnrollmentToken(),
+        maxUses: 1,
+        expiresAt: new Date(Date.now() + 24 * 60 * 60 * 1000),
+      },
+      select: { id: true, token: true, expiresAt: true, maxUses: true },
+    });
 
     return reply.send({ statusCode: 200, data: token });
     }
