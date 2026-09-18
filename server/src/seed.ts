@@ -9,67 +9,67 @@ export async function seedDatabase() {
     return;
   }
 
-  logger.info('Initializing default NanoLabs tenant and SuperAdmin user...');
-
-  // 1. Create Default Tenant
-  const tenant = await db.tenant.create({
-    data: {
-      name: 'NanoLabs',
-      slug: 'nanolabs',
-      status: 'ACTIVE',
-      plan: 'ENTERPRISE',
-      maxDevices: 1000,
-      contactEmail: 'admin@nanolabs.com.ar',
-    },
-  });
-
-  // 2. Create Default Customer
-  const customer = await db.customer.create({
-    data: {
-      tenantId: tenant.id,
-      name: 'NanoLabs Infraestructura Interna',
-      code: 'NANO',
-      contactName: 'NanoLabs Admin',
-      contactEmail: 'admin@nanolabs.com.ar',
-      status: 'ACTIVE',
-    },
-  });
-
-  // 3. Create Default Site
-  const site = await db.site.create({
-    data: {
-      tenantId: tenant.id,
-      customerId: customer.id,
-      name: 'Oficina Central / Datacenter',
-    },
-  });
-
-  // 4. Create SuperAdmin User
   const initialPassword = process.env.ADMIN_INITIAL_PASSWORD?.trim();
   if (!initialPassword || initialPassword.length < 16) {
     throw new Error(
       'ADMIN_INITIAL_PASSWORD must be explicitly configured with at least 16 characters before initializing an empty production database.'
     );
   }
+
+  logger.info('Initializing default NanoLabs tenant and SuperAdmin user...');
   const passwordHash = await hashPassword(initialPassword);
 
-  const admin = await db.user.create({
-    data: {
-      tenantId: tenant.id,
-      email: 'admin@nanolabs.com.ar',
-      name: 'Augusto / NanoLabs Admin',
-      passwordHash,
-      role: 'SUPER_ADMIN',
-      status: 'ACTIVE',
-    },
+  const seeded = await db.$transaction(async (tx) => {
+    const tenant = await tx.tenant.create({
+      data: {
+        name: 'NanoLabs',
+        slug: 'nanolabs',
+        status: 'ACTIVE',
+        plan: 'ENTERPRISE',
+        maxDevices: 1000,
+        contactEmail: 'admin@nanolabs.com.ar',
+      },
+    });
+
+    const customer = await tx.customer.create({
+      data: {
+        tenantId: tenant.id,
+        name: 'NanoLabs Infraestructura Interna',
+        code: 'NANO',
+        contactName: 'NanoLabs Admin',
+        contactEmail: 'admin@nanolabs.com.ar',
+        status: 'ACTIVE',
+      },
+    });
+
+    const site = await tx.site.create({
+      data: {
+        tenantId: tenant.id,
+        customerId: customer.id,
+        name: 'Oficina Central / Datacenter',
+      },
+    });
+
+    const admin = await tx.user.create({
+      data: {
+        tenantId: tenant.id,
+        email: 'admin@nanolabs.com.ar',
+        name: 'Augusto / NanoLabs Admin',
+        passwordHash,
+        role: 'SUPER_ADMIN',
+        status: 'ACTIVE',
+      },
+    });
+
+    return { tenant, customer, site, admin };
   });
 
   logger.info(
     {
-      tenantId: tenant.id,
-      adminEmail: admin.email,
-      customerId: customer.id,
-      siteId: site.id,
+      tenantId: seeded.tenant.id,
+      adminEmail: seeded.admin.email,
+      customerId: seeded.customer.id,
+      siteId: seeded.site.id,
     },
     '✅ Default seed completed successfully'
   );
