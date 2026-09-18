@@ -1,6 +1,6 @@
 {
   "name": "@nanolabs/control-center-server",
-  "version": "1.3.0",
+  "version": "1.4.0",
   "description": "NanoLabs Control Center - Central API & Telemetry Backend",
   "main": "dist/server.js",
   "scripts": {
@@ -20,7 +20,13 @@
     "prisma:studio": "prisma studio",
     "test": "vitest run"
   },
-  "keywords": ["nanolabs", "rmm", "monitoring", "fastify", "prisma"],
+  "keywords": [
+    "nanolabs",
+    "rmm",
+    "monitoring",
+    "fastify",
+    "prisma"
+  ],
   "author": "NanoLabs",
   "license": "UNLICENSED",
   "dependencies": {
