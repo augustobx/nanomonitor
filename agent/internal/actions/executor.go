@@ -147,8 +147,7 @@ func ActionContractHash() string {
 	statuses := append([]string(nil), agentReportableActionStatuses...)
 	sort.Strings(statuses)
 
-	services := append([]string(nil), AllowedServicesWhitelist...)
-	sort.Strings(services)
+	services := canonicalAllowedServices()
 
 	params := append([]string(nil), actionParameterContracts...)
 	sort.Strings(params)
@@ -162,6 +161,25 @@ func ActionContractHash() string {
 
 	sum := sha256.Sum256([]byte(signature))
 	return fmt.Sprintf("%x", sum[:])
+}
+
+func canonicalAllowedServices() []string {
+	seen := make(map[string]struct{}, len(AllowedServicesWhitelist))
+	services := make([]string, 0, len(AllowedServicesWhitelist))
+
+	for _, canonical := range canonicalAllowedServices() {
+		if canonical == "" {
+			continue
+		}
+		if _, exists := seen[canonical]; exists {
+			continue
+		}
+		seen[canonical] = struct{}{}
+		services = append(services, canonical)
+	}
+
+	sort.Strings(services)
+	return services
 }
 
 // ExecuteAction executes only actions present in the authoritative handler map.
