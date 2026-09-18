@@ -214,32 +214,54 @@ export const enrollmentRoutes: FastifyPluginAsync = async (fastify: FastifyInsta
       });
     }
 
-    // Check device count limit for tenant
-    const currentDeviceCount = await db.device.count({
-      where: { tenantId: tokenRecord.tenantId },
-    });
-
-    if (currentDeviceCount >= tokenRecord.tenant.maxDevices) {
-      return reply.status(403).send({
-        statusCode: 403,
-        error: 'Forbidden',
-        message: `Tenant device limit (${tokenRecord.tenant.maxDevices}) reached. Upgrade plan to enroll more devices.`,
-      });
-    }
-
-    // Check if an existing device with same serial number or hardware ID exists for this customer
+    // Resolve the physical endpoint deterministically. MachineGUID is the
+    // primary identity; serial is the secondary fallback. Hostname is used
+    // only when the endpoint cannot provide a stable hardware identity.
     let device = null;
-    if (hardwareId || osInfo?.serialNumber) {
+
+    if (hardwareId && hardwareId.trim()) {
       device = await db.device.findFirst({
         where: {
           tenantId: tokenRecord.tenantId,
           customerId: tokenRecord.customerId,
-          OR: [
-            ...(osInfo?.serialNumber ? [{ serialNumber: osInfo.serialNumber }] : []),
-            { hostname: hostname },
-          ],
+          hardwareId: hardwareId.trim(),
         },
       });
+    }
+
+    if (!device && osInfo?.serialNumber && String(osInfo.serialNumber).trim()) {
+      device = await db.device.findFirst({
+        where: {
+          tenantId: tokenRecord.tenantId,
+          customerId: tokenRecord.customerId,
+          serialNumber: String(osInfo.serialNumber).trim(),
+        },
+      });
+    }
+
+    if (!device && !hardwareId && !osInfo?.serialNumber) {
+      device = await db.device.findFirst({
+        where: {
+          tenantId: tokenRecord.tenantId,
+          customerId: tokenRecord.customerId,
+          hostname,
+        },
+      });
+    }
+
+    // Device quota applies only when this request would create a new endpoint.
+    if (!device) {
+      const currentDeviceCount = await db.device.count({
+        where: { tenantId: tokenRecord.tenantId },
+      });
+
+      if (currentDeviceCount >= tokenRecord.tenant.maxDevices) {
+        return reply.status(403).send({
+          statusCode: 403,
+          error: 'Forbidden',
+          message: `Tenant device limit (${tokenRecord.tenant.maxDevices}) reached. Upgrade plan to enroll more devices.`,
+        });
+      }
     }
 
     if (!device) {
@@ -249,6 +271,7 @@ export const enrollmentRoutes: FastifyPluginAsync = async (fastify: FastifyInsta
           customerId: tokenRecord.customerId,
           siteId: tokenRecord.siteId,
           hostname,
+          hardwareId: hardwareId?.trim() || null,
           serialNumber: osInfo?.serialNumber || null,
           osEdition: osInfo?.caption || null,
           osVersion: osInfo?.version || null,
@@ -266,6 +289,7 @@ export const enrollmentRoutes: FastifyPluginAsync = async (fastify: FastifyInsta
         where: { id: device.id },
         data: {
           hostname,
+          hardwareId: hardwareId?.trim() || device.hardwareId,
           serialNumber: osInfo?.serialNumber || device.serialNumber,
           osEdition: osInfo?.caption || device.osEdition,
           osVersion: osInfo?.version || device.osVersion,
