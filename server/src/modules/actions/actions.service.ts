@@ -469,10 +469,19 @@ export class ActionsService {
       ActionStatus.EXPIRED,
       ActionStatus.CANCELLED,
     ]);
-    let recoveringExecutionLease = false;
+
+    // A stale RUNNING action may have been provisionally force-closed by the
+    // server. A later durable terminal report from the agent is authoritative,
+    // even when both provisional and real states are FAILED. Compute this
+    // before the ordinary same-status idempotency shortcut.
+    const metadata = (action.auditMetadata || {}) as any;
+    const recoveringExecutionLease =
+      action.status === ActionStatus.FAILED &&
+      metadata.executionLeaseExpired === true &&
+      (status === 'SUCCESS' || status === 'FAILED');
 
     if (terminalStatuses.has(action.status)) {
-      if (action.status === (status as ActionStatus)) {
+      if (action.status === (status as ActionStatus) && !recoveringExecutionLease) {
         return { action, changed: false };
       }
 
@@ -482,15 +491,6 @@ export class ActionsService {
       if (action.status === ActionStatus.EXPIRED && status === 'FAILED') {
         return { action, changed: false };
       }
-
-      // If a RUNNING lease was force-closed after two hours, a durable terminal
-      // result arriving later is authoritative and may repair that provisional
-      // FAILED state.
-      const metadata = (action.auditMetadata || {}) as any;
-      recoveringExecutionLease =
-        action.status === ActionStatus.FAILED &&
-        metadata.executionLeaseExpired === true &&
-        (status === 'SUCCESS' || status === 'FAILED');
 
       if (!recoveringExecutionLease) {
         throw new Error(`Action "${actionId}" is already terminal with status ${action.status}`);
