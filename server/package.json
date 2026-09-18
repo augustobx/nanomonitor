@@ -1,6 +1,6 @@
 {
   "name": "@nanolabs/control-center-server",
-  "version": "1.4.4",
+  "version": "1.4.5",
   "description": "NanoLabs Control Center - Central API & Telemetry Backend",
   "main": "dist/server.js",
   "scripts": {
