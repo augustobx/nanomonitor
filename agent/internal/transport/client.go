@@ -14,6 +14,7 @@ import (
 	"math"
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/nanolabs/nanomonitor/agent/internal/collector"
@@ -252,11 +253,20 @@ func (c *Client) signRequest(req *http.Request, body []byte) error {
 		return fmt.Errorf("generating nonce: %w", err)
 	}
 
-	// HMAC = SHA256(timestamp + "\n" + SHA256(body), agentSecret)
+	// HMAC v2 binds authentication to method, exact request target, timestamp,
+	// nonce and body. A captured signature cannot be moved to another endpoint
+	// or replayed with a replacement nonce.
 	bodyHash := sha256.Sum256(body)
 	bodyHashHex := hex.EncodeToString(bodyHash[:])
 
-	message := timestamp + "\n" + bodyHashHex
+	message := strings.Join([]string{
+		"v2",
+		req.Method,
+		req.URL.RequestURI(),
+		timestamp,
+		nonce,
+		bodyHashHex,
+	}, "\n")
 	mac := hmac.New(sha256.New, []byte(c.agentSecret))
 	mac.Write([]byte(message))
 	signature := hex.EncodeToString(mac.Sum(nil))
@@ -264,6 +274,7 @@ func (c *Client) signRequest(req *http.Request, body []byte) error {
 	req.Header.Set("Authorization", "NanoAgent "+c.agentID+"."+signature)
 	req.Header.Set("X-Nano-Timestamp", timestamp)
 	req.Header.Set("X-Nano-Nonce", nonce)
+	req.Header.Set("X-Nano-Signature-Version", "2")
 
 	return nil
 }
