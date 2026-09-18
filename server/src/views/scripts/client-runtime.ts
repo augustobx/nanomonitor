@@ -809,6 +809,12 @@ export function getClientRuntimeScript(): string {
       const custCode = a.customer ? a.customer.code : 'NL';
       const firstSeen = a.firstSeenAt ? new Date(a.firstSeenAt).toLocaleString('es-AR') : '-';
       const lastSeen = a.lastSeenAt ? new Date(a.lastSeenAt).toLocaleString('es-AR') : '-';
+      const isCrashAlert = String(a.source || '').startsWith('engine:APP_CRASH') || (a.title || '').toLowerCase().includes('caídas repetidas');
+      const firstSeenLabel = isCrashAlert ? 'Alerta abierta:' : 'Primera Ocurrencia:';
+      const lastSeenLabel = isCrashAlert ? 'Último Crash:' : 'Última Detección:';
+      const occurrenceSuffix = isCrashAlert
+        ? ' · ' + (a.occurrences || 1) + ' eventos reales / 24 h'
+        : ' (x' + (a.occurrences || 1) + ')';
 
       // Diagnostic Suggestion Generation
       let suggestion = 'Inspeccionar métricas y procesos activos en la ficha técnica del equipo.';
@@ -825,19 +831,21 @@ export function getClientRuntimeScript(): string {
         suggestion = 'Comprobar conectividad de red del equipo, estado de alimentación o servicio NanoMonitor.';
       } else if (titleLower.includes('reboot') || titleLower.includes('reinicio')) {
         suggestion = 'Programar ventana de reinicio fuera de horario productivo para aplicar actualizaciones pendientes.';
+      } else if (isCrashAlert) {
+        suggestion = 'Revisar la aplicación, el módulo con fallas y el código de excepción indicados arriba. Correlacionar con software/versión instalada antes de reinstalar, actualizar o escalar el incidente.';
       }
 
       body.innerHTML = 
         '<div style="display: grid; grid-template-columns: 1fr 1fr; gap: 14px; background: var(--bg-canvas); border: 1px solid var(--border-subtle); border-radius: var(--radius-md); padding: 14px;">' +
           '<div><span style="color: var(--text-muted); font-size: 11px;">Equipo Afectado:</span><div style="font-weight: 700; color: #fff; font-size: 14px;" class="code-font">' + host + '</div></div>' +
           '<div><span style="color: var(--text-muted); font-size: 11px;">Cliente:</span><div style="font-weight: 600; color: #fff;">' + custName + ' (' + custCode + ')</div></div>' +
-          '<div><span style="color: var(--text-muted); font-size: 11px;">Primera Ocurrencia:</span><div class="code-font" style="font-size: 11px;">' + firstSeen + '</div></div>' +
-          '<div><span style="color: var(--text-muted); font-size: 11px;">Última Detección:</span><div class="code-font" style="font-size: 11px; color: #38bdf8;">' + lastSeen + ' (x' + (a.occurrences || 1) + ')</div></div>' +
+          '<div><span style="color: var(--text-muted); font-size: 11px;">' + firstSeenLabel + '</span><div class="code-font" style="font-size: 11px;">' + firstSeen + '</div></div>' +
+          '<div><span style="color: var(--text-muted); font-size: 11px;">' + lastSeenLabel + '</span><div class="code-font" style="font-size: 11px; color: #38bdf8;">' + lastSeen + occurrenceSuffix + '</div></div>' +
         '</div>' +
 
         '<div class="form-group">' +
           '<label class="form-label">Descripción del Incidente</label>' +
-          '<div style="background: var(--bg-surface-elevated); border: 1px solid var(--border-subtle); border-radius: var(--radius-md); padding: 10px 14px; font-size: 13px; color: #fff;">' +
+          '<div style="background: var(--bg-surface-elevated); border: 1px solid var(--border-subtle); border-radius: var(--radius-md); padding: 10px 14px; font-size: 13px; color: #fff; white-space: pre-line; line-height: 1.55;">' +
             (a.description || 'Sin descripción técnica adicional') +
           '</div>' +
         '</div>' +

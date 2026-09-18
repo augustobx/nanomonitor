@@ -199,6 +199,43 @@ func parseEventsXML(rawBytes []byte) ([]xmlEvent, error) {
 	return root.Events, nil
 }
 
+func firstEventDataValue(data map[string]interface{}, keys ...string) string {
+	for _, key := range keys {
+		if value, ok := data[key]; ok {
+			text := strings.TrimSpace(fmt.Sprintf("%v", value))
+			if text != "" && text != "<nil>" {
+				return text
+			}
+		}
+	}
+	return ""
+}
+
+func normalizeCrashEventData(eventID int, data map[string]interface{}) {
+	if eventID != 1000 && eventID != 1001 && eventID != 1002 {
+		return
+	}
+
+	canonical := map[string]string{
+		"appName":               firstEventDataValue(data, "AppName", "ApplicationName", "FaultingApplicationName", "param1", "P1"),
+		"appVersion":            firstEventDataValue(data, "AppVersion", "ApplicationVersion", "FaultingApplicationVersion", "param2", "P2"),
+		"faultingModule":         firstEventDataValue(data, "ModuleName", "FaultingModuleName", "FaultingModule", "param4", "P4"),
+		"faultingModuleVersion":  firstEventDataValue(data, "ModuleVersion", "FaultingModuleVersion", "param5", "P5"),
+		"exceptionCode":          firstEventDataValue(data, "ExceptionCode", "ExceptionCodeString", "param7", "P7"),
+		"faultOffset":            firstEventDataValue(data, "FaultingOffset", "FaultOffset", "param8", "P8"),
+		"processId":              firstEventDataValue(data, "ProcessId", "FaultingProcessId", "param9"),
+		"appPath":                firstEventDataValue(data, "AppPath", "ApplicationPath", "FaultingApplicationPath", "param11"),
+		"modulePath":             firstEventDataValue(data, "ModulePath", "FaultingModulePath", "param12"),
+		"reportId":               firstEventDataValue(data, "ReportId", "ReportIdentifier", "param13"),
+	}
+
+	for key, value := range canonical {
+		if value != "" {
+			data[key] = value
+		}
+	}
+}
+
 // classifyEvent maps a raw Windows Event into a structured DeviceEventPayload
 func classifyEvent(e xmlEvent) *DeviceEventPayload {
 	eventID := e.System.EventID.ID
@@ -227,6 +264,9 @@ func classifyEvent(e xmlEvent) *DeviceEventPayload {
 		}
 		dataMap[name] = strings.TrimSpace(d.Value)
 	}
+
+	normalizeCrashEventData(eventID, dataMap)
+	dataMap["eventRecordId"] = e.System.EventRecordID.ID
 
 	category := "System"
 	severity := "INFO"
@@ -278,14 +318,26 @@ func classifyEvent(e xmlEvent) *DeviceEventPayload {
 	case 1000: // Application Error
 		category = "AppCrash"
 		severity = "HIGH"
-		appName := fmt.Sprintf("%v", dataMap["param1"])
-		appVer := fmt.Sprintf("%v", dataMap["param2"])
-		if appName != "" && appName != "<nil>" {
+		appName := firstEventDataValue(dataMap, "appName", "param1")
+		appVer := firstEventDataValue(dataMap, "appVersion", "param2")
+		faultingModule := firstEventDataValue(dataMap, "faultingModule", "ModuleName", "param4")
+		exceptionCode := firstEventDataValue(dataMap, "exceptionCode", "ExceptionCode", "param7")
+		if appName != "" {
 			title = fmt.Sprintf("Cierre inesperado: %s", appName)
-			description = fmt.Sprintf("La aplicación con fallas %s (versión %s) se cerró abruptamente.", appName, appVer)
+			description = fmt.Sprintf("La aplicación %s", appName)
+			if appVer != "" {
+				description += fmt.Sprintf(" (versión %s)", appVer)
+			}
+			description += " se cerró abruptamente."
+			if faultingModule != "" {
+				description += fmt.Sprintf(" Módulo con fallas: %s.", faultingModule)
+			}
+			if exceptionCode != "" {
+				description += fmt.Sprintf(" Código de excepción: %s.", exceptionCode)
+			}
 		} else {
 			title = "Cierre inesperado de aplicación (Crash)"
-			description = "Una aplicación crítica terminó de manera inesperada."
+			description = "Una aplicación terminó de manera inesperada."
 		}
 	case 1002: // Application Hang
 		category = "AppCrash"
@@ -324,10 +376,20 @@ func classifyEvent(e xmlEvent) *DeviceEventPayload {
 		}
 	}
 
-	// Generate deduplication key
-	// Format: EventViewer:{Channel}:{Category}:{EventID}:{ExtraKey}
+	// Generate deduplication key. Application crashes use a stable crash signature
+	// so repeated failures of the same executable/module can be correlated correctly.
 	extraKey := ""
-	if dataMap["param1"] != nil && dataMap["param1"] != "" {
+	if category == "AppCrash" {
+		appName := firstEventDataValue(dataMap, "appName", "param1", "P1")
+		faultingModule := firstEventDataValue(dataMap, "faultingModule", "ModuleName", "param4", "P4")
+		exceptionCode := firstEventDataValue(dataMap, "exceptionCode", "ExceptionCode", "param7", "P7")
+		parts := []string{appName, faultingModule, exceptionCode}
+		for _, part := range parts {
+			if part != "" {
+				extraKey += ":" + strings.ToLower(strings.TrimSpace(part))
+			}
+		}
+	} else if dataMap["param1"] != nil && dataMap["param1"] != "" {
 		extraKey = fmt.Sprintf(":%v", dataMap["param1"])
 	}
 	dedupKey := fmt.Sprintf("EventViewer:%s:%s:%d%s", channel, category, eventID, extraKey)

@@ -12,6 +12,96 @@ export interface EvaluationResult {
   alertsResolved: number;
 }
 
+interface CrashEvidence {
+  appName: string;
+  appVersion: string;
+  faultingModule: string;
+  faultingModuleVersion: string;
+  exceptionCode: string;
+  faultOffset: string;
+  processId: string;
+  appPath: string;
+  modulePath: string;
+}
+
+function firstText(raw: any, keys: string[]): string {
+  for (const key of keys) {
+    const value = raw?.[key];
+    if (value === undefined || value === null) continue;
+    const text = String(value).trim();
+    if (text && text !== '<nil>') return text;
+  }
+  return '';
+}
+
+function extractCrashEvidence(event: any): CrashEvidence {
+  const raw = (event?.rawData || {}) as any;
+  return {
+    appName: firstText(raw, ['appName', 'AppName', 'ApplicationName', 'FaultingApplicationName', 'param1', 'P1']) || 'Aplicación desconocida',
+    appVersion: firstText(raw, ['appVersion', 'AppVersion', 'ApplicationVersion', 'FaultingApplicationVersion', 'param2', 'P2']),
+    faultingModule: firstText(raw, ['faultingModule', 'ModuleName', 'FaultingModuleName', 'FaultingModule', 'param4', 'P4']),
+    faultingModuleVersion: firstText(raw, ['faultingModuleVersion', 'ModuleVersion', 'FaultingModuleVersion', 'param5', 'P5']),
+    exceptionCode: firstText(raw, ['exceptionCode', 'ExceptionCode', 'ExceptionCodeString', 'param7', 'P7']),
+    faultOffset: firstText(raw, ['faultOffset', 'FaultingOffset', 'FaultOffset', 'param8', 'P8']),
+    processId: firstText(raw, ['processId', 'ProcessId', 'FaultingProcessId', 'param9']),
+    appPath: firstText(raw, ['appPath', 'AppPath', 'ApplicationPath', 'FaultingApplicationPath', 'param11']),
+    modulePath: firstText(raw, ['modulePath', 'ModulePath', 'FaultingModulePath', 'param12']),
+  };
+}
+
+function crashSignature(event: any): string {
+  const evidence = extractCrashEvidence(event);
+  return [
+    evidence.appName,
+    evidence.faultingModule || 'module-unknown',
+    evidence.exceptionCode || 'exception-unknown',
+    String(event?.eventId || 0),
+  ]
+    .map((value) => value.toLowerCase().trim())
+    .join('|');
+}
+
+function stableCrashHash(value: string): string {
+  let hash = 0x811c9dc5;
+  for (let i = 0; i < value.length; i += 1) {
+    hash ^= value.charCodeAt(i);
+    hash = Math.imul(hash, 0x01000193);
+  }
+  return (hash >>> 0).toString(16).padStart(8, '0');
+}
+
+function crashEventWeight(event: any): number {
+  const dedupKey = String(event?.dedupKey || '');
+  if (dedupKey.startsWith('AppCrashEvent:')) {
+    return 1;
+  }
+
+  // Legacy records compacted multiple real Windows events into one DB row.
+  return Math.max(1, Number(event?.occurrences || 1));
+}
+
+function describeCrashGroup(events: any[], realCount: number): string {
+  const newest = events[0];
+  const evidence = extractCrashEvidence(newest);
+
+  const lines = [
+    `Aplicación: ${evidence.appName}`,
+    evidence.appVersion ? `Versión: ${evidence.appVersion}` : '',
+    evidence.faultingModule ? `Módulo con fallas: ${evidence.faultingModule}` : '',
+    evidence.faultingModuleVersion ? `Versión del módulo: ${evidence.faultingModuleVersion}` : '',
+    evidence.exceptionCode ? `Código de excepción: ${evidence.exceptionCode}` : '',
+    evidence.faultOffset ? `Offset de falla: ${evidence.faultOffset}` : '',
+    evidence.processId ? `Proceso/PID: ${evidence.processId}` : '',
+    evidence.appPath ? `Ruta de aplicación: ${evidence.appPath}` : '',
+    evidence.modulePath ? `Ruta del módulo: ${evidence.modulePath}` : '',
+    `Eventos reales: ${realCount} en las últimas 24 horas`,
+    `Última falla registrada: ${new Date(newest.timestamp).toLocaleString('es-AR')}`,
+    `Evento principal: ID ${newest.eventId || '-'} · ${newest.title || 'Application Error'}`,
+  ].filter(Boolean);
+
+  return lines.join('\n');
+}
+
 /**
  * Evaluates all alert rules for a single device, creating new alerts,
  * incrementing occurrences for persistent conditions, and auto-resolving
@@ -119,7 +209,7 @@ export async function evaluateDeviceAlerts(
       timestamp: { gte: since24h },
     },
     orderBy: { timestamp: 'desc' },
-    take: 50,
+    take: 250,
   });
 
   // Fetch currently active alerts (OPEN or ACKNOWLEDGED) for this device
@@ -151,6 +241,131 @@ export async function evaluateDeviceAlerts(
     let isTriggered = false;
     let canAutoHeal = false;
     let dynamicDescription = rule.description || rule.name;
+
+    if (ruleType === 'APP_CRASH') {
+      const threshold = Math.max(2, Number(condition.threshold ?? 3));
+      const primaryCrashEvents = recentEvents.filter((e) => {
+        const category = String(e.category || '').toLowerCase();
+        const title = String(e.title || '').toLowerCase();
+        const isCrash =
+          category.includes('appcrash') ||
+          title.includes('cierre inesperado') ||
+          title.includes('aplicación bloqueada') ||
+          title.includes('appcrash');
+        if (!isCrash) return false;
+
+        // Event 1001 is Windows Error Reporting and often accompanies Event 1000.
+        // Keep it as supporting evidence in Device Events, but never count it as another crash.
+        return e.eventId !== 1001;
+      });
+
+      const groups = new Map<string, typeof primaryCrashEvents>();
+      for (const crashEvent of primaryCrashEvents) {
+        const signature = crashSignature(crashEvent);
+        const group = groups.get(signature) || [];
+        group.push(crashEvent);
+        groups.set(signature, group);
+      }
+
+      const qualifyingGroups = Array.from(groups.entries())
+        .map(([signature, events]) => {
+          const sortedEvents = events.sort(
+            (a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime()
+          );
+          const realCount = sortedEvents.reduce(
+            (total, event) => total + crashEventWeight(event),
+            0
+          );
+          return { signature, events: sortedEvents, realCount };
+        })
+        .filter((group) => group.realCount >= threshold)
+        .sort((a, b) => b.realCount - a.realCount);
+
+      const legacyAlert = activeAlerts.find(
+        (a) => a.ruleId === rule.id && a.source === 'engine:APP_CRASH'
+      );
+      let legacyConsumed = false;
+      const matchedAlertIds = new Set<string>();
+
+      for (const group of qualifyingGroups) {
+        const newest = group.events[0];
+        const evidence = extractCrashEvidence(newest);
+        const source = `engine:APP_CRASH:${stableCrashHash(group.signature)}`;
+        const title = `Caídas repetidas: ${evidence.appName}`;
+        const description = describeCrashGroup(group.events, group.realCount);
+
+        let existingCrashAlert = activeAlerts.find(
+          (a) => a.ruleId === rule.id && a.source === source
+        );
+
+        // Upgrade one legacy aggregate alert in-place so bogus evaluator counts such
+        // as x1326 disappear as soon as this evaluator runs.
+        if (!existingCrashAlert && legacyAlert && !legacyConsumed) {
+          existingCrashAlert = legacyAlert;
+          legacyConsumed = true;
+        }
+
+        if (existingCrashAlert) {
+          await db.alert.update({
+            where: { id: existingCrashAlert.id },
+            data: {
+              title,
+              description,
+              source,
+              occurrences: group.realCount,
+              lastSeenAt: new Date(newest.timestamp),
+            },
+          });
+          matchedAlertIds.add(existingCrashAlert.id);
+          result.alertsUpdated++;
+        } else {
+          const createdCrashAlert = await db.alert.create({
+            data: {
+              tenantId,
+              deviceId,
+              customerId: device.customerId,
+              ruleId: rule.id,
+              severity: rule.severity,
+              status: AlertStatus.OPEN,
+              title,
+              description,
+              source,
+              firstSeenAt: new Date(newest.timestamp),
+              lastSeenAt: new Date(newest.timestamp),
+              occurrences: group.realCount,
+            },
+          });
+          matchedAlertIds.add(createdCrashAlert.id);
+          result.alertsCreated++;
+        }
+      }
+
+      // A crash-loop alert represents a rolling 24 h condition. If its signature
+      // no longer reaches the threshold, close it instead of leaving a stale xN alert.
+      const staleCrashAlerts = activeAlerts.filter(
+        (a) =>
+          a.ruleId === rule.id &&
+          (a.source === 'engine:APP_CRASH' || a.source.startsWith('engine:APP_CRASH:')) &&
+          !matchedAlertIds.has(a.id)
+      );
+
+      for (const staleAlert of staleCrashAlerts) {
+        await db.alert.update({
+          where: { id: staleAlert.id },
+          data: {
+            status: AlertStatus.RESOLVED,
+            resolvedAt: now,
+            autoResolved: true,
+            description:
+              staleAlert.description +
+              '\nEstado: auto-resuelta; la firma ya no alcanza el umbral de repetición dentro de las últimas 24 horas.',
+          },
+        });
+        result.alertsResolved++;
+      }
+
+      continue;
+    }
 
     switch (ruleType) {
       case 'STORAGE': {
@@ -466,21 +681,6 @@ export async function evaluateDeviceAlerts(
         if (diskEvt) {
           isTriggered = true;
           dynamicDescription = `Error del subsistema de almacenamiento registrado en Windows: "${diskEvt.title}" (${diskEvt.timestamp.toLocaleDateString()} ${diskEvt.timestamp.toLocaleTimeString()}).`;
-        }
-        break;
-      }
-
-      case 'APP_CRASH': {
-        canAutoHeal = false;
-        const crashEvents = recentEvents.filter(
-          (e) =>
-            e.category.toLowerCase().includes('crash') ||
-            (e.title && e.title.toLowerCase().includes('appcrash')) ||
-            (e.title && e.title.toLowerCase().includes('bloqueada'))
-        );
-        if (crashEvents.length >= 3) {
-          isTriggered = true;
-          dynamicDescription = `Se detectaron ${crashEvents.length} cierres inesperados de aplicaciones en las últimas 24 horas. Última falla: "${crashEvents[0].title}".`;
         }
         break;
       }

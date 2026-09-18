@@ -14,6 +14,42 @@ import {
   agentSoftwareSchema,
 } from '../../schemas/agent.schema.js';
 
+function firstEventText(raw: any, keys: string[]): string {
+  for (const key of keys) {
+    const value = raw?.[key];
+    if (value === undefined || value === null) continue;
+    const text = String(value).trim();
+    if (text && text !== '<nil>') return text;
+  }
+  return '';
+}
+
+function effectiveEventDedupKey(evt: any, eventDate: Date): string {
+  if (String(evt?.category || '').toLowerCase() !== 'appcrash') {
+    return evt.dedupKey;
+  }
+
+  const raw = (evt.rawData || {}) as any;
+  const appName = firstEventText(raw, ['appName', 'AppName', 'ApplicationName', 'FaultingApplicationName', 'param1', 'P1']) || 'unknown-app';
+  const moduleName = firstEventText(raw, ['faultingModule', 'ModuleName', 'FaultingModuleName', 'FaultingModule', 'param4', 'P4']) || 'unknown-module';
+  const exceptionCode = firstEventText(raw, ['exceptionCode', 'ExceptionCode', 'ExceptionCodeString', 'param7', 'P7']) || 'unknown-exception';
+  const recordId = firstEventText(raw, ['eventRecordId']);
+  const eventTimestamp = isNaN(eventDate.getTime()) ? String(evt.timestamp || '') : eventDate.toISOString();
+
+  // EventRecordID is ideal on new agents. Timestamp is a deterministic fallback
+  // for older agents and still prevents HTTP retries from becoming new crashes.
+  const identity = [
+    String(evt.eventId || 0),
+    appName.toLowerCase(),
+    moduleName.toLowerCase(),
+    exceptionCode.toLowerCase(),
+    recordId || eventTimestamp,
+  ].join('|');
+
+  const hash = crypto.createHash('sha1').update(identity).digest('hex').slice(0, 20);
+  return `AppCrashEvent:${hash}`;
+}
+
 export const agentRoutes: FastifyPluginAsync = async (fastify: FastifyInstance) => {
   // Apply HMAC agent authentication to all /agent/* endpoints
   fastify.addHook('preHandler', authenticateAgent);
@@ -461,13 +497,17 @@ export const agentRoutes: FastifyPluginAsync = async (fastify: FastifyInstance) 
 
     for (const evt of eventsList) {
       const eventDate = new Date(evt.timestamp);
+      const effectiveDedup = effectiveEventDedupKey(evt, eventDate);
+      const isCrashEvent = String(evt.category || '').toLowerCase() === 'appcrash';
 
-      // Check if duplicate event exists within the last 24h
+      // Check if duplicate event exists within the last 24h.
+      // Application crashes use a per-Windows-event identity, so repeated real
+      // crashes remain separate rows while HTTP retries remain idempotent.
       const existing = await db.deviceEvent.findFirst({
         where: {
           tenantId,
           deviceId,
-          dedupKey: evt.dedupKey,
+          dedupKey: effectiveDedup,
           timestamp: {
             gte: new Date(Date.now() - 24 * 60 * 60 * 1000),
           },
@@ -475,14 +515,26 @@ export const agentRoutes: FastifyPluginAsync = async (fastify: FastifyInstance) 
       });
 
       if (existing) {
-        // Increment occurrences
-        await db.deviceEvent.update({
-          where: { id: existing.id },
-          data: {
-            occurrences: { increment: 1 },
-            timestamp: isNaN(eventDate.getTime()) ? new Date() : eventDate,
-          },
-        });
+        if (isCrashEvent) {
+          // Same Windows event received again (buffer/network retry): keep it idempotent.
+          await db.deviceEvent.update({
+            where: { id: existing.id },
+            data: {
+              timestamp: isNaN(eventDate.getTime()) ? existing.timestamp : eventDate,
+              title: evt.title,
+              description: evt.description || null,
+              rawData: evt.rawData || undefined,
+            },
+          });
+        } else {
+          await db.deviceEvent.update({
+            where: { id: existing.id },
+            data: {
+              occurrences: { increment: 1 },
+              timestamp: isNaN(eventDate.getTime()) ? new Date() : eventDate,
+            },
+          });
+        }
       } else {
         // Insert new event
         await db.deviceEvent.create({
@@ -497,7 +549,7 @@ export const agentRoutes: FastifyPluginAsync = async (fastify: FastifyInstance) 
             title: evt.title,
             description: evt.description || null,
             rawData: evt.rawData || undefined,
-            dedupKey: evt.dedupKey,
+            dedupKey: effectiveDedup,
             occurrences: 1,
           },
         });
