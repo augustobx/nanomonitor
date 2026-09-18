@@ -24,7 +24,7 @@ if (-not $Token -and $env:NANOMONITOR_TOKEN) {
 }
 
 Write-Host "=====================================================" -ForegroundColor Cyan
-Write-Host " NanoLabs Control Center - Monitoring Agent v1.4.5 " -ForegroundColor Cyan
+Write-Host " NanoLabs Control Center - Monitoring Agent v1.4.6 " -ForegroundColor Cyan
 Write-Host "=====================================================" -ForegroundColor Cyan
 
 # 1. Check Administrator Privileges
