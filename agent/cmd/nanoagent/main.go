@@ -13,6 +13,7 @@ import (
 
 	"golang.org/x/sys/windows/svc"
 
+	"github.com/nanolabs/nanomonitor/agent/internal/actions"
 	"github.com/nanolabs/nanomonitor/agent/internal/collector"
 	"github.com/nanolabs/nanomonitor/agent/internal/config"
 	"github.com/nanolabs/nanomonitor/agent/internal/logger"
@@ -29,6 +30,7 @@ func main() {
 		uninstallFlag = flag.Bool("uninstall", false, "Uninstall Windows service")
 		startFlag     = flag.Bool("start", false, "Start the Windows service")
 		versionFlag   = flag.Bool("version", false, "Print version and exit")
+		selfCheckFlag = flag.Bool("self-check", false, "Validate critical agent runtime contract and exit")
 		tokenFlag     = flag.String("token", "", "Enrollment token for initial registration")
 		apiURLFlag    = flag.String("api-url", "", "API server URL (overrides config)")
 		configFlag    = flag.String("config", "", "Path to config file")
@@ -40,6 +42,19 @@ func main() {
 	// Version
 	if *versionFlag {
 		fmt.Printf("NanoLabs Agent %s\n", version.Info())
+		os.Exit(0)
+	}
+
+	// Release/install smoke check. This intentionally executes the same action
+	// contract initialization used by the long-poll runtime so broken builds
+	// are rejected before Windows Service registration.
+	if *selfCheckFlag {
+		hash := actions.ActionContractHash()
+		if len(hash) != 64 {
+			fmt.Fprintf(os.Stderr, "agent self-check failed: invalid action contract hash %q\n", hash)
+			os.Exit(1)
+		}
+		fmt.Printf("NanoLabs Agent self-check OK | version=%s | actionContractHash=%s\n", version.Version, hash)
 		os.Exit(0)
 	}
 
