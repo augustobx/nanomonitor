@@ -308,6 +308,7 @@ model Device {
   lastSeenAt   DateTime?
   rebootState  DeviceRebootState @default(NONE)
   rebootScheduledAt DateTime?
+  patchLastScanAt DateTime?
   tamperProtectionEnabled Boolean @default(true)
   tamperKey    String?
   tamperKeyUpdatedAt DateTime?
