@@ -4495,20 +4495,47 @@ export function getClientRuntimeScript(): string {
         const isChecked = selectedPatchKBs.has(p.kbArticleId);
         const lastAttemptText = p.lastAttemptAt ? new Date(p.lastAttemptAt).toLocaleString() : '';
         const lastOpText = p.lastOperation === 'DOWNLOAD' ? 'Descarga' : (p.lastOperation === 'INSTALL' ? 'Instalación' : (p.lastOperation || ''));
+        const lastResultCode = (p.lastResultCode !== null && p.lastResultCode !== undefined)
+          ? Number(p.lastResultCode)
+          : null;
+        const lastInstallFailed = p.lastOperation === 'INSTALL' && (lastResultCode === 4 || lastResultCode === 5);
+        const lastInstallWithErrors = p.lastOperation === 'INSTALL' && lastResultCode === 3;
+        const lastDownloadFailed = p.lastOperation === 'DOWNLOAD' && (lastResultCode === 4 || lastResultCode === 5);
+
         const lastParts = [];
         if (lastOpText) lastParts.push(lastOpText);
-        if (p.lastResultCode !== null && p.lastResultCode !== undefined) lastParts.push('ResultCode=' + p.lastResultCode);
+        if (lastResultCode !== null) lastParts.push('ResultCode=' + lastResultCode);
         if (p.lastHResult) lastParts.push('HRESULT=' + formatHResult(p.lastHResult));
         if (lastAttemptText) lastParts.push(lastAttemptText);
-        const evidence = lastParts.length ? '<div style="font-size: 10px; color: var(--text-muted); margin-top: 3px;">Último intento: ' + lastParts.join(' · ') + '</div>' : '';
+        const evidenceColor = (lastInstallFailed || lastDownloadFailed) ? '#ef4444' : 'var(--text-muted)';
+        const evidence = lastParts.length
+          ? '<div style="font-size: 10px; color: ' + evidenceColor + '; margin-top: 3px;">Último intento: ' + lastParts.join(' · ') + '</div>'
+          : '';
+
+        let rowStatus = statusBadge(p.status);
+        if (p.status === 'DOWNLOADED' && lastInstallFailed) {
+          rowStatus =
+            '<span class="badge badge-danger">INSTALACIÓN FALLIDA</span>' +
+            '<div style="font-size:10px; color:var(--text-muted); margin-top:3px;">Paquete descargado</div>';
+        } else if (p.status === 'DOWNLOADED' && lastInstallWithErrors) {
+          rowStatus =
+            '<span class="badge badge-warning">INSTALACIÓN CON ERRORES</span>' +
+            '<div style="font-size:10px; color:var(--text-muted); margin-top:3px;">Paquete descargado</div>';
+        } else if (p.status === 'FAILED' && lastDownloadFailed) {
+          rowStatus = '<span class="badge badge-danger">DESCARGA FALLIDA</span>';
+        }
 
         let action = '<span style="font-size: 11px; color: var(--text-muted);">Listo</span>';
         if (p.status === 'MISSING' || p.status === 'PENDING_DOWNLOAD') {
           action = '<button class="btn btn-secondary btn-sm" onclick="triggerSinglePatchDownload(\\'' + p.kbArticleId + '\\')" title="Descargar sin instalar">Descargar</button>';
         } else if (p.status === 'FAILED') {
-          action = '<button class="btn btn-secondary btn-sm" onclick="triggerSinglePatchDownload(\\'' + p.kbArticleId + '\\')" title="Reintentar después del último error">Reintentar</button>';
+          action = '<button class="btn btn-secondary btn-sm" onclick="triggerSinglePatchDownload(\\'' + p.kbArticleId + '\\')" title="Reintentar la descarga después del último error">Reintentar descarga</button>';
         } else if (p.status === 'DOWNLOADED') {
-          action = '<button class="btn btn-secondary btn-sm" onclick="triggerSinglePatchInstall(\\'' + p.kbArticleId + '\\')" title="Instalar actualización descargada">Instalar</button>';
+          const installLabel = lastInstallFailed ? 'Reintentar instalación' : 'Instalar';
+          const installTitle = lastInstallFailed
+            ? 'El último intento de instalación falló. Reintentar usando el paquete ya descargado.'
+            : 'Instalar actualización descargada';
+          action = '<button class="btn btn-secondary btn-sm" onclick="triggerSinglePatchInstall(\\'' + p.kbArticleId + '\\')" title="' + installTitle + '">' + installLabel + '</button>';
         } else if (p.status === 'INSTALLING') {
           action = '<span class="badge badge-info">EN CURSO</span>';
         }
@@ -4521,7 +4548,7 @@ export function getClientRuntimeScript(): string {
           '<td>' + severityBadge(p.severity) + '</td>' +
           '<td style="font-size: 12px; color: var(--text-secondary);" title="Tamaño estimado informado por Windows Update Agent; puede no coincidir con la transferencia efectiva.">' + formatBytes(p.sizeBytes) + (p.category === 'FEATURE_UPDATE' ? ' <span style="font-size:9px;">(WUA)</span>' : '') + '</td>' +
           '<td style="text-align: center;">' + (p.requiresReboot ? '<span style="color: #ef4444; font-weight: 700;">Sí</span>' : '<span style="color: var(--text-muted);">No</span>') + '</td>' +
-          '<td>' + statusBadge(p.status) + '</td>' +
+          '<td>' + rowStatus + '</td>' +
           '<td style="text-align: right;">' + action + '</td>' +
         '</tr>';
       });
