@@ -225,8 +225,8 @@ export class PatchesService {
       where: {
         tenantId,
         deviceId,
-        actionType: { in: ['WINDOWS_UPDATE_INSTALL_KB', 'WINDOWS_UPDATE_INSTALL_APPROVED'] },
-        status: { in: ['PENDING', 'QUEUED', 'DELIVERED', 'RUNNING'] },
+        actionType: { in: ['WINDOWS_UPDATE_INSTALL_KB', 'WINDOWS_UPDATE_INSTALL_APPROVED'] as any },
+        status: { in: ['PENDING', 'QUEUED', 'DELIVERED', 'RUNNING'] as any },
       },
       select: { parameters: true },
     });
