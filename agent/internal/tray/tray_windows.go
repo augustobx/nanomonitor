@@ -399,7 +399,7 @@ func (app *TrayApp) checkActiveActions() {
 
 func (app *TrayApp) handleExit() {
 	// If Tamper Protection is enabled in config
-	if app.cfg != nil && app.cfg.TamperKey != "" {
+	if app.cfg != nil && app.cfg.TamperProtectionEnabled {
 		pTitle, _ := windows.UTF16PtrFromString("Tamper Protection — NanoLabs Control Center")
 		pText, _ := windows.UTF16PtrFromString(
 			"Acceso Denegado: La aplicación de bandeja está protegida contra cierre no autorizado.\n\n" +
