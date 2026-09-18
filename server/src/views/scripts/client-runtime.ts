@@ -1259,7 +1259,10 @@ export function getClientRuntimeScript(): string {
     }
 
     function buildEnrollmentCommand(token) {
-      return 'irm "https://monitor.nanolabs.com.ar/install.ps1?token=' + encodeURIComponent(token) + '" | iex';
+      // Keep the one-shot bearer token out of HTTP URLs / reverse-proxy access logs.
+      // It is supplied locally through the environment and consumed by install.ps1.
+      return '$env:NANOMONITOR_TOKEN=\'' + token.replace(/'/g, "''") +
+        '\'; irm "https://monitor.nanolabs.com.ar/install.ps1" | iex; Remove-Item Env:NANOMONITOR_TOKEN -ErrorAction SilentlyContinue';
     }
 
     function openCustomerWorkspace(customerId) {
