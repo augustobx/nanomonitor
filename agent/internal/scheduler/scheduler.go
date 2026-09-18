@@ -3,8 +3,10 @@ package scheduler
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"log/slog"
 	"math/rand"
+	"strings"
 	"sync"
 	"time"
 
@@ -473,17 +475,18 @@ func (s *Scheduler) scanAndReportPendingPatches(ctx context.Context) {
 		"scan_duration_ms", scanResult.ScanDurationMs,
 	)
 
-	s.ReportPatches(ctx, scanResult)
+	if err := s.ReportPatches(ctx, scanResult); err != nil {
+		log.Warn("pending patch report was not confirmed", "error", err)
+	}
 }
 
 // ReportPatches serializes and sends a patch scan result to /agent/patches/report
-func (s *Scheduler) ReportPatches(ctx context.Context, scanResult *patch.ScanResult) {
+func (s *Scheduler) ReportPatches(ctx context.Context, scanResult *patch.ScanResult) error {
 	log := s.logger.With("task", "patch_report")
 	if scanResult == nil {
-		return
+		return fmt.Errorf("patch scan result is nil")
 	}
 
-	// Build patch report payload matching the server's reportDevicePatchesSchema
 	patchItems := make([]map[string]interface{}, 0, len(scanResult.Patches))
 	for _, p := range scanResult.Patches {
 		status := "MISSING"
@@ -513,23 +516,23 @@ func (s *Scheduler) ReportPatches(ctx context.Context, scanResult *patch.ScanRes
 	resp, err := s.client.SendWithRetry(ctx, func(ctx context.Context) (*transport.Response, error) {
 		return s.client.SendPatchReport(ctx, reportPayload)
 	}, 2)
-
 	if err != nil {
 		log.Warn("failed to send patch report, buffering offline", "error", err)
 		if s.buffer != nil {
-			_ = s.buffer.Enqueue(buffer.PriorityInventory, "/agent/patches/report", reportPayload)
+			if bufferErr := s.buffer.Enqueue(buffer.PriorityInventory, "/agent/patches/report", reportPayload); bufferErr != nil {
+				return fmt.Errorf("patch report delivery failed and offline buffer write failed: %v; buffer: %w", err, bufferErr)
+			}
 		}
-		return
+		return fmt.Errorf("patch report not confirmed by server; buffered for retry: %w", err)
 	}
-
-	if resp.StatusCode >= 200 && resp.StatusCode < 300 {
-		log.Info("patch report sent successfully", "synced_patches", len(patchItems))
-	} else {
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		log.Warn("patch report rejected by server", "status", resp.StatusCode, "body", string(resp.Body))
+		return fmt.Errorf("patch report rejected by server with HTTP %d", resp.StatusCode)
 	}
-}
 
-// collectAndSendInventory runs every 24 hours + boot
+	log.Info("patch report sent successfully", "synced_patches", len(patchItems))
+	return nil
+}
 func (s *Scheduler) collectAndSendInventory(ctx context.Context) {
 	if err := s.collectAndSendInventoryConfirmed(ctx); err != nil {
 		s.logger.With("task", "inventory").Debug("inventory cycle not confirmed", "error", err)
@@ -803,40 +806,43 @@ func (s *Scheduler) flushOfflineBuffer(ctx context.Context) {
 
 // ==================== SchedTriggerHook Implementation ====================
 
-// TriggerHeartbeat immediately executes heartbeat and security collection
-func (s *Scheduler) TriggerHeartbeat(ctx context.Context) {
+// TriggerHeartbeat immediately executes heartbeat/security and confirms CRM delivery.
+func (s *Scheduler) TriggerHeartbeat(ctx context.Context) error {
 	s.logger.Info("remotely triggered: executing immediate heartbeat and security check")
-	s.collectAndSendHeartbeatAndSecurity(ctx)
+	return s.collectAndSendHeartbeatAndSecurityConfirmed(ctx)
 }
 
-// TriggerMetrics immediately executes performance metrics collection
-func (s *Scheduler) TriggerMetrics(ctx context.Context) {
+// TriggerMetrics immediately executes performance metrics collection and confirms CRM delivery.
+func (s *Scheduler) TriggerMetrics(ctx context.Context) error {
 	s.logger.Info("remotely triggered: executing immediate metrics collection")
-	s.collectAndSendMetrics(ctx)
+	return s.collectAndSendMetricsConfirmed(ctx)
 }
 
-// TriggerSecurity immediately executes operational security posture collection
-func (s *Scheduler) TriggerSecurity(ctx context.Context) {
+// TriggerSecurity immediately refreshes security posture through an authoritative heartbeat.
+func (s *Scheduler) TriggerSecurity(ctx context.Context) error {
 	s.logger.Info("remotely triggered: executing immediate security posture check")
-	s.collectAndSendHeartbeatAndSecurity(ctx)
+	return s.collectAndSendHeartbeatAndSecurityConfirmed(ctx)
 }
 
-// TriggerInventory immediately executes general hardware and software inventory
-func (s *Scheduler) TriggerInventory(ctx context.Context) {
+// TriggerInventory immediately executes hardware and software inventory.
+// Both sides must be confirmed for the remote action to report SUCCESS.
+func (s *Scheduler) TriggerInventory(ctx context.Context) error {
 	s.logger.Info("remotely triggered: executing immediate hardware and software inventory")
-	s.collectAndSendInventory(ctx)
-	s.collectAndSendSoftware(ctx)
+	if err := s.collectAndSendInventoryConfirmed(ctx); err != nil {
+		return err
+	}
+	return s.collectAndSendSoftwareConfirmed(ctx)
 }
 
-// TriggerSmart immediately executes physical disk SMART health check
-func (s *Scheduler) TriggerSmart(ctx context.Context) {
+// TriggerSmart immediately executes physical disk SMART health check.
+func (s *Scheduler) TriggerSmart(ctx context.Context) error {
 	s.logger.Info("remotely triggered: executing immediate SMART disk check")
-	s.collectAndSendSmart(ctx)
+	return s.collectAndSendSmartConfirmed(ctx)
 }
 
-// TriggerWindowsUpdate immediately executes Windows Update inspection
+// TriggerWindowsUpdate is used as a post-action refresh. It remains best-effort;
+// authoritative manual scan actions use ReportPatches and verify its ACK directly.
 func (s *Scheduler) TriggerWindowsUpdate(ctx context.Context) {
 	s.logger.Info("remotely triggered: executing immediate Windows Update inspection")
 	s.collectAndSendWindowsUpdate(ctx)
 }
-
