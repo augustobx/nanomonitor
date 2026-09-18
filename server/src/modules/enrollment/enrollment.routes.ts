@@ -256,8 +256,8 @@ export const enrollmentRoutes: FastifyPluginAsync = async (fastify: FastifyInsta
           architecture: osInfo?.osArchitecture || null,
           manufacturer: osInfo?.manufacturer || null,
           model: osInfo?.model || null,
-          status: 'ONLINE',
-          lastSeenAt: new Date(),
+          status: 'OFFLINE',
+          lastSeenAt: null,
         },
       });
     } else {
@@ -274,8 +274,8 @@ export const enrollmentRoutes: FastifyPluginAsync = async (fastify: FastifyInsta
           manufacturer: osInfo?.manufacturer || device.manufacturer,
           model: osInfo?.model || device.model,
           siteId: tokenRecord.siteId || device.siteId,
-          status: 'ONLINE',
-          lastSeenAt: new Date(),
+          status: 'OFFLINE',
+          lastSeenAt: null,
         },
       });
     }
