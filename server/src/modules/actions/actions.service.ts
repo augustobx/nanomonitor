@@ -303,7 +303,7 @@ export class ActionsService {
       return null;
     }
 
-    const cancellableStatuses = [
+    const cancellableStatuses: ActionStatus[] = [
       ActionStatus.PENDING,
       ActionStatus.QUEUED,
       ActionStatus.DELIVERED,
