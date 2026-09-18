@@ -1,6 +1,6 @@
 # NanoMonitor — Phase 8 Final Audit
 
-Release candidate: **v1.4.4**
+Release candidate: **v1.4.5**
 
 Baseline validated endpoint release: **v1.4.3**
 
@@ -102,7 +102,7 @@ Final pre-production audit across:
 - Automatic service restart after reboot
 - Tray automatically transitions to green without manual intervention
 
-## v1.4.4 release gates
+## v1.4.5 release gates
 
 The final candidate must pass:
 
@@ -111,8 +111,8 @@ The final candidate must pass:
 3. Installer build.
 4. Published installer SHA-256 equals built installer SHA-256.
 5. API health returns OK after deployment.
-6. Upgrade reference endpoint v1.4.3 -> v1.4.4 returns installer exit code 0.
-7. nanoagent and nanotray both report v1.4.4.
+6. Upgrade reference endpoint v1.4.3 -> v1.4.5 returns installer exit code 0.
+7. nanoagent and nanotray both report v1.4.5.
 8. NanoLabsAgent is RUNNING / Automatic.
 9. agent.secrets.json remains SYSTEM + Administrators only.
 10. config.yaml contains no agentSecret/tamperKey.
@@ -121,4 +121,14 @@ The final candidate must pass:
 13. One remote safe action reaches SUCCESS.
 14. No duplicate endpoint is created after upgrade/reboot.
 
-If all gates pass, v1.4.4 is the Phase 8 production candidate.
+If all gates pass, v1.4.5 is the Phase 8 production candidate.
+
+
+## Additional closure after 1.4.4 regression
+
+- Generated CRM runtime is now parsed during every server build with node:vm.
+- Inline onclick handlers from both initial HTML and dynamic runtime templates are checked for matching functions/bindings.
+- The enrollment command template escaping regression that broke the CRM navigation was corrected.
+- Silent installer mode no longer launches nanotray.exe as a persistent child process.
+- This prevents PowerShell Start-Process -Wait / process-tree tracking from appearing hung after a successful unattended installation.
+- Interactive installs still launch the tray immediately; silent installs rely on HKLM Run at next interactive logon.
