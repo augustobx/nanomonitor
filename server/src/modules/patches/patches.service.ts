@@ -360,6 +360,21 @@ export class PatchesService {
             },
           });
         }
+      } else if (device.rebootState === 'REBOOT_SCHEDULED') {
+        // A scan can race the shutdown countdown after Windows accepted the
+        // scheduled reboot. Do not erase that state before the scheduled time.
+        // Once the scheduled instant has passed, a fresh scan reporting no
+        // reboot pending is authoritative and can clear it.
+        if (!device.rebootScheduledAt || scanAt >= device.rebootScheduledAt) {
+          await tx.device.update({
+            where: { id: deviceId },
+            data: {
+              rebootState: 'NONE',
+              rebootScheduledAt: null,
+              patchLastScanAt: scanAt,
+            },
+          });
+        }
       } else if (device.rebootState !== 'NONE') {
         await tx.device.update({
           where: { id: deviceId },
@@ -438,6 +453,16 @@ export class PatchesService {
    */
   static async upsertPolicy(tenantId: string, input: UpsertPatchPolicyInput) {
     const customerId = input.customerId || null;
+
+    if (customerId) {
+      const customer = await db.customer.findFirst({
+        where: { id: customerId, tenantId },
+        select: { id: true },
+      });
+      if (!customer) {
+        throw new Error('El cliente indicado no pertenece a esta organización.');
+      }
+    }
 
     const existing = await db.patchPolicy.findFirst({
       where: {
