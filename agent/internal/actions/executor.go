@@ -363,9 +363,23 @@ func executePatchInstall(ctx context.Context, action *transport.ActionItem, hook
 		exitCode = 1
 	}
 
+	var sb strings.Builder
+	sb.WriteString(res.Details)
+	sb.WriteString("\n")
+	for _, outcome := range res.Outcomes {
+		if outcome.Installed {
+			sb.WriteString(fmt.Sprintf("\n✅ %s — instalado y confirmado por Windows Update.", outcome.Identifier))
+		} else {
+			sb.WriteString(fmt.Sprintf("\n❌ %s — no confirmado (ResultCode=%d, HResult=%d).", outcome.Identifier, outcome.ResultCode, outcome.HResult))
+		}
+	}
+	if res.RebootRequired {
+		sb.WriteString("\n\n🔄 Windows informa que se requiere reinicio.")
+	}
+
 	return &ExecutionResult{
 		ExitCode: exitCode,
-		Output:   res.Details,
+		Output:   sb.String(),
 		Result: map[string]interface{}{
 			"success":        res.Success,
 			"resultCode":     res.ResultCode,
