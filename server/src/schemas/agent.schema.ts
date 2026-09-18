@@ -54,6 +54,7 @@ export const agentMetricsSchema = z.object({
 });
 
 export const agentInventorySchema = z.object({
+  collectedAt: z.string().datetime().optional(),
   identity: z.any().optional(),
   hardware: z.any().optional(),
   network: z.any().optional(),
@@ -80,6 +81,7 @@ export const agentSoftwareChangeSchema = z.object({
 });
 
 export const agentSoftwareSchema = z.object({
+  collectedAt: z.string().datetime().optional(),
   checksum: z.string(),
   count: z.number().int().nonnegative(),
   items: z.array(agentSoftwareItemSchema),
