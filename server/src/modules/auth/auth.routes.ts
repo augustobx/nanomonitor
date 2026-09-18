@@ -114,6 +114,7 @@ export const authRoutes: FastifyPluginAsync = async (fastify: FastifyInstance) =
         },
       },
     });
+    }
   );
 
   // POST /api/v1/auth/refresh
