@@ -17,7 +17,7 @@ echo "====================================================="
 echo "=== 1/6 SERVER BUILD + CONTRACT VALIDATION ==="
 docker compose build nanomonitor-server
 
-echo "=== 2/6 WINDOWS AGENT BUILD ==="
+echo "=== 2/6 WINDOWS AGENT + TRAY BUILD ==="
 mkdir -p .build-phase1
 
 docker run --rm \
@@ -33,15 +33,25 @@ docker run --rm \
   sh -c '
     set -e
     go mod download
+
+    LDFLAGS="-s -w \
+      -X github.com/nanolabs/nanomonitor/agent/internal/version.Version=$VERSION \
+      -X github.com/nanolabs/nanomonitor/agent/internal/version.Commit=$COMMIT \
+      -X github.com/nanolabs/nanomonitor/agent/internal/version.BuildDate=$BUILD_DATE"
+
     go build \
       -buildvcs=false \
       -trimpath \
-      -ldflags "-s -w \
-        -X github.com/nanolabs/nanomonitor/agent/internal/version.Version=$VERSION \
-        -X github.com/nanolabs/nanomonitor/agent/internal/version.Commit=$COMMIT \
-        -X github.com/nanolabs/nanomonitor/agent/internal/version.BuildDate=$BUILD_DATE" \
+      -ldflags "$LDFLAGS" \
       -o /src/.build-phase1/nanoagent.exe \
       ./cmd/nanoagent
+
+    go build \
+      -buildvcs=false \
+      -trimpath \
+      -ldflags "$LDFLAGS -H=windowsgui" \
+      -o /src/.build-phase1/nanotray.exe \
+      ./cmd/nanotray
   '
 
 echo "=== 3/6 INSTALLER BUILD ==="
@@ -108,6 +118,7 @@ fi
 echo "=== 6/6 RELEASE HASHES ==="
 sha256sum \
   .build-phase1/nanoagent.exe \
+  .build-phase1/nanotray.exe \
   .build-phase1/NanoMonitor-Setup.exe \
   downloads/NanoMonitor-Setup.exe
 
