@@ -2483,6 +2483,24 @@ export function getClientRuntimeScript(): string {
       const latestRam = Math.round(getMetricRamVal(latest));
       const thermal = latest && latest.thermal ? latest.thermal : null;
 
+      let unavailableTitle = 'Sensores térmicos no disponibles';
+      let unavailableDetail = 'NanoMonitor no genera valores estimados.';
+      if (thermal) {
+        if (thermal.providerStatus === 'PROVIDER_NOT_INSTALLED') {
+          unavailableTitle = 'Proveedor térmico de bajo nivel no disponible';
+          unavailableDetail = thermal.message || 'PawnIO no está instalado o Windows todavía requiere reinicio.';
+        } else if (thermal.providerStatus === 'HELPER_MISSING') {
+          unavailableTitle = 'NanoThermal no está instalado en este equipo';
+          unavailableDetail = thermal.message || 'Actualizá el agente para habilitar el proveedor integrado.';
+        } else if (thermal.providerStatus === 'HELPER_ERROR') {
+          unavailableTitle = 'NanoThermal no pudo leer los sensores';
+          unavailableDetail = thermal.message || 'El proveedor devolvió un error durante la consulta.';
+        } else if (thermal.providerStatus === 'NO_SUPPORTED_SENSORS') {
+          unavailableTitle = 'Sensores térmicos no soportados por este hardware';
+          unavailableDetail = thermal.message || 'No se detectaron sensores compatibles.';
+        }
+      }
+
       let thermalCards = '';
       if (thermal && thermal.available) {
         if (thermal.cpu && thermal.cpu.temperatureC != null) {
@@ -2522,12 +2540,28 @@ export function getClientRuntimeScript(): string {
               '<div style="font-size:16px; font-weight:700; color:var(--text-muted); margin-top:7px;">No disponible</div>' +
             '</div>';
         }
+
+        if (thermal.motherboard && thermal.motherboard.length > 0) {
+          thermal.motherboard.forEach(function(sensor) {
+            thermalCards +=
+              '<div style="background: var(--bg-surface-subtle); border: 1px solid var(--border-subtle); border-radius: var(--radius-md); padding: 12px 14px; min-width: 210px; flex: 1;">' +
+                '<div style="font-size:11px; color:var(--text-muted); font-weight:700;">🌡️ Placa · ' + safeThermalText(sensor.sensor || sensor.name || 'Sensor') + '</div>' +
+                '<div style="display:flex; align-items:baseline; gap:8px; margin-top:5px;">' +
+                  '<span style="font-size:22px; font-weight:800; color:' + thermalStatusColor(sensor.status) + ';">' + Number(sensor.temperatureC).toFixed(1) + ' °C</span>' +
+                  '<span style="font-size:10px; font-weight:700; color:' + thermalStatusColor(sensor.status) + ';">' + thermalStatusText(sensor.status) + '</span>' +
+                '</div>' +
+                '<div style="font-size:10px; color:var(--text-muted); margin-top:3px;">' +
+                  safeThermalText(sensor.name || 'Motherboard') + ' · Fuente: ' + safeThermalText(sensor.source || thermal.provider || '-') +
+                '</div>' +
+              '</div>';
+          });
+        }
       } else {
         thermalCards =
           '<div style="background: var(--bg-surface-subtle); border: 1px solid var(--border-subtle); border-radius: var(--radius-md); padding: 12px 14px; flex: 1;">' +
             '<div style="font-size:11px; color:var(--text-muted); font-weight:700;">🌡️ Sensores térmicos</div>' +
-            '<div style="font-size:14px; font-weight:700; color:var(--text-muted); margin-top:7px;">CPU / GPU no disponibles en este equipo</div>' +
-            '<div style="font-size:10px; color:var(--text-muted); margin-top:3px;">NanoMonitor no genera valores estimados.</div>' +
+            '<div style="font-size:14px; font-weight:700; color:var(--text-muted); margin-top:7px;">' + safeThermalText(unavailableTitle) + '</div>' +
+            '<div style="font-size:10px; color:var(--text-muted); margin-top:3px;">' + safeThermalText(unavailableDetail) + '</div>' +
           '</div>';
       }
 

@@ -24,6 +24,15 @@ var nanoagentBin []byte
 //go:embed embedded/nanotray.exe
 var nanotrayBin []byte
 
+//go:embed embedded/nanothermal.exe
+var nanothermalBin []byte
+
+//go:embed embedded/PawnIO_setup.exe
+var pawnIOSetupBin []byte
+
+//go:embed embedded/THIRD_PARTY_NOTICES.txt
+var thirdPartyNotices []byte
+
 var (
 	user32   = windows.NewLazySystemDLL("user32.dll")
 	shell32  = windows.NewLazySystemDLL("shell32.dll")
@@ -187,6 +196,8 @@ func askTokenGUI() string {
 }
 
 func doInstall(token, apiURL string, silent bool) {
+	pawnIOWarning := ""
+
 	if token == "" && !silent {
 		res := promptDialog("NanoLabs Monitor — Instalador",
 			"Bienvenido al instalador de NanoLabs Monitor.\n\n"+
@@ -227,12 +238,35 @@ func doInstall(token, apiURL string, silent bool) {
 		os.Exit(1)
 	}
 
-	// 4b. Reject a broken agent binary before touching Service Control Manager.
+	thermalDest := filepath.Join(DefaultInstallDir, "nanothermal.exe")
+	if err := safeWriteBinary(thermalDest, nanothermalBin); err != nil {
+		showError(fmt.Sprintf("Error instalando nanothermal.exe:\n%v", err), silent)
+		os.Exit(1)
+	}
+
+	noticesDest := filepath.Join(DefaultInstallDir, "THIRD_PARTY_NOTICES.txt")
+	if err := os.WriteFile(noticesDest, thirdPartyNotices, 0644); err != nil {
+		showError(fmt.Sprintf("Error instalando avisos de terceros:\n%v", err), silent)
+		os.Exit(1)
+	}
+
+	// 4b. Reject broken release binaries before touching Service Control Manager.
 	selfCheck := exec.Command(agentDest, "-self-check")
 	if out, err := selfCheck.CombinedOutput(); err != nil {
 		showError(fmt.Sprintf("El binario del agente no superó el self-check de release:\n%s\n%v", string(out), err), silent)
 		os.Exit(1)
 	}
+
+	thermalSelfCheck := exec.Command(thermalDest, "--self-check")
+	if out, err := thermalSelfCheck.CombinedOutput(); err != nil {
+		showError(fmt.Sprintf("NanoThermal no superó el self-check de release:\n%s\n%v", string(out), err), silent)
+		os.Exit(1)
+	}
+
+	// PawnIO is a shared signed low-level provider used by LibreHardwareMonitor.
+	// Install it only when absent. NanoMonitor never uninstalls this shared driver
+	// automatically because other monitoring software may also depend on it.
+	pawnIOWarning = ensurePawnIOProvider()
 
 	// 5. Create Data directory & configuration
 	if err := os.MkdirAll(DefaultDataDir, 0755); err != nil {
@@ -369,14 +403,62 @@ func doInstall(token, apiURL string, silent bool) {
 
 	// 10. Success notice
 	if !silent {
+		sensorLine := "• NanoThermal está instalado para lectura de CPU/GPU/placa.\n"
+		if pawnIOWarning != "" {
+			sensorLine = "• NanoThermal instalado; " + pawnIOWarning + "\n"
+		}
 		promptDialog("NanoLabs Monitor",
 			"¡Instalación completada exitosamente!\n\n"+
 				"• El servicio de monitoreo está en ejecución continua con auto-recuperación activa.\n"+
 				"• El icono de estado se encuentra activo en la bandeja del sistema (junto al reloj).\n"+
+				sensorLine+
 				"• El equipo comenzará a reportar telemetría al NOC.",
 			MB_OK|MB_ICONINFORMATION)
 	}
 	os.Exit(0)
+}
+
+
+func pawnIODriverInstalled() bool {
+	return exec.Command("sc.exe", "query", "PawnIO").Run() == nil
+}
+
+func ensurePawnIOProvider() string {
+	if pawnIODriverInstalled() {
+		return ""
+	}
+
+	setupPath := filepath.Join(os.TempDir(), fmt.Sprintf("NanoMonitor-PawnIO-%d.exe", time.Now().UnixNano()))
+	if err := os.WriteFile(setupPath, pawnIOSetupBin, 0700); err != nil {
+		warning := fmt.Sprintf("no se pudo preparar PawnIO (%v); los sensores térmicos pueden quedar limitados.", err)
+		fmt.Fprintln(os.Stderr, "Aviso:", warning)
+		return warning
+	}
+	defer os.Remove(setupPath)
+
+	cmd := exec.Command(setupPath, "-install", "-silent")
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		if exitErr, ok := err.(*exec.ExitError); ok && exitErr.ExitCode() == 3010 {
+			warning := "PawnIO quedó instalado pero Windows solicita reinicio para habilitar todos los sensores."
+			fmt.Fprintln(os.Stderr, "Aviso:", warning)
+			return warning
+		}
+		warning := fmt.Sprintf(
+			"no se pudo instalar PawnIO (salida: %s); NanoMonitor seguirá operativo, pero algunos sensores pueden no estar disponibles.",
+			strings.TrimSpace(string(out)),
+		)
+		fmt.Fprintln(os.Stderr, "Aviso:", warning)
+		return warning
+	}
+
+	if !pawnIODriverInstalled() {
+		warning := "PawnIO terminó la instalación pero el driver todavía no aparece registrado; puede requerir reinicio."
+		fmt.Fprintln(os.Stderr, "Aviso:", warning)
+		return warning
+	}
+
+	return ""
 }
 
 func launchTrayViaInteractiveShell(trayDest string) error {

@@ -1,0 +1,16 @@
+NanoLabs Control Center / NanoMonitor - Third Party Notices
+
+NanoThermal uses LibreHardwareMonitorLib 0.9.6.
+Project: https://github.com/LibreHardwareMonitor/LibreHardwareMonitor
+Package: https://www.nuget.org/packages/LibreHardwareMonitorLib/0.9.6
+License: Mozilla Public License 2.0 (MPL-2.0)
+License text: https://github.com/LibreHardwareMonitor/LibreHardwareMonitor/blob/master/Licenses/LICENSE
+
+Low-level hardware sensor access may use the official PawnIO driver.
+Project: https://github.com/namazso/PawnIO
+Official binary releases: https://github.com/namazso/PawnIO.Setup/releases
+Bundled setup version: 2.2.0
+NanoMonitor redistributes the official installer unchanged and verifies its SHA-256 at release build time.
+NanoMonitor does not remove PawnIO automatically on uninstall because it is a shared system provider that may be used by other software.
+
+These components are third-party software and are not authored by NanoLabs.
