@@ -226,6 +226,13 @@ func doInstall(token, apiURL string, silent bool) {
 		os.Exit(1)
 	}
 
+	// 4b. Reject a broken agent binary before touching Service Control Manager.
+	selfCheck := exec.Command(agentDest, "-self-check")
+	if out, err := selfCheck.CombinedOutput(); err != nil {
+		showError(fmt.Sprintf("El binario del agente no superó el self-check de release:\n%s\n%v", string(out), err), silent)
+		os.Exit(1)
+	}
+
 	// 5. Create Data directory & configuration
 	if err := os.MkdirAll(DefaultDataDir, 0755); err != nil {
 		showError(fmt.Sprintf("Error creando directorio de datos:\n%v", err), silent)
