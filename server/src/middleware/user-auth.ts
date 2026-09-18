@@ -113,6 +113,7 @@ export function getRequiredPermissionForAction(actionType: string): ActionPermis
     case 'SHUTDOWN_DEVICE':
       return 'RUN_REBOOT';
 
+    case 'FORCE_SECURITY_SCAN':
     case 'DEFENDER_UPDATE_SIGNATURES':
     case 'DEFENDER_QUICK_SCAN':
     case 'DEFENDER_FULL_SCAN':
@@ -123,11 +124,16 @@ export function getRequiredPermissionForAction(actionType: string): ActionPermis
     case 'WINDOWS_DISM_CHECK':
     case 'WINDOWS_CHKDSK_SCAN':
     case 'RESTART_SERVICE':
+    case 'WINDOWS_UPDATE_INSTALL_KB':
+    case 'WINDOWS_UPDATE_INSTALL_APPROVED':
+    case 'CLEAN_TEMP_FILES':
       return 'RUN_SYSTEM_ACTION';
+
+    case 'WINDOWS_UPDATE_SCHEDULE_REBOOT':
+      return 'RUN_REBOOT';
 
     case 'FORCE_HEARTBEAT':
     case 'FORCE_METRICS':
-    case 'FORCE_SECURITY_SCAN':
     case 'FORCE_INVENTORY':
     case 'FORCE_SMART_CHECK':
     case 'FORCE_WINDOWS_UPDATE':
