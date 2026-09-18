@@ -167,7 +167,7 @@ func canonicalAllowedServices() []string {
 	seen := make(map[string]struct{}, len(AllowedServicesWhitelist))
 	services := make([]string, 0, len(AllowedServicesWhitelist))
 
-	for _, canonical := range canonicalAllowedServices() {
+	for _, canonical := range AllowedServicesWhitelist {
 		if canonical == "" {
 			continue
 		}
