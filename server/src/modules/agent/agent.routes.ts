@@ -98,18 +98,31 @@ export const agentRoutes: FastifyPluginAsync = async (fastify: FastifyInstance) 
     });
 
     // Existing pre-hardening devices may not have a tamper key yet.
-    // Provision once on authenticated heartbeat so tamper protection is never
-    // "enabled" without an actual unlock credential.
+    // Provision it with a conditional write so concurrent heartbeats cannot
+    // generate two different credentials and leave the agent/server divergent.
     let effectiveTamperKey = device.tamperKey;
     if (device.tamperProtectionEnabled && !effectiveTamperKey) {
-      effectiveTamperKey = generateTamperKey();
-      await db.device.update({
-        where: { id: deviceId },
+      const candidateKey = generateTamperKey();
+      const generatedAt = new Date();
+
+      await db.device.updateMany({
+        where: {
+          id: deviceId,
+          tenantId,
+          tamperKey: null,
+          tamperProtectionEnabled: true,
+        },
         data: {
-          tamperKey: effectiveTamperKey,
-          tamperKeyUpdatedAt: new Date(),
+          tamperKey: candidateKey,
+          tamperKeyUpdatedAt: generatedAt,
         },
       });
+
+      const authoritative = await db.device.findFirst({
+        where: { id: deviceId, tenantId },
+        select: { tamperKey: true },
+      });
+      effectiveTamperKey = authoritative?.tamperKey || null;
     }
 
     // Automatically sync agentVersion from live heartbeat telemetry
@@ -143,15 +156,18 @@ export const agentRoutes: FastifyPluginAsync = async (fastify: FastifyInstance) 
       // Non-blocking fallback
     }
 
-    return reply.status(200).send({
-      status: 'ok',
-      serverTime: new Date().toISOString(),
-      pendingActions: pendingActionsCount,
-      tamperProtection: {
-        enabled: device.tamperProtectionEnabled,
-        key: device.tamperProtectionEnabled ? (effectiveTamperKey || null) : null,
-      },
-    });
+    return reply
+      .header('Cache-Control', 'no-store')
+      .status(200)
+      .send({
+        status: 'ok',
+        serverTime: new Date().toISOString(),
+        pendingActions: pendingActionsCount,
+        tamperProtection: {
+          enabled: device.tamperProtectionEnabled,
+          key: device.tamperProtectionEnabled ? (effectiveTamperKey || null) : null,
+        },
+      });
   });
 
   // POST /agent/metrics
