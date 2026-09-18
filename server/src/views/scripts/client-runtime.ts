@@ -1,3 +1,5 @@
+import { CURRENT_AGENT_VERSION } from '../../lib/release-version.js';
+
 export function getClientRuntimeScript(): string {
   return `
     // Centralized State
@@ -52,10 +54,17 @@ export function getClientRuntimeScript(): string {
       return m + 'm';
     }
 
+    const LATEST_AGENT_VERSION = '${CURRENT_AGENT_VERSION}';
+
     function getAgentVersionTag(d) {
-      if (!d) return 'v0.1.0';
-      const raw = (d.agent && d.agent.agentVersion) ? d.agent.agentVersion : (d.agentVersion ? d.agentVersion : null);
-      if (!raw) return 'v0.1.0';
+      if (!d) return 'vunknown';
+      const heartbeatVersion = (d.heartbeats && d.heartbeats.length > 0 && d.heartbeats[0].agentVersion)
+        ? d.heartbeats[0].agentVersion
+        : null;
+      const raw = heartbeatVersion ||
+        d.runtimeAgentVersion ||
+        ((d.agent && d.agent.agentVersion) ? d.agent.agentVersion : (d.agentVersion ? d.agentVersion : null));
+      if (!raw) return 'vunknown';
       const clean = String(raw).trim().replace(/^v/, '');
       return 'v' + clean;
     }
@@ -63,7 +72,7 @@ export function getClientRuntimeScript(): string {
     function renderAgentVersionBadge(d, compact) {
       const tag = getAgentVersionTag(d);
       const clean = tag.replace(/^v/, '');
-      const isLatest = clean.startsWith('1.4') || clean === '1.4.0';
+      const isLatest = clean === LATEST_AGENT_VERSION;
       if (compact) {
         if (isLatest) {
           return '<span class="code-badge" style="font-size: 10px; margin-left: 6px; padding: 1px 6px; color: #34d399; border-color: rgba(52,211,153,0.35); background: rgba(52,211,153,0.1);" title="Agente actualizado a la última versión (' + tag + ')">' + tag + '</span>';
