@@ -1,10 +1,10 @@
 import { FastifyInstance, FastifyPluginAsync } from 'fastify';
-import crypto from 'crypto';
 import { DeviceStatus } from '@prisma/client';
 import { db } from '../../lib/db.js';
 import { authenticateUser, requireRole } from '../../middleware/user-auth.js';
 import { getTenantId } from '../../middleware/tenant-isolation.js';
 import { updateDeviceSchema } from '../../schemas/management.schema.js';
+import { generateTamperKey } from '../../lib/crypto.js';
 import { logAudit } from '../../middleware/audit.js';
 import { calculateAndPersistDeviceHealthScore } from '../health/health-scorer.js';
 import { applyDevicePresence, ONLINE_HEARTBEAT_THRESHOLD_MS } from '../../lib/device-presence.js';
@@ -397,15 +397,6 @@ export const devicesRoutes: FastifyPluginAsync = async (fastify: FastifyInstance
     }
   );
 
-  function generateTamperKey(): string {
-    const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
-    let p1 = '';
-    let p2 = '';
-    for (let i = 0; i < 4; i++) p1 += chars[crypto.randomInt(0, chars.length)];
-    for (let i = 0; i < 4; i++) p2 += chars[crypto.randomInt(0, chars.length)];
-    return `NL-${p1}-${p2}`;
-  }
-
   // GET /api/v1/devices/:id/tamper-key
   fastify.get(
     '/:id/tamper-key',
@@ -445,6 +436,7 @@ export const devicesRoutes: FastifyPluginAsync = async (fastify: FastifyInstance
         });
       }
 
+      reply.header('Cache-Control', 'no-store');
       return reply.send({
         statusCode: 200,
         data: {
@@ -497,6 +489,7 @@ export const devicesRoutes: FastifyPluginAsync = async (fastify: FastifyInstance
         request,
       });
 
+      reply.header('Cache-Control', 'no-store');
       return reply.send({
         statusCode: 200,
         data: {
