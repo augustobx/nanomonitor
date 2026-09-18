@@ -78,22 +78,6 @@ export const customersRoutes: FastifyPluginAsync = async (fastify: FastifyInstan
         },
       });
 
-      // Automatically generate unique reusable enrollment token for this specific customer
-      const cleanCode = customer.code.replace(/[^A-Z0-9]/gi, '').toUpperCase();
-      const tokenString = `NL-${cleanCode}-${generateRandomString(8).toUpperCase()}`;
-      const expiresAt = new Date(Date.now() + 365 * 24 * 3600 * 1000);
-      const token = await db.enrollmentToken.create({
-        data: {
-          tenantId,
-          customerId: customer.id,
-          siteId: site.id,
-          token: tokenString,
-          maxUses: 500,
-          expiresAt,
-        },
-        select: { id: true, token: true, expiresAt: true },
-      });
-
       await logAudit({
         tenantId,
         action: 'customer.created',
@@ -108,13 +92,12 @@ export const customersRoutes: FastifyPluginAsync = async (fastify: FastifyInstan
         data: {
           ...customer,
           sites: [site],
-          enrollmentTokens: [token],
         },
       });
     }
   );
 
-  // GET /api/v1/customers/:id/token - Get or create enrollment token for customer
+  // GET /api/v1/customers/:id/token - Create a one-time compatibility enrollment token
   fastify.get(
     '/:id/token',
     { preHandler: [requireRole(['SUPER_ADMIN', 'ADMIN', 'TECHNICIAN'])] },
