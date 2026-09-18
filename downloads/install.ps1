@@ -186,8 +186,30 @@ try {
     exit 1
 }
 
+$trayExe = Join-Path $env:ProgramFiles "NanoLabs\NanoMonitor\nanotray.exe"
 $trayRunning = [bool](Get-Process -Name "nanotray" -ErrorAction SilentlyContinue)
-$trayText = if ($trayRunning) { "Iniciada en la sesion actual" } else { "Se iniciara con la proxima sesion de usuario" }
+
+# Redundant user-session handoff: the native installer already delegates tray
+# startup to Explorer. If the interactive shell was momentarily unavailable,
+# retry here after the installer has exited. This process is not a child of the
+# installer, so Start-Process -Wait semantics remain clean.
+if (-not $trayRunning -and (Test-Path $trayExe)) {
+    try {
+        $shell = New-Object -ComObject Shell.Application
+        $shell.ShellExecute($trayExe, "", "", "open", 0)
+        for ($i = 0; $i -lt 10; $i++) {
+            Start-Sleep -Milliseconds 300
+            if (Get-Process -Name "nanotray" -ErrorAction SilentlyContinue) {
+                $trayRunning = $true
+                break
+            }
+        }
+    } catch {
+        # HKLM Run remains the durable fallback for the next interactive logon.
+    }
+}
+
+$trayText = if ($trayRunning) { "Iniciada en la sesion actual" } else { "Registrada para el proximo inicio de sesion" }
 
 Write-Host "=====================================================" -ForegroundColor Green
 Write-Host "  [OK] NanoLabs Monitor instalado y VERIFICADO       " -ForegroundColor Green
