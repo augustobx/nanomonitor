@@ -283,7 +283,9 @@ export const enrollmentRoutes: FastifyPluginAsync = async (fastify: FastifyInsta
     // Generate agent credentials
     const agentSecret = generateAgentSecret();
 
-    const resolvedAgentVersion = parsed.data.agentVersion ? parsed.data.agentVersion.replace(/^v/, '') : '1.3.0';
+    const resolvedAgentVersion = parsed.data.agentVersion
+      ? parsed.data.agentVersion.replace(/^v/, '').trim()
+      : 'unknown';
 
     const agent = await db.agent.upsert({
       where: { deviceId: device.id },
