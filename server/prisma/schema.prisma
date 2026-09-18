@@ -295,6 +295,7 @@ model Device {
   manufacturer String?
   model        String?
   serialNumber String?
+  hardwareId   String?
   osEdition    String?
   osVersion    String?
   osBuild      String?
@@ -335,6 +336,7 @@ model Device {
   hardwareChanges    HardwareChange[]
 
   @@index([tenantId, customerId])
+  @@index([tenantId, hardwareId])
   @@index([tenantId, status])
   @@index([lastSeenAt])
   @@map("devices")
@@ -465,6 +467,7 @@ model DeviceInventory {
   network       Json?
   security      Json?
   storage       Json?
+  smart         Json?
   windowsUpdate Json?
   checksum      String
 
