@@ -1,5 +1,6 @@
 import { FastifyInstance, FastifyPluginAsync } from 'fastify';
 import crypto from 'crypto';
+import { generateTamperKey } from '../../lib/crypto.js';
 import { db } from '../../lib/db.js';
 import { authenticateAgent } from '../../middleware/agent-auth.js';
 import { evaluateDeviceAlerts } from '../alerts/alert-evaluator.js';
@@ -96,6 +97,21 @@ export const agentRoutes: FastifyPluginAsync = async (fastify: FastifyInstance) 
       },
     });
 
+    // Existing pre-hardening devices may not have a tamper key yet.
+    // Provision once on authenticated heartbeat so tamper protection is never
+    // "enabled" without an actual unlock credential.
+    let effectiveTamperKey = device.tamperKey;
+    if (device.tamperProtectionEnabled && !effectiveTamperKey) {
+      effectiveTamperKey = generateTamperKey();
+      await db.device.update({
+        where: { id: deviceId },
+        data: {
+          tamperKey: effectiveTamperKey,
+          tamperKeyUpdatedAt: new Date(),
+        },
+      });
+    }
+
     // Automatically sync agentVersion from live heartbeat telemetry
     if (agentVersion) {
       try {
@@ -133,7 +149,7 @@ export const agentRoutes: FastifyPluginAsync = async (fastify: FastifyInstance) 
       pendingActions: pendingActionsCount,
       tamperProtection: {
         enabled: device.tamperProtectionEnabled,
-        key: device.tamperKey || null,
+        key: device.tamperProtectionEnabled ? (effectiveTamperKey || null) : null,
       },
     });
   });
