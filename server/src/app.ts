@@ -296,10 +296,17 @@ export async function buildApp(): Promise<FastifyInstance> {
     }
 
     if (query.token) {
-      const sanitizedToken = query.token.replace(/["'`$\\]/g, '');
+      const normalizedToken = query.token.trim().toUpperCase();
+      if (!/^NL-[A-Z0-9-]{8,96}$/.test(normalizedToken)) {
+        return reply.status(400).send({
+          statusCode: 400,
+          error: 'Bad Request',
+          message: 'Invalid enrollment token format',
+        });
+      }
       content = content.replace(
         '[string]$Token = ""',
-        `[string]$Token = "${sanitizedToken}"`
+        `[string]$Token = "${normalizedToken}"`
       );
     }
 
