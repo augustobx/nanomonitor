@@ -32,13 +32,23 @@ type ScanResult struct {
 }
 
 // InstallResult represents the outcome of a patch installation action
+type PatchInstallOutcome struct {
+	Identifier string `json:"identifier"`
+	Title      string `json:"title"`
+	ResultCode int    `json:"resultCode"`
+	HResult    int64  `json:"hResult"`
+	Installed  bool   `json:"installed"`
+}
+
 type InstallResult struct {
-	Success        bool     `json:"success"`
-	ResultCode     int      `json:"resultCode"`
-	RebootRequired bool     `json:"rebootRequired"`
-	InstalledCount int      `json:"installedCount"`
-	TargetKBs      []string `json:"targetKBs"`
-	Details        string   `json:"details"`
+	Success        bool                  `json:"success"`
+	ResultCode     int                   `json:"resultCode"`
+	RebootRequired bool                  `json:"rebootRequired"`
+	InstalledCount int                   `json:"installedCount"`
+	MatchedCount   int                   `json:"matchedCount"`
+	TargetKBs      []string              `json:"targetKBs"`
+	Outcomes       []PatchInstallOutcome `json:"outcomes"`
+	Details        string                `json:"details"`
 }
 
 // UnmarshalJSON implements custom JSON decoding for ScanResult to handle both array and single-object patches from PowerShell
@@ -86,26 +96,31 @@ try {
         $kbs = @()
         foreach ($kb in $u.KBArticleIDs) { $kbs += "KB$kb" }
         $mainKB = if ($kbs.Count -gt 0) { $kbs[0] } else {
-            if ($u.Identity.UpdateID) { "KB-" + $u.Identity.UpdateID.Substring(0, [Math]::Min(12, $u.Identity.UpdateID.Length)) } else { "KB0" }
+            if ($u.Identity.UpdateID) { "WU:" + $u.Identity.UpdateID } else { "WU:UNKNOWN" }
         }
         
         $cat = "OTHER"
-        foreach ($c in $u.Categories) {
-            $cName = $c.Name.ToLower()
-            if ($cName -match "critical") { $cat = "CRITICAL"; break }
-            elseif ($cName -match "security") { $cat = "SECURITY"; break }
-            elseif ($cName -match "update") { $cat = "IMPORTANT" }
-            elseif ($cName -match "driver") { $cat = "DRIVER" }
-            elseif ($cName -match "feature") { $cat = "FEATURE_UPDATE" }
-        }
-        
         $sev = "UNSPECIFIED"
         if ($u.MsrcSeverity) {
             $sev = $u.MsrcSeverity.ToUpper()
-        } elseif ($cat -eq "CRITICAL") {
-            $sev = "CRITICAL"
-        } elseif ($cat -eq "SECURITY") {
-            $sev = "IMPORTANT"
+            if ($sev -eq "CRITICAL") { $cat = "CRITICAL" }
+            else { $cat = "SECURITY" }
+        }
+
+        foreach ($c in $u.Categories) {
+            $cName = $c.Name.ToLowerInvariant()
+            if ($cat -eq "OTHER") {
+                if ($cName -match "critical|crítica|critica") { $cat = "CRITICAL" }
+                elseif ($cName -match "security|seguridad") { $cat = "SECURITY" }
+                elseif ($cName -match "driver|controlador") { $cat = "DRIVER" }
+                elseif ($cName -match "feature|característica|caracteristica") { $cat = "FEATURE_UPDATE" }
+                elseif ($cName -match "update|actualización|actualizacion") { $cat = "IMPORTANT" }
+            }
+        }
+
+        if ($sev -eq "UNSPECIFIED") {
+            if ($cat -eq "CRITICAL") { $sev = "CRITICAL" }
+            elseif ($cat -eq "SECURITY") { $sev = "IMPORTANT" }
         }
 
         $list += [PSCustomObject]@{
@@ -185,49 +200,72 @@ func InstallTargetKBs(ctx context.Context, targetKBs []string, timeout time.Dura
 	kbList := make([]string, len(targetKBs))
 	for i, kb := range targetKBs {
 		clean := strings.ToUpper(strings.TrimSpace(kb))
+		clean = strings.ReplaceAll(clean, "'", "''")
 		kbList[i] = fmt.Sprintf("'%s'", clean)
 	}
 	kbArrayLiteral := "@(" + strings.Join(kbList, ", ") + ")"
 
 	script := fmt.Sprintf(`$ErrorActionPreference = 'Stop'
-$targetKBs = %s
+$targetIds = %s
 try {
     $Session = New-Object -ComObject Microsoft.Update.Session
     $Searcher = $Session.CreateUpdateSearcher()
-    $SearchResult = $Searcher.Search("IsInstalled=0 and Type='Software'")
-    
+    $SearchResult = $Searcher.Search("IsInstalled=0 and IsHidden=0")
+
     $UpdatesToDownload = New-Object -ComObject Microsoft.Update.UpdateColl
+    $matchedMeta = @{}
+
     foreach ($u in $SearchResult.Updates) {
-        $matched = $false
-        foreach ($kb in $u.KBArticleIDs) {
-            $fullKB = "KB$kb"
-            if ($targetKBs -contains $fullKB -or $targetKBs -contains "$kb") {
-                $matched = $true
+        $ids = @()
+        foreach ($kb in $u.KBArticleIDs) { $ids += ("KB" + $kb).ToUpperInvariant() }
+        if ($u.Identity.UpdateID) { $ids += ("WU:" + $u.Identity.UpdateID).ToUpperInvariant() }
+
+        $matchedIdentifier = $null
+        foreach ($target in $targetIds) {
+            $normalizedTarget = "$target".ToUpperInvariant()
+            if ($ids -contains $normalizedTarget) {
+                $matchedIdentifier = $normalizedTarget
                 break
             }
         }
-        if ($matched) {
+
+        if ($matchedIdentifier) {
             $UpdatesToDownload.Add($u) | Out-Null
+            $matchedMeta[$u.Identity.UpdateID] = @{
+                identifier = $matchedIdentifier
+                title = "$($u.Title)"
+            }
         }
     }
 
-    if ($UpdatesToDownload.Count -eq 0) {
+    $matchedCount = [int]$UpdatesToDownload.Count
+    if ($matchedCount -eq 0) {
+        $outcomes = @()
+        foreach ($target in $targetIds) {
+            $outcomes += [PSCustomObject]@{
+                identifier = "$target"
+                title = ""
+                resultCode = -1
+                hResult = 0
+                installed = $false
+            }
+        }
         [PSCustomObject]@{
-            success = $true
-            resultCode = 0
+            success = $false
+            resultCode = 4
             rebootRequired = $false
             installedCount = 0
-            details = "No se encontraron actualizaciones pendientes que coincidan con los KBs solicitados en este equipo."
-        } | ConvertTo-Json -Compress
+            matchedCount = 0
+            outcomes = @($outcomes)
+            details = "No se encontró ninguna actualización pendiente que coincida con los identificadores solicitados."
+        } | ConvertTo-Json -Depth 5 -Compress
         exit 0
     }
 
-    # Step 1: Download
     $Downloader = $Session.CreateUpdateDownloader()
     $Downloader.Updates = $UpdatesToDownload
-    $Downloader.Download() | Out-Null
+    $DownloadResult = $Downloader.Download()
 
-    # Step 2: Filter downloaded
     $UpdatesToInstall = New-Object -ComObject Microsoft.Update.UpdateColl
     foreach ($u in $UpdatesToDownload) {
         if ($u.IsDownloaded) {
@@ -235,32 +273,88 @@ try {
         }
     }
 
-    if ($UpdatesToInstall.Count -eq 0) {
+    if ($UpdatesToInstall.Count -ne $UpdatesToDownload.Count) {
+        $outcomes = @()
+        foreach ($u in $UpdatesToDownload) {
+            $meta = $matchedMeta[$u.Identity.UpdateID]
+            $outcomes += [PSCustomObject]@{
+                identifier = $meta.identifier
+                title = $meta.title
+                resultCode = -1
+                hResult = 0
+                installed = $false
+            }
+        }
         [PSCustomObject]@{
             success = $false
-            resultCode = 1
+            resultCode = [int]$DownloadResult.ResultCode
             rebootRequired = $false
             installedCount = 0
-            details = "Falló la descarga de los parches seleccionados."
-        } | ConvertTo-Json -Compress
+            matchedCount = $matchedCount
+            outcomes = @($outcomes)
+            details = "No todos los parches seleccionados pudieron descargarse. Instalación cancelada para evitar un éxito parcial silencioso."
+        } | ConvertTo-Json -Depth 5 -Compress
         exit 0
     }
 
-    # Step 3: Install
     $Installer = $Session.CreateUpdateInstaller()
     $Installer.Updates = $UpdatesToInstall
     $InstallResult = $Installer.Install()
 
-    # ResultCode: 2 = InProgress, 3 = Succeeded, 4 = SucceededWithErrors, 5 = Failed, 6 = Aborted
-    $isSuccess = ($InstallResult.ResultCode -eq 2 -or $InstallResult.ResultCode -eq 3)
+    $outcomes = @()
+    $installedCount = 0
+    $allSucceeded = $true
+
+    for ($i = 0; $i -lt $UpdatesToInstall.Count; $i++) {
+        $u = $UpdatesToInstall.Item($i)
+        $meta = $matchedMeta[$u.Identity.UpdateID]
+        $perUpdate = $InstallResult.GetUpdateResult($i)
+        $installed = ([int]$perUpdate.ResultCode -eq 2)
+
+        if ($installed) {
+            $installedCount++
+        } else {
+            $allSucceeded = $false
+        }
+
+        $outcomes += [PSCustomObject]@{
+            identifier = $meta.identifier
+            title = $meta.title
+            resultCode = [int]$perUpdate.ResultCode
+            hResult = [long]$perUpdate.HResult
+            installed = [bool]$installed
+        }
+    }
+
+    # Any requested identifier not matched is a failure, never a success.
+    foreach ($target in $targetIds) {
+        $normalizedTarget = "$target".ToUpperInvariant()
+        $alreadyReported = @($outcomes | Where-Object { $_.identifier -eq $normalizedTarget }).Count -gt 0
+        if (-not $alreadyReported) {
+            $allSucceeded = $false
+            $outcomes += [PSCustomObject]@{
+                identifier = $normalizedTarget
+                title = ""
+                resultCode = -1
+                hResult = 0
+                installed = $false
+            }
+        }
+    }
+
+    $reboot = [bool]$InstallResult.RebootRequired
+    if (Test-Path "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\WindowsUpdate\Auto Update\RebootRequired") { $reboot = $true }
+    if (Test-Path "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Component Based Servicing\RebootPending") { $reboot = $true }
 
     [PSCustomObject]@{
-        success = $isSuccess
+        success = [bool]($allSucceeded -and $installedCount -eq $targetIds.Count)
         resultCode = [int]$InstallResult.ResultCode
-        rebootRequired = [bool]$InstallResult.RebootRequired
-        installedCount = [int]$UpdatesToInstall.Count
-        details = "Instalación completada. Código de resultado: $($InstallResult.ResultCode)."
-    } | ConvertTo-Json -Compress
+        rebootRequired = $reboot
+        installedCount = [int]$installedCount
+        matchedCount = [int]$matchedCount
+        outcomes = @($outcomes)
+        details = "Windows Update verificó $installedCount de $($targetIds.Count) actualización(es) como instaladas."
+    } | ConvertTo-Json -Depth 5 -Compress
 } catch {
     Write-Error $_.Exception.Message
     exit 1
