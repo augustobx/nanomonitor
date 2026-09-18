@@ -31,17 +31,18 @@ func detachAndHideConsole() {
 }
 
 func main() {
-	detachAndHideConsole()
-
 	var showVersion bool
 	flag.BoolVar(&showVersion, "version", false, "Print version and exit")
 	flag.BoolVar(&showVersion, "v", false, "Print version and exit")
 	flag.Parse()
 
+	// Version probes are CLI operations and must keep stdout attached.
 	if showVersion {
 		fmt.Printf("NanoLabs Tray %s\n", version.Info())
 		os.Exit(0)
 	}
+
+	detachAndHideConsole()
 
 	app, err := tray.NewTrayApp()
 	if err != nil {
