@@ -178,6 +178,9 @@ export const agentRoutes: FastifyPluginAsync = async (fastify: FastifyInstance) 
       },
     });
 
+    // Evaluate CPU/RAM/thermal rules immediately from this fresh metric sample.
+    evaluateDeviceAlerts(deviceId, tenantId).catch(() => {});
+
     return reply.status(200).send({ status: 'ok' });
   });
 
