@@ -24,7 +24,7 @@ services:
       - JWT_EXPIRES_IN=24h
       - REFRESH_TOKEN_EXPIRES_DAYS=7
       - AGENT_TIMESTAMP_DRIFT_SECS=300
-      - ADMIN_INITIAL_PASSWORD=${ADMIN_INITIAL_PASSWORD:-NanoLabs2026!Admin}
+      - ADMIN_INITIAL_PASSWORD=${ADMIN_INITIAL_PASSWORD}
     volumes:
       - ./downloads:/app/downloads
     networks:
