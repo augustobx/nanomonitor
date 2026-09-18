@@ -224,6 +224,8 @@ export const agentActionRoutes: FastifyPluginAsync = async (fastify: FastifyInst
       if (changed && (parsed.data.status === 'SUCCESS' || parsed.data.status === 'FAILED')) {
         RemediationService.handleRemoteActionCompletion(
           actionId,
+          tenantId,
+          parsed.data.status,
           parsed.data.exitCode ?? (parsed.data.status === 'SUCCESS' ? 0 : 1),
           parsed.data.output,
           parsed.data.error,
