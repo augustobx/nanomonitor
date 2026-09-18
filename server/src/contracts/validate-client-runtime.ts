@@ -36,8 +36,12 @@ const handlers = new Set<string>([
   ...collectInlineHandlerNames(runtime),
 ]);
 
+const browserBuiltins = new Set(['alert', 'confirm', 'prompt']);
+
 const missing: string[] = [];
 for (const name of handlers) {
+  if (browserBuiltins.has(name)) continue;
+
   const escaped = name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
   const declared = new RegExp(`(?:async\\s+)?function\\s+${escaped}\\s*\\(`).test(runtime);
   const assigned = new RegExp(`window\\.${escaped}\\s*=`).test(runtime);
