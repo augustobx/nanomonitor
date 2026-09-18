@@ -7,6 +7,7 @@ import { getTenantId } from '../../middleware/tenant-isolation.js';
 import { updateDeviceSchema } from '../../schemas/management.schema.js';
 import { logAudit } from '../../middleware/audit.js';
 import { calculateAndPersistDeviceHealthScore } from '../health/health-scorer.js';
+import { applyDevicePresence, ONLINE_HEARTBEAT_THRESHOLD_MS } from '../../lib/device-presence.js';
 
 export const devicesRoutes: FastifyPluginAsync = async (fastify: FastifyInstance) => {
   fastify.addHook('preHandler', authenticateUser);
@@ -34,11 +35,19 @@ export const devicesRoutes: FastifyPluginAsync = async (fastify: FastifyInstance
     const limitNum = Math.min(100, Math.max(1, parseInt(limit, 10) || 50));
     const skip = (pageNum - 1) * limitNum;
 
+    const presenceCutoff = new Date(Date.now() - ONLINE_HEARTBEAT_THRESHOLD_MS);
+
     const where: any = {
       tenantId,
       ...(customerId ? { customerId } : {}),
       ...(siteId ? { siteId } : {}),
-      ...(status ? { status } : {}),
+      ...(status === 'ONLINE'
+        ? { heartbeats: { some: { timestamp: { gte: presenceCutoff } } } }
+        : status === 'OFFLINE'
+          ? { heartbeats: { none: { timestamp: { gte: presenceCutoff } } } }
+          : status
+            ? { status }
+            : {}),
       ...(search
         ? {
             OR: [
@@ -60,6 +69,7 @@ export const devicesRoutes: FastifyPluginAsync = async (fastify: FastifyInstance
           site: { select: { id: true, name: true } },
           agent: { select: { id: true, agentVersion: true, status: true, lastAuthAt: true } },
           healthScores: { take: 1, orderBy: { calculatedAt: 'desc' } },
+          heartbeats: { take: 1, orderBy: { timestamp: 'desc' } },
         },
         orderBy: { lastSeenAt: 'desc' },
         skip,
@@ -70,7 +80,7 @@ export const devicesRoutes: FastifyPluginAsync = async (fastify: FastifyInstance
     return reply.send({
       statusCode: 200,
       data: {
-        devices,
+        devices: devices.map((device) => applyDevicePresence(device)),
         pagination: {
           total,
           page: pageNum,
@@ -104,6 +114,7 @@ export const devicesRoutes: FastifyPluginAsync = async (fastify: FastifyInstance
           take: 1,
           orderBy: { calculatedAt: 'desc' },
         },
+        heartbeats: { take: 1, orderBy: { timestamp: 'desc' } },
         inventories: {
           take: 1,
           orderBy: { collectedAt: 'desc' },
@@ -148,7 +159,7 @@ export const devicesRoutes: FastifyPluginAsync = async (fastify: FastifyInstance
       }).catch(() => {});
     }
 
-    return reply.send({ statusCode: 200, data: device });
+    return reply.send({ statusCode: 200, data: applyDevicePresence(device) });
   });
 
   // GET /api/v1/devices/:id/health
