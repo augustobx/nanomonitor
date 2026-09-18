@@ -63,7 +63,7 @@ export function getClientRuntimeScript(): string {
     function renderAgentVersionBadge(d, compact) {
       const tag = getAgentVersionTag(d);
       const clean = tag.replace(/^v/, '');
-      const isLatest = clean.startsWith('1.3') || clean === '1.3.0';
+      const isLatest = clean.startsWith('1.4') || clean === '1.4.0';
       if (compact) {
         if (isLatest) {
           return '<span class="code-badge" style="font-size: 10px; margin-left: 6px; padding: 1px 6px; color: #34d399; border-color: rgba(52,211,153,0.35); background: rgba(52,211,153,0.1);" title="Agente actualizado a la última versión (' + tag + ')">' + tag + '</span>';
@@ -1855,6 +1855,14 @@ export function getClientRuntimeScript(): string {
         if (firstDisk && firstDisk.healthStatus && !firstDisk.healthStatus.toLowerCase().includes('health')) {
           issues.push('💾 SMART alerta en disco: ' + firstDisk.healthStatus);
         }
+
+        const latestThermal = (d.metrics && d.metrics.length > 0 && d.metrics[0].thermal) ? d.metrics[0].thermal : null;
+        if (latestThermal && latestThermal.status === 'CRITICAL') {
+          issues.push('🌡️ Temperatura crítica detectada en CPU/GPU');
+        } else if (latestThermal && latestThermal.status === 'WARNING') {
+          issues.push('🌡️ Temperatura elevada detectada en CPU/GPU');
+        }
+
         if (critCount > 0) issues.push('🚨 ' + critCount + ' Alertas críticas activas');
 
         if (issues.length > 0) {
@@ -2373,6 +2381,29 @@ export function getClientRuntimeScript(): string {
         return 0;
       }
 
+      function safeThermalText(value) {
+        return String(value == null ? '' : value)
+          .replace(/&/g, '&amp;')
+          .replace(/</g, '&lt;')
+          .replace(/>/g, '&gt;')
+          .replace(/"/g, '&quot;')
+          .replace(/'/g, '&#39;');
+      }
+
+      function thermalStatusText(status) {
+        if (status === 'CRITICAL') return 'CRÍTICO';
+        if (status === 'WARNING') return 'ADVERTENCIA';
+        if (status === 'NORMAL') return 'NORMAL';
+        return 'NO DISPONIBLE';
+      }
+
+      function thermalStatusColor(status) {
+        if (status === 'CRITICAL') return '#ef4444';
+        if (status === 'WARNING') return '#f59e0b';
+        if (status === 'NORMAL') return '#34d399';
+        return 'var(--text-muted)';
+      }
+
       if (list.length === 1) {
         const cpuY = Math.max(5, Math.min(95, 100 - getMetricCpuVal(list[0])));
         const ramY = Math.max(5, Math.min(95, 100 - getMetricRamVal(list[0])));
@@ -2396,8 +2427,63 @@ export function getClientRuntimeScript(): string {
       const latest = list[list.length - 1];
       const latestCpu = Math.round(getMetricCpuVal(latest));
       const latestRam = Math.round(getMetricRamVal(latest));
+      const thermal = latest && latest.thermal ? latest.thermal : null;
 
-      c.innerHTML = 
+      let thermalCards = '';
+      if (thermal && thermal.available) {
+        if (thermal.cpu && thermal.cpu.temperatureC != null) {
+          thermalCards +=
+            '<div style="background: var(--bg-surface-subtle); border: 1px solid var(--border-subtle); border-radius: var(--radius-md); padding: 12px 14px; min-width: 210px; flex: 1;">' +
+              '<div style="font-size: 11px; color: var(--text-muted); font-weight: 700;">🌡️ CPU · ' + safeThermalText(thermal.cpu.name || 'CPU') + '</div>' +
+              '<div style="display:flex; align-items:baseline; gap:8px; margin-top:5px;">' +
+                '<span style="font-size:22px; font-weight:800; color:' + thermalStatusColor(thermal.cpu.status) + ';">' + Number(thermal.cpu.temperatureC).toFixed(1) + ' °C</span>' +
+                '<span style="font-size:10px; font-weight:700; color:' + thermalStatusColor(thermal.cpu.status) + ';">' + thermalStatusText(thermal.cpu.status) + '</span>' +
+              '</div>' +
+              '<div style="font-size:10px; color:var(--text-muted); margin-top:3px;">Fuente: ' + safeThermalText(thermal.cpu.source || '-') + '</div>' +
+            '</div>';
+        } else {
+          thermalCards +=
+            '<div style="background: var(--bg-surface-subtle); border: 1px solid var(--border-subtle); border-radius: var(--radius-md); padding: 12px 14px; min-width: 210px; flex: 1;">' +
+              '<div style="font-size:11px; color:var(--text-muted); font-weight:700;">🌡️ CPU</div>' +
+              '<div style="font-size:16px; font-weight:700; color:var(--text-muted); margin-top:7px;">No disponible</div>' +
+            '</div>';
+        }
+
+        if (thermal.gpus && thermal.gpus.length > 0) {
+          thermal.gpus.forEach(function(gpu) {
+            thermalCards +=
+              '<div style="background: var(--bg-surface-subtle); border: 1px solid var(--border-subtle); border-radius: var(--radius-md); padding: 12px 14px; min-width: 210px; flex: 1;">' +
+                '<div style="font-size:11px; color:var(--text-muted); font-weight:700;">🌡️ GPU · ' + safeThermalText(gpu.name || 'GPU') + '</div>' +
+                '<div style="display:flex; align-items:baseline; gap:8px; margin-top:5px;">' +
+                  '<span style="font-size:22px; font-weight:800; color:' + thermalStatusColor(gpu.status) + ';">' + Number(gpu.temperatureC).toFixed(1) + ' °C</span>' +
+                  '<span style="font-size:10px; font-weight:700; color:' + thermalStatusColor(gpu.status) + ';">' + thermalStatusText(gpu.status) + '</span>' +
+                '</div>' +
+                '<div style="font-size:10px; color:var(--text-muted); margin-top:3px;">Fuente: ' + safeThermalText(gpu.source || '-') + '</div>' +
+              '</div>';
+          });
+        } else {
+          thermalCards +=
+            '<div style="background: var(--bg-surface-subtle); border: 1px solid var(--border-subtle); border-radius: var(--radius-md); padding: 12px 14px; min-width: 210px; flex: 1;">' +
+              '<div style="font-size:11px; color:var(--text-muted); font-weight:700;">🌡️ GPU</div>' +
+              '<div style="font-size:16px; font-weight:700; color:var(--text-muted); margin-top:7px;">No disponible</div>' +
+            '</div>';
+        }
+      } else {
+        thermalCards =
+          '<div style="background: var(--bg-surface-subtle); border: 1px solid var(--border-subtle); border-radius: var(--radius-md); padding: 12px 14px; flex: 1;">' +
+            '<div style="font-size:11px; color:var(--text-muted); font-weight:700;">🌡️ Sensores térmicos</div>' +
+            '<div style="font-size:14px; font-weight:700; color:var(--text-muted); margin-top:7px;">CPU / GPU no disponibles en este equipo</div>' +
+            '<div style="font-size:10px; color:var(--text-muted); margin-top:3px;">NanoMonitor no genera valores estimados.</div>' +
+          '</div>';
+      }
+
+      const thermalHtml =
+        '<div style="display:flex; flex-wrap:wrap; gap:10px; margin-bottom:14px;">' +
+          thermalCards +
+        '</div>';
+
+      c.innerHTML =
+        thermalHtml +
         '<div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px; font-size: 12px;">' +
           '<div style="display: flex; gap: 20px;">' +
             '<span style="color: #60a5fa; font-weight: 600;">● CPU: ' + latestCpu + '%</span>' +
