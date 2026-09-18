@@ -151,7 +151,7 @@ export const agentRoutes: FastifyPluginAsync = async (fastify: FastifyInstance) 
     }
 
     const { deviceId, tenantId } = request.agent!;
-    const { timestamp, uptimeSeconds, uptimeSecs, cpuPercent, ramUsedMb, ramAvailMb, volumes } = parsed.data;
+    const { timestamp, uptimeSeconds, uptimeSecs, cpuPercent, ramUsedMb, ramAvailMb, volumes, thermal } = parsed.data;
 
     const uptime = uptimeSeconds ?? uptimeSecs ?? 0;
     const eventDate = new Date(timestamp);
@@ -165,6 +165,7 @@ export const agentRoutes: FastifyPluginAsync = async (fastify: FastifyInstance) 
         ramUsedMB: ramUsedMb ?? null,
         ramAvailMB: ramAvailMb ?? null,
         volumes: volumes ? (volumes as any) : undefined,
+        thermal: thermal ? (thermal as any) : undefined,
         uptimeSeconds: BigInt(uptime),
       },
     });
