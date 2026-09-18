@@ -257,6 +257,28 @@ func doInstall(token, apiURL string, silent bool) {
 		}
 	}
 
+	// During upgrades from <=1.4.0 this file can still contain credentials.
+	// Keep it readable only by SYSTEM/Administrators until the 1.4.x agent
+	// migrates those values into agent.secrets.json.
+	if err := protectConfigDuringMigration(configYamlPath); err != nil {
+		showError(fmt.Sprintf("No se pudo proteger config.yaml durante la migración:\n%v", err), silent)
+		os.Exit(1)
+	}
+
+	// Re-assert protected ACLs on sensitive files that may already exist from
+	// a previous install before the service starts.
+	for _, sensitivePath := range []string{
+		filepath.Join(DefaultDataDir, "agent.secrets.json"),
+		filepath.Join(DefaultDataDir, ".enrollment-token"),
+	} {
+		if _, err := os.Stat(sensitivePath); err == nil {
+			if err := protectSensitiveFile(sensitivePath); err != nil {
+				showError(fmt.Sprintf("No se pudo proteger %s:\n%v", filepath.Base(sensitivePath), err), silent)
+				os.Exit(1)
+			}
+		}
+	}
+
 	// Enrollment token is a credential. It is readable only by the installer
 	// administrator and LocalSystem, then the agent deletes it after enrollment.
 	if token != "" {
@@ -303,6 +325,14 @@ func doInstall(token, apiURL string, silent bool) {
 	// 8. Start Windows Service and verify the SCM really reports RUNNING.
 	if err := ensureServiceRunning(30 * time.Second); err != nil {
 		showError(fmt.Sprintf("NanoLabsAgent fue instalado pero NO pudo quedar en ejecución:\n%v\n\nRevise el Visor de Eventos > Windows Logs > System > Service Control Manager.", err), silent)
+		os.Exit(1)
+	}
+
+	// Config migration happens before the process enters svc.Run. Once the
+	// service is confirmed RUNNING, config.yaml no longer contains credentials
+	// and can be exposed read-only for tray/status consumers.
+	if err := makePublicConfigReadable(configYamlPath); err != nil {
+		showError(fmt.Sprintf("El servicio inició, pero no se pudo restaurar la ACL pública de config.yaml:\n%v", err), silent)
 		os.Exit(1)
 	}
 
@@ -470,6 +500,9 @@ func safeWriteBinary(destPath string, data []byte) error {
 }
 
 func secureDataDirectory() error {
+	// Apply inheritable ACLs to the directory itself only. Do NOT use /T here:
+	// applying directory-only (OI)(CI) ACEs recursively to existing files can
+	// leave file DACLs empty on Windows.
 	cmd := exec.Command(
 		"icacls.exe",
 		DefaultDataDir,
@@ -478,11 +511,40 @@ func secureDataDirectory() error {
 		"*S-1-5-18:(OI)(CI)F",
 		"*S-1-5-32-544:(OI)(CI)F",
 		"*S-1-5-32-545:(OI)(CI)RX",
-		"/T",
-		"/C",
 	)
 	if out, err := cmd.CombinedOutput(); err != nil {
 		return fmt.Errorf("icacls data directory: %w (%s)", err, string(out))
+	}
+	return nil
+}
+
+func protectConfigDuringMigration(path string) error {
+	cmd := exec.Command(
+		"icacls.exe",
+		path,
+		"/inheritance:r",
+		"/grant:r",
+		"*S-1-5-18:F",
+		"*S-1-5-32-544:F",
+	)
+	if out, err := cmd.CombinedOutput(); err != nil {
+		return fmt.Errorf("icacls config migration ACL: %w (%s)", err, string(out))
+	}
+	return nil
+}
+
+func makePublicConfigReadable(path string) error {
+	cmd := exec.Command(
+		"icacls.exe",
+		path,
+		"/inheritance:r",
+		"/grant:r",
+		"*S-1-5-18:F",
+		"*S-1-5-32-544:F",
+		"*S-1-5-32-545:R",
+	)
+	if out, err := cmd.CombinedOutput(); err != nil {
+		return fmt.Errorf("icacls public config ACL: %w (%s)", err, string(out))
 	}
 	return nil
 }
