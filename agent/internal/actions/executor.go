@@ -499,102 +499,94 @@ const safeIsoDatePsSnippet = `function Safe-IsoDate($d) {
 
 const defenderReactivationPsSnippet = `function Invoke-DefenderReactivation {
     $report = @{
-        policiesCleared = 0
-        servicesStarted = @()
         preferenceApplied = $false
         mpCmdSuccess = $false
         activeAfter = $false
+        antivirusEnabled = $false
+        realTimeProtection = $false
+        serviceRunning = $false
+        tamperProtected = $false
         error = ""
     }
 
-    $policyPaths = @(
-        "HKLM:\SOFTWARE\Policies\Microsoft\Windows Defender",
-        "HKLM:\SOFTWARE\Policies\Microsoft\Windows Defender\Real-Time Protection",
-        "HKLM:\SOFTWARE\Policies\Microsoft\Windows Defender\Policy Manager"
-    )
-    $policyKeys = @(
-        "DisableAntiSpyware",
-        "DisableAntiVirus",
-        "DisableRealtimeMonitoring",
-        "DisableBehaviorMonitoring",
-        "DisableOnAccessProtection",
-        "DisableScanOnRealtimeEnable",
-        "DisableIOAVProtection",
-        "DisableScriptScanning",
-        "DisableIntrusionPreventionSystem",
-        "ServiceKeepAlive"
-    )
-    foreach ($path in $policyPaths) {
-        if (Test-Path $path) {
-            foreach ($k in $policyKeys) {
-                try {
-                    $item = Get-ItemProperty -Path $path -Name $k -ErrorAction SilentlyContinue
-                    if ($null -ne $item) {
-                        Remove-ItemProperty -Path $path -Name $k -Force -ErrorAction SilentlyContinue
-                        $report.policiesCleared++
-                    }
-                } catch {}
-            }
+    try {
+        $pre = Get-MpComputerStatus -ErrorAction Stop
+        if ($null -ne $pre.IsTamperProtected) {
+            $report.tamperProtected = [bool]$pre.IsTamperProtected
         }
-    }
-
-    $rtpLocal = "HKLM:\SOFTWARE\Microsoft\Windows Defender\Real-Time Protection"
-    if (Test-Path $rtpLocal) {
-        $rtpKeys = @("DisableRealtimeMonitoring", "DisableBehaviorMonitoring", "DisableOnAccessProtection", "DisableScanOnRealtimeEnable", "DisableIOAVProtection")
-        foreach ($rk in $rtpKeys) {
-            try {
-                $val = (Get-ItemProperty -Path $rtpLocal -Name $rk -ErrorAction SilentlyContinue).$rk
-                if ($val -eq 1) {
-                    Set-ItemProperty -Path $rtpLocal -Name $rk -Value 0 -Force -ErrorAction SilentlyContinue
-                }
-            } catch {}
-        }
-    }
-
-    $svcs = @("WinDefend", "WdNisSvc", "SecurityHealthService")
-    foreach ($s in $svcs) {
-        try {
-            $svcKey = "HKLM:\SYSTEM\CurrentControlSet\Services\$s"
-            if (Test-Path $svcKey) {
-                $startVal = (Get-ItemProperty -Path $svcKey -Name "Start" -ErrorAction SilentlyContinue).Start
-                if ($startVal -eq 4) {
-                    Set-ItemProperty -Path $svcKey -Name "Start" -Value 2 -Force -ErrorAction SilentlyContinue
-                }
-            }
-            & sc.exe config $s start= auto 2>&1 | Out-Null
-            & sc.exe start $s 2>&1 | Out-Null
-            $report.servicesStarted += $s
-        } catch {}
+    } catch {
+        $report.error = "No se pudo consultar Microsoft Defender: " + $_.Exception.Message
+        return $report
     }
 
     try {
-        Set-MpPreference -DisableRealtimeMonitoring:$false -DisableBehaviorMonitoring:$false -DisableIOAVProtection:$false -DisableScriptScanning:$false -DisableIntrusionPreventionSystem:$false -DisableBlockAtFirstSeen:$false -ErrorAction SilentlyContinue
+        Set-MpPreference `
+            -DisableRealtimeMonitoring:$false `
+            -DisableBehaviorMonitoring:$false `
+            -DisableIOAVProtection:$false `
+            -DisableScriptScanning:$false `
+            -DisableBlockAtFirstSeen:$false `
+            -ErrorAction Stop
         $report.preferenceApplied = $true
     } catch {
-        $report.error = $_.Exception.Message
+        $report.error = "Windows rechazó Set-MpPreference: " + $_.Exception.Message
     }
 
     try {
         $mpCmd = "C:\Program Files\Windows Defender\MpCmdRun.exe"
         if (-not (Test-Path $mpCmd)) {
-            $found = Get-ChildItem "C:\ProgramData\Microsoft\Windows Defender\Platform" -Filter MpCmdRun.exe -Recurse -ErrorAction SilentlyContinue | Select-Object -First 1 -ExpandProperty FullName
+            $found = Get-ChildItem "C:\ProgramData\Microsoft\Windows Defender\Platform" -Filter MpCmdRun.exe -Recurse -ErrorAction SilentlyContinue |
+                Sort-Object FullName -Descending |
+                Select-Object -First 1 -ExpandProperty FullName
             if ($found) { $mpCmd = $found }
         }
+
         if (Test-Path $mpCmd) {
             & $mpCmd -wdenable 2>&1 | Out-Null
-            $report.mpCmdSuccess = $true
+            $report.mpCmdSuccess = ($LASTEXITCODE -eq 0)
+            if (-not $report.mpCmdSuccess -and -not $report.error) {
+                $report.error = "MpCmdRun -wdenable devolvió código " + $LASTEXITCODE
+            }
         }
-    } catch {}
+    } catch {
+        if (-not $report.error) {
+            $report.error = "MpCmdRun falló: " + $_.Exception.Message
+        }
+    }
 
     for ($i = 0; $i -lt 10; $i++) {
         Start-Sleep -Milliseconds 500
         try {
-            $st = Get-MpComputerStatus -ErrorAction SilentlyContinue
-            if ($st -and ($st.RealTimeProtectionEnabled -or $st.AntivirusEnabled -or $st.AMServiceEnabled)) {
-                $report.activeAfter = $true
+            $post = Get-MpComputerStatus -ErrorAction Stop
+            $report.antivirusEnabled = [bool]$post.AntivirusEnabled
+            $report.realTimeProtection = [bool]$post.RealTimeProtectionEnabled
+            $report.serviceRunning = [bool]$post.AMServiceEnabled
+            if ($null -ne $post.IsTamperProtected) {
+                $report.tamperProtected = [bool]$post.IsTamperProtected
+            }
+
+            $report.activeAfter = [bool](
+                $report.antivirusEnabled -and
+                $report.realTimeProtection -and
+                $report.serviceRunning
+            )
+
+            if ($report.activeAfter) {
                 break
             }
-        } catch {}
+        } catch {
+            if (-not $report.error) {
+                $report.error = "No se pudo validar el estado final de Defender: " + $_.Exception.Message
+            }
+        }
+    }
+
+    if (-not $report.activeAfter -and -not $report.error) {
+        if ($report.tamperProtected) {
+            $report.error = "Defender no quedó completamente activo. Tamper Protection está habilitado y puede impedir cambios locales."
+        } else {
+            $report.error = "Defender no quedó completamente activo. Puede existir una política administrada o un antivirus de terceros."
+        }
     }
 
     return $report
@@ -607,7 +599,7 @@ func executeDefenderScan(ctx context.Context, scanType string, timeout time.Dura
 %s
 $out = @{}
 try {
-    $pre = Get-MpComputerStatus -ErrorAction SilentlyContinue
+    $pre = Get-MpComputerStatus -ErrorAction Stop
     if ($pre) {
         $out.preQuickScanStart = Safe-IsoDate $pre.QuickScanStartTime
         $out.preFullScanStart = Safe-IsoDate $pre.FullScanStartTime
@@ -626,7 +618,10 @@ try {
         $react = Invoke-DefenderReactivation
         $out.reactivation = $react
         $out.reactivated = [bool]$react.activeAfter
-        $pre = Get-MpComputerStatus -ErrorAction SilentlyContinue
+        if (-not $out.reactivated) {
+            throw ("No se pudo activar Microsoft Defender antes del escaneo: " + $react.error)
+        }
+        $pre = Get-MpComputerStatus -ErrorAction Stop
     }
 
     $scanStart = Get-Date
@@ -634,7 +629,7 @@ try {
     $scanEnd = Get-Date
 
     Start-Sleep -Seconds 2
-    $post = Get-MpComputerStatus -ErrorAction SilentlyContinue
+    $post = Get-MpComputerStatus -ErrorAction Stop
 
     $out.scanType = '%s'
     $out.scanStarted = Safe-IsoDate $scanStart
@@ -653,7 +648,11 @@ try {
         }
         $out.signatureVersion = "$($post.AntivirusSignatureVersion)"
     } else {
-        $out.scanConfirmed = $true
+        $out.scanConfirmed = $false
+    }
+
+    if (-not $out.scanConfirmed) {
+        throw "Windows Defender no confirmó el escaneo solicitado."
     }
 
     # Check for threats
@@ -772,23 +771,23 @@ func executeDefenderUpdateSignatures(ctx context.Context) *ExecutionResult {
 %s
 $out = @{}
 try {
-    $pre = Get-MpComputerStatus -ErrorAction SilentlyContinue
-    if ($pre) {
-        $out.preVersion = "$($pre.AntivirusSignatureVersion)"
-        $out.preLastUpdated = Safe-IsoDate $pre.AntivirusSignatureLastUpdated
-    }
+    $pre = Get-MpComputerStatus -ErrorAction Stop
+    if (-not $pre) { throw "Microsoft Defender no devolvió estado previo." }
 
-    Update-MpSignature
+    $out.preVersion = "$($pre.AntivirusSignatureVersion)"
+    $out.preLastUpdated = Safe-IsoDate $pre.AntivirusSignatureLastUpdated
+
+    Update-MpSignature -ErrorAction Stop
 
     Start-Sleep -Seconds 2
-    $post = Get-MpComputerStatus -ErrorAction SilentlyContinue
-    if ($post) {
-        $out.postVersion = "$($post.AntivirusSignatureVersion)"
-        $out.postLastUpdated = Safe-IsoDate $post.AntivirusSignatureLastUpdated
-        $out.updated = ($pre -and $post.AntivirusSignatureVersion -ne $pre.AntivirusSignatureVersion)
-        $out.engineVersion = "$($post.AMEngineVersion)"
-    }
-    $out.success = $true
+    $post = Get-MpComputerStatus -ErrorAction Stop
+    if (-not $post) { throw "Microsoft Defender no devolvió estado posterior a la actualización." }
+
+    $out.postVersion = "$($post.AntivirusSignatureVersion)"
+    $out.postLastUpdated = Safe-IsoDate $post.AntivirusSignatureLastUpdated
+    $out.updated = ($post.AntivirusSignatureVersion -ne $pre.AntivirusSignatureVersion)
+    $out.engineVersion = "$($post.AMEngineVersion)"
+    $out.success = -not [string]::IsNullOrWhiteSpace($out.postVersion)
 } catch {
     $out.success = $false
     $out.error = $_.Exception.Message
@@ -872,11 +871,9 @@ func executeForceHeartbeat(ctx context.Context, hook SchedTriggerHook) *Executio
 
 // executeDefenderEnableProtection performs deep reactivation and remediation of Microsoft Defender
 func executeDefenderEnableProtection(ctx context.Context, hook SchedTriggerHook) *ExecutionResult {
-	script := fmt.Sprintf(`$ErrorActionPreference = 'Continue'
+	script := fmt.Sprintf(`$ErrorActionPreference = 'Stop'
 %s
 $out = @{
-    policiesCleared = 0
-    servicesStarted = @()
     preferenceApplied = $false
     mpCmdSuccess = $false
     activeBefore = $false
@@ -889,28 +886,28 @@ $out = @{
 }
 
 try {
-    $pre = Get-MpComputerStatus -ErrorAction SilentlyContinue
+    $pre = Get-MpComputerStatus -ErrorAction Stop
     if ($pre) {
         $out.activeBefore = [bool]($pre.AntivirusEnabled -and $pre.RealTimeProtectionEnabled)
     }
 
     $react = Invoke-DefenderReactivation
-    $out.policiesCleared = $react.policiesCleared
-    $out.servicesStarted = $react.servicesStarted
     $out.preferenceApplied = $react.preferenceApplied
     $out.mpCmdSuccess = $react.mpCmdSuccess
     $out.activeAfter = $react.activeAfter
     $out.error = $react.error
 
-    $post = Get-MpComputerStatus -ErrorAction SilentlyContinue
+    $post = Get-MpComputerStatus -ErrorAction Stop
     if ($post) {
         $out.antivirusEnabled = [bool]$post.AntivirusEnabled
         $out.realTimeProtection = [bool]$post.RealTimeProtectionEnabled
         $out.serviceRunning = [bool]$post.AMServiceEnabled
         $out.signatureVersion = "$($post.AntivirusSignatureVersion)"
-        if (-not $out.activeAfter) {
-            $out.activeAfter = [bool]($post.AntivirusEnabled -or $post.RealTimeProtectionEnabled -or $post.AMServiceEnabled)
-        }
+        $out.activeAfter = [bool](
+            $post.AntivirusEnabled -and
+            $post.RealTimeProtectionEnabled -and
+            $post.AMServiceEnabled
+        )
     }
 } catch {
     $out.error = $_.Exception.Message
@@ -927,32 +924,38 @@ $out | ConvertTo-Json -Compress`, defenderReactivationPsSnippet)
 	_ = cmd.Run()
 
 	combined := strings.TrimSpace(stdout.String())
+	errStr := strings.TrimSpace(stderr.String())
 	var result map[string]interface{}
-	_ = json.Unmarshal([]byte(combined), &result)
+	parseErr := json.Unmarshal([]byte(combined), &result)
+	if err != nil || parseErr != nil || result == nil {
+		detail := errStr
+		if detail == "" && err != nil {
+			detail = err.Error()
+		}
+		if detail == "" && parseErr != nil {
+			detail = parseErr.Error()
+		}
+		if detail == "" {
+			detail = "Windows Defender no devolvió un resultado verificable."
+		}
+		return &ExecutionResult{
+			ExitCode: 1,
+			Output:   "No se pudo verificar la reactivación de Microsoft Defender.",
+			Error:    detail,
+		}
+	}
 
 	var sb strings.Builder
 	sb.WriteString("Protocolo de Reactivación Forzada de Microsoft Defender:\n\n")
 
 	isActive := false
 	if result != nil {
-		if active, ok := result["activeAfter"].(bool); ok && active {
-			isActive = true
-		} else if rtp, ok := result["realTimeProtection"].(bool); ok && rtp {
-			isActive = true
-		} else if av, ok := result["antivirusEnabled"].(bool); ok && av {
-			isActive = true
-		}
+		active, _ := result["activeAfter"].(bool)
+		av, _ := result["antivirusEnabled"].(bool)
+		rtp, _ := result["realTimeProtection"].(bool)
+		svc, _ := result["serviceRunning"].(bool)
+		isActive = active && av && rtp && svc
 
-		if cleared, ok := result["policiesCleared"].(float64); ok && cleared > 0 {
-			sb.WriteString(fmt.Sprintf("🔓 Se eliminaron %.0f directivas de bloqueo en el registro (Group Policy overrides).\n", cleared))
-		}
-		if svcs, ok := result["servicesStarted"].([]interface{}); ok && len(svcs) > 0 {
-			var names []string
-			for _, s := range svcs {
-				names = append(names, fmt.Sprintf("%v", s))
-			}
-			sb.WriteString(fmt.Sprintf("⚙️ Servicios verificados y puestos en marcha: %s\n", strings.Join(names, ", ")))
-		}
 		if pref, ok := result["preferenceApplied"].(bool); ok && pref {
 			sb.WriteString("🛡️ Parámetros de Protección en Tiempo Real aplicados vía Set-MpPreference.\n")
 		}
@@ -972,6 +975,12 @@ $out | ConvertTo-Json -Compress`, defenderReactivationPsSnippet)
 		}
 		if sig, ok := result["signatureVersion"].(string); ok && sig != "" {
 			sb.WriteString(fmt.Sprintf("   • Versión de Firmas: %s\n", sig))
+		}
+		if tamper, ok := result["tamperProtected"].(bool); ok && tamper {
+			sb.WriteString("   • Tamper Protection: Activa\n")
+		}
+		if msg, ok := result["error"].(string); ok && msg != "" && !isActive {
+			sb.WriteString(fmt.Sprintf("   • Motivo: %s\n", msg))
 		}
 	} else {
 		sb.WriteString("Protocolo de reactivación ejecutado en el endpoint.\n")
@@ -1036,18 +1045,11 @@ $res | ConvertTo-Json -Compress`, defenderReactivationPsSnippet)
 		_ = json.Unmarshal([]byte(strings.TrimSpace(string(reactOut))), &reactResult)
 
 		if reactResult != nil {
-			if cleared, ok := reactResult["policiesCleared"].(float64); ok && cleared > 0 {
-				sb.WriteString(fmt.Sprintf("   🔓 Se eliminaron %.0f directivas de bloqueo en el registro.\n", cleared))
-			}
-			if svcs, ok := reactResult["servicesStarted"].([]interface{}); ok && len(svcs) > 0 {
-				var sNames []string
-				for _, sn := range svcs {
-					sNames = append(sNames, fmt.Sprintf("%v", sn))
-				}
-				sb.WriteString(fmt.Sprintf("   ⚙️ Servicios levantados: %s\n", strings.Join(sNames, ", ")))
-			}
 			if mp, ok := reactResult["mpCmdSuccess"].(bool); ok && mp {
-				sb.WriteString("   ⚡ MpCmdRun -wdenable ejecutado.\n")
+				sb.WriteString("   ⚡ MpCmdRun -wdenable confirmado.\n")
+			}
+			if msg, ok := reactResult["error"].(string); ok && msg != "" {
+				sb.WriteString(fmt.Sprintf("   ℹ️ Resultado de reactivación: %s\n", msg))
 			}
 		}
 
