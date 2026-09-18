@@ -373,19 +373,19 @@ export class ActionsService {
       throw new Error(`Action "${actionId}" is already terminal with status ${action.status}`);
     }
 
-    if (status === 'RUNNING' && ![
+    if (status === 'RUNNING' && !([
       ActionStatus.PENDING,
       ActionStatus.QUEUED,
       ActionStatus.DELIVERED,
       ActionStatus.RUNNING,
-    ].includes(action.status)) {
+    ] as ActionStatus[]).includes(action.status)) {
       throw new Error(`Invalid transition ${action.status} -> RUNNING`);
     }
 
-    if ((status === 'SUCCESS' || status === 'FAILED') && ![
+    if ((status === 'SUCCESS' || status === 'FAILED') && !([
       ActionStatus.DELIVERED,
       ActionStatus.RUNNING,
-    ].includes(action.status)) {
+    ] as ActionStatus[]).includes(action.status)) {
       throw new Error(`Invalid transition ${action.status} -> ${status}`);
     }
 
