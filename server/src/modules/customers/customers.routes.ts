@@ -4,7 +4,7 @@ import { authenticateUser, requireRole } from '../../middleware/user-auth.js';
 import { getTenantId } from '../../middleware/tenant-isolation.js';
 import { createCustomerSchema, updateCustomerSchema } from '../../schemas/management.schema.js';
 import { logAudit } from '../../middleware/audit.js';
-import { generateRandomString } from '../../lib/crypto.js';
+import { generateEnrollmentToken } from '../../lib/crypto.js';
 
 export const customersRoutes: FastifyPluginAsync = async (fastify: FastifyInstance) => {
   fastify.addHook('preHandler', authenticateUser);
