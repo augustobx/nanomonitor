@@ -325,6 +325,15 @@ func (s *Scheduler) collectAndSendMetrics(ctx context.Context) {
 		return
 	}
 
+	perf.Thermal = collector.CollectThermal()
+	if perf.Thermal.Available {
+		log.Debug("thermal telemetry collected",
+			"thermal_status", perf.Thermal.Status,
+			"cpu_available", perf.Thermal.CPU != nil,
+			"gpu_count", len(perf.Thermal.GPUs),
+		)
+	}
+
 	resp, err := s.client.SendWithRetry(ctx, func(ctx context.Context) (*transport.Response, error) {
 		return s.client.SendMetrics(ctx, perf)
 	}, 2)
