@@ -125,7 +125,9 @@ export const customersRoutes: FastifyPluginAsync = async (fastify: FastifyInstan
       select: { id: true, token: true, expiresAt: true, maxUses: true },
     });
 
-    return reply.send({ statusCode: 200, data: token });
+    return reply
+      .header('Cache-Control', 'no-store')
+      .send({ statusCode: 200, data: token });
     }
   );
 
