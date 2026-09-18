@@ -204,7 +204,7 @@ export const agentActionRoutes: FastifyPluginAsync = async (fastify: FastifyInst
     }
 
     try {
-      const updated = await ActionsService.updateActionStatus({
+      const { action: updated, changed } = await ActionsService.updateActionStatus({
         actionId,
         agentId,
         deviceId,
@@ -219,7 +219,7 @@ export const agentActionRoutes: FastifyPluginAsync = async (fastify: FastifyInst
       });
 
       // Notify Auto-Remediation engine if action was linked to a remediation execution
-      if (parsed.data.status === 'SUCCESS' || parsed.data.status === 'FAILED') {
+      if (changed && (parsed.data.status === 'SUCCESS' || parsed.data.status === 'FAILED')) {
         RemediationService.handleRemoteActionCompletion(
           actionId,
           parsed.data.exitCode ?? (parsed.data.status === 'SUCCESS' ? 0 : 1),
