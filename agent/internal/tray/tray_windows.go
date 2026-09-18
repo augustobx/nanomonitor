@@ -38,6 +38,8 @@ var (
 	getCursorPos     = user32.NewProc("GetCursorPos")
 	setForegroundWnd = user32.NewProc("SetForegroundWindow")
 	postQuitMessage  = user32.NewProc("PostQuitMessage")
+	setTimer         = user32.NewProc("SetTimer")
+	killTimer        = user32.NewProc("KillTimer")
 	getMessage       = user32.NewProc("GetMessageW")
 	translateMessage = user32.NewProc("TranslateMessage")
 	dispatchMessage  = user32.NewProc("DispatchMessageW")
@@ -59,6 +61,7 @@ const (
 	WM_USER         = 0x0400
 	WM_TRAYICON     = WM_USER + 1
 	WM_COMMAND      = 0x0111
+	WM_TIMER        = 0x0113
 	WM_RBUTTONUP    = 0x0205
 	WM_LBUTTONDBLCLK = 0x0203
 	WM_DESTROY      = 0x0002
@@ -110,6 +113,8 @@ const (
 	IDM_RESTART_SVC  = 2004
 	IDM_ABOUT        = 2005
 	IDM_EXIT         = 3001
+
+	IDM_SERVICE_STATUS_TIMER = 4001
 )
 
 type WNDCLASSEX struct {
@@ -258,15 +263,13 @@ func (app *TrayApp) Run() error {
 		app.ShowNotification("NanoLabs Control Center", "ATENCIÓN: la bandeja inició, pero el servicio NanoLabsAgent está detenido.")
 	}
 
-	// Periodic service status check in background
-	go func() {
-		for {
-			time.Sleep(15 * time.Second)
-			if !app.isActionRunning {
-				app.updateTooltip()
-			}
-		}
-	}()
+	// Refresh service state from the window's own UI thread. Shell_NotifyIcon
+	// updates are more reliable when performed by the thread that owns the tray
+	// window, especially across delayed service startup after Windows logon.
+	if timerID, _, _ := setTimer.Call(uintptr(app.hwnd), IDM_SERVICE_STATUS_TIMER, 15000, 0); timerID == 0 {
+		return fmt.Errorf("failed to create service-status tray timer")
+	}
+	defer killTimer.Call(uintptr(app.hwnd), IDM_SERVICE_STATUS_TIMER)
 
 	// Periodic check for active maintenance actions
 	go func() {
@@ -488,6 +491,14 @@ func wndProc(hWnd windows.HWND, msg uint32, wParam, lParam uintptr) uintptr {
 			return 0
 		case WM_LBUTTONDBLCLK:
 			instance.handleOpenPortal()
+			return 0
+		}
+
+	case WM_TIMER:
+		if wParam == IDM_SERVICE_STATUS_TIMER {
+			if !instance.isActionRunning {
+				instance.updateTooltip()
+			}
 			return 0
 		}
 
