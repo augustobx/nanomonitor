@@ -55,10 +55,16 @@ func NewPriorityBuffer(filePath string, maxSizeBytes int) (*PriorityBuffer, erro
 		items:    make([]*Item, 0),
 	}
 
-	// Try loading existing buffer file if present
+	// Try loading existing buffer file if present. If the primary file was
+	// interrupted mid-write, loadFromDisk recovers the last committed backup.
 	if err := pb.loadFromDisk(); err != nil {
-		// If corrupted, remove and start clean
-		_ = os.Remove(filePath)
+		// Preserve unreadable data for diagnosis instead of deleting telemetry.
+		if filePath != "" {
+			corruptPath := fmt.Sprintf("%s.corrupt-%d", filePath, time.Now().Unix())
+			_ = os.Rename(filePath, corruptPath)
+		}
+		pb.items = make([]*Item, 0)
+		pb.totalBytes = 0
 	}
 
 	return pb, nil
@@ -201,23 +207,41 @@ func (b *PriorityBuffer) loadFromDisk() error {
 	if b.filePath == "" {
 		return nil
 	}
-	data, err := os.ReadFile(b.filePath)
-	if err != nil {
-		if os.IsNotExist(err) {
-			return nil
+
+	load := func(path string) ([]*Item, error) {
+		data, err := os.ReadFile(path)
+		if err != nil {
+			return nil, err
 		}
-		return err
+		var loaded []*Item
+		if err := json.Unmarshal(data, &loaded); err != nil {
+			return nil, err
+		}
+		return loaded, nil
 	}
 
-	var loaded []*Item
-	if err := json.Unmarshal(data, &loaded); err != nil {
+	loaded, err := load(b.filePath)
+	if err != nil {
+		if os.IsNotExist(err) {
+			loaded, err = load(b.filePath + ".bak")
+			if os.IsNotExist(err) {
+				return nil
+			}
+		} else {
+			// Primary exists but is unreadable/corrupt: recover last committed backup.
+			loaded, err = load(b.filePath + ".bak")
+		}
+	}
+	if err != nil {
 		return err
 	}
 
 	b.items = loaded
 	b.totalBytes = 0
 	for _, it := range b.items {
-		b.totalBytes += it.SizeBytes
+		if it != nil {
+			b.totalBytes += it.SizeBytes
+		}
 	}
 	return nil
 }
@@ -237,7 +261,47 @@ func (b *PriorityBuffer) saveToDisk() error {
 		return err
 	}
 
-	return os.WriteFile(b.filePath, data, 0600)
+	tmpPath := b.filePath + ".tmp"
+	backupPath := b.filePath + ".bak"
+
+	if err := os.WriteFile(tmpPath, data, 0600); err != nil {
+		return err
+	}
+
+	tmp, err := os.OpenFile(tmpPath, os.O_RDWR, 0600)
+	if err != nil {
+		_ = os.Remove(tmpPath)
+		return err
+	}
+	if err := tmp.Sync(); err != nil {
+		_ = tmp.Close()
+		_ = os.Remove(tmpPath)
+		return err
+	}
+	if err := tmp.Close(); err != nil {
+		_ = os.Remove(tmpPath)
+		return err
+	}
+
+	_ = os.Remove(backupPath)
+	if _, err := os.Stat(b.filePath); err == nil {
+		if err := os.Rename(b.filePath, backupPath); err != nil {
+			_ = os.Remove(tmpPath)
+			return err
+		}
+	}
+
+	if err := os.Rename(tmpPath, b.filePath); err != nil {
+		// Best-effort rollback to the last committed queue.
+		if _, backupErr := os.Stat(backupPath); backupErr == nil {
+			_ = os.Rename(backupPath, b.filePath)
+		}
+		_ = os.Remove(tmpPath)
+		return err
+	}
+
+	_ = os.Remove(backupPath)
+	return nil
 }
 
 func generateID() string {
