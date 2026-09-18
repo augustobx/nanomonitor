@@ -7,6 +7,7 @@ import {
   createActionSchema,
   updateActionStatusSchema,
   cancelActionSchema,
+  ACTION_CONTRACT_HASH,
 } from '../../schemas/actions.schema.js';
 import { ActionsService } from './actions.service.js';
 import { RemediationService } from '../remediation/remediation.service.js';
@@ -184,6 +185,7 @@ export const agentActionRoutes: FastifyPluginAsync = async (fastify: FastifyInst
     return reply.status(200).send({
       status: 'ok',
       actions,
+      actionContractHash: ACTION_CONTRACT_HASH,
       serverTime: new Date().toISOString(),
     });
   });
