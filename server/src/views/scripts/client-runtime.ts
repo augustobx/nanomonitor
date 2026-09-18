@@ -221,32 +221,6 @@ export function getClientRuntimeScript(): string {
       }
     }
 
-    async function quickLoginDemo() {
-      try {
-        const res = await fetch('/api/v1/auth/login', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ email: 'admin@nanolabs.com.ar', password: 'NanoLabs2026!MonitorAdmin' })
-        });
-        const json = await res.json();
-        const token = json.data && (json.data.accessToken || json.data.token);
-        if (res.ok && token) {
-          localStorage.setItem('nl_token', token);
-          if (json.data.user) localStorage.setItem('nl_user', JSON.stringify(json.data.user));
-          setLoggedInUI();
-          const m = document.getElementById('loginModal');
-          if (m) m.classList.remove('active');
-          showToast('Sesión iniciada: Augusto / NanoLabs Admin');
-          await fetchLiveDashboard(false);
-          startPolling();
-          return token;
-        }
-      } catch (err) {
-        console.warn('Quick login demo fallback failed:', err);
-      }
-      return null;
-    }
-
     function startPolling() {
       stopPolling();
       pollingTimer = setInterval(function() {
@@ -3381,7 +3355,6 @@ export function getClientRuntimeScript(): string {
       const targetCustId = (sel && sel.value !== 'GENERAL') ? sel.value : null;
 
       let token = localStorage.getItem('nl_token');
-      if (!token) token = await quickLoginDemo();
       if (!token) {
         tbody.innerHTML = '<tr><td colspan="7" style="text-align: center; color: var(--text-muted); padding: 32px;">Inicia sesión para gestionar reglas de monitoreo</td></tr>';
         return;
@@ -3672,34 +3645,32 @@ export function getClientRuntimeScript(): string {
     }
 
     async function fetchLiveDashboard(silent) {
-      let token = localStorage.getItem('nl_token');
-      if (!token) {
-        token = await quickLoginDemo();
-      }
+      const token = localStorage.getItem('nl_token');
       if (!token) {
         setLoggedOutUI();
+        stopPolling();
+        openLoginModal();
         return;
       }
+
       try {
-        let res = await fetch('/api/v1/public/live', {
+        const res = await fetch('/api/v1/public/live', {
           headers: {
             'Authorization': 'Bearer ' + token,
             'Cache-Control': 'no-cache'
           }
         });
-        if (res.status === 401) {
-          token = await quickLoginDemo();
-          if (!token) {
-            setLoggedOutUI();
-            return;
-          }
-          res = await fetch('/api/v1/public/live', {
-            headers: {
-              'Authorization': 'Bearer ' + token,
-              'Cache-Control': 'no-cache'
-            }
-          });
+
+        if (res.status === 401 || res.status === 403) {
+          localStorage.removeItem('nl_token');
+          localStorage.removeItem('nl_user');
+          stopPolling();
+          setLoggedOutUI();
+          openLoginModal();
+          if (!silent) showToast('La sesión expiró. Iniciá sesión nuevamente.', 'error');
+          return;
         }
+
         if (res.ok) {
           const json = await res.json();
           if (json) {
@@ -3758,7 +3729,6 @@ export function getClientRuntimeScript(): string {
     window.openLoginModal = openLoginModal;
     window.closeLoginModal = closeLoginModal;
     window.handleLogin = handleLogin;
-    window.quickLoginDemo = quickLoginDemo;
     window.logout = logout;
     window.openGlobalSearch = openGlobalSearch;
     window.closeGlobalSearch = closeGlobalSearch;
@@ -4672,17 +4642,15 @@ export function getClientRuntimeScript(): string {
       renderFleetDevices();
       renderAgentsList();
 
-      let token = localStorage.getItem('nl_token');
-      if (!token) {
-        token = await quickLoginDemo();
-      }
+      const token = localStorage.getItem('nl_token');
       if (token) {
         setLoggedInUI();
+        await fetchLiveDashboard(true);
+        startPolling();
       } else {
         setLoggedOutUI();
+        openLoginModal();
       }
-      await fetchLiveDashboard(true);
-      startPolling();
     }
 
     if (document.readyState === 'loading') {
