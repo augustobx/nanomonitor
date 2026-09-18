@@ -1,5 +1,21 @@
 import { z } from 'zod';
 
+const thermalStatusSchema = z.enum(['NORMAL', 'WARNING', 'CRITICAL', 'UNAVAILABLE']);
+
+const thermalSensorSchema = z.object({
+  name: z.string().min(1),
+  temperatureC: z.number().min(-20).max(150),
+  status: thermalStatusSchema,
+  source: z.string().min(1),
+});
+
+const thermalInfoSchema = z.object({
+  available: z.boolean(),
+  status: thermalStatusSchema,
+  cpu: thermalSensorSchema.nullable().optional(),
+  gpus: z.array(thermalSensorSchema).optional().default([]),
+});
+
 export const agentHeartbeatSchema = z.object({
   agentVersion: z.string().min(1),
   timestamp: z.string().or(z.date()),
@@ -34,6 +50,7 @@ export const agentMetricsSchema = z.object({
   ramAvailMb: z.number().int().nonnegative().optional(),
   ramPercent: z.number().optional(),
   volumes: z.array(volumeSchema).optional(),
+  thermal: thermalInfoSchema.optional(),
 });
 
 export const agentInventorySchema = z.object({
