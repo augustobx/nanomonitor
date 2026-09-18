@@ -1,5 +1,6 @@
 import { db } from '../../lib/db.js';
 import { ActionsService } from '../actions/actions.service.js';
+import { applyDevicePresence } from '../../lib/device-presence.js';
 import {
   UpsertPatchPolicyInput,
   ReportDevicePatchesInput,
@@ -82,9 +83,15 @@ export class PatchesService {
         status: true,
         lastSeenAt: true,
         rebootState: true,
+        patchLastScanAt: true,
         customerId: true,
         customer: { select: { name: true } },
         agent: { select: { agentVersion: true } },
+        heartbeats: {
+          take: 1,
+          orderBy: { timestamp: 'desc' },
+          select: { timestamp: true, agentVersion: true },
+        },
         inventories: {
           take: 1,
           orderBy: { collectedAt: 'desc' },
@@ -105,6 +112,7 @@ export class PatchesService {
     });
 
     const deviceBreakdown = devices.map((d: any) => {
+      const runtime = applyDevicePresence(d);
       const missing = d.patches.filter((p: any) => p.status === 'MISSING' || p.status === 'PENDING_DOWNLOAD' || p.status === 'DOWNLOADED');
       const criticalOrSecurity = missing.filter((p: any) => p.category === 'CRITICAL' || p.category === 'SECURITY' || p.severity === 'CRITICAL' || p.severity === 'IMPORTANT');
 
@@ -133,9 +141,9 @@ export class PatchesService {
         hostname: d.hostname,
         ipAddress: resolvedIp,
         osName: resolvedOs,
-        status: d.status,
+        status: runtime.status,
         customerName: d.customer?.name || 'NanoLabs',
-        agentVersion: d.agent?.agentVersion || '0.1.0',
+        agentVersion: runtime.runtimeAgentVersion || 'unknown',
         missingCount: missing.length,
         missingCriticalOrSecurity: criticalOrSecurity.length,
         rebootState: d.rebootState,
@@ -145,7 +153,7 @@ export class PatchesService {
             (latest: Date | null, p: any) =>
               !latest || p.lastScannedAt > latest ? p.lastScannedAt : latest,
             null
-          ) || d.lastSeenAt,
+          ) || d.patchLastScanAt || runtime.lastHeartbeatAt,
       };
     });
 
@@ -218,8 +226,15 @@ export class PatchesService {
       throw new Error(`Dispositivo no encontrado.`);
     }
 
-    const now = new Date();
-    let hasRebootFlag = report.rebootPending;
+    const scanAt = report.scannedAt ? new Date(report.scannedAt) : new Date();
+
+    // Device-level watermark also protects empty scans. Buffered reports older
+    // than the latest accepted scan are acknowledged but never applied.
+    if (device.patchLastScanAt && scanAt.getTime() <= device.patchLastScanAt.getTime()) {
+      return { success: true, count: 0, stale: true };
+    }
+
+    const hasRebootFlag = report.rebootPending;
 
     const activeInstallActions = await db.remoteAction.findMany({
       where: {
@@ -262,7 +277,7 @@ export class PatchesService {
         },
         data: {
           status: 'SUPERSEDED',
-          lastScannedAt: now,
+          lastScannedAt: scanAt,
         },
       });
 
@@ -292,16 +307,12 @@ export class PatchesService {
           },
           data: {
             status: 'SUPERSEDED',
-            lastScannedAt: now,
+            lastScannedAt: scanAt,
           },
         });
       }
 
       for (const p of report.patches) {
-        if (p.requiresReboot && p.status !== 'INSTALLED') {
-          hasRebootFlag = true;
-        }
-
         await tx.devicePatch.upsert({
           where: {
             deviceId_kbArticleId: {
@@ -322,7 +333,7 @@ export class PatchesService {
             publishedAt: p.publishedAt ? new Date(p.publishedAt) : null,
             installedAt: p.installedAt ? new Date(p.installedAt) : null,
             requiresReboot: p.requiresReboot,
-            lastScannedAt: now,
+            lastScannedAt: scanAt,
           },
           update: {
             title: p.title,
@@ -333,7 +344,7 @@ export class PatchesService {
             sizeBytes: p.sizeBytes != null ? BigInt(p.sizeBytes) : null,
             installedAt: p.installedAt ? new Date(p.installedAt) : undefined,
             requiresReboot: p.requiresReboot,
-            lastScannedAt: now,
+            lastScannedAt: scanAt,
           },
         });
       }
@@ -345,6 +356,7 @@ export class PatchesService {
             where: { id: deviceId },
             data: {
               rebootState: 'REBOOT_REQUIRED',
+              patchLastScanAt: scanAt,
             },
           });
         }
@@ -354,12 +366,20 @@ export class PatchesService {
           data: {
             rebootState: 'NONE',
             rebootScheduledAt: null,
+            patchLastScanAt: scanAt,
           },
         });
       }
     });
 
-    return { success: true, count: report.patches.length };
+    // REBOOT_SCHEDULED intentionally remains untouched above, but the scan
+    // watermark must still advance.
+    await db.device.update({
+      where: { id: deviceId },
+      data: { patchLastScanAt: scanAt },
+    });
+
+    return { success: true, count: report.patches.length, stale: false };
   }
 
   /**
