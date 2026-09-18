@@ -104,8 +104,8 @@ export class SoftwareComplianceService {
 
     if (rules.length === 0) return result;
 
-    const device = await db.device.findUnique({
-      where: { id: deviceId },
+    const device = await db.device.findFirst({
+      where: { id: deviceId, tenantId },
       select: { hostname: true, customerId: true },
     });
 
