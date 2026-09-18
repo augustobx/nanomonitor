@@ -83,6 +83,9 @@ func (b *PriorityBuffer) Enqueue(priority Priority, endpoint string, payload int
 	b.mu.Lock()
 	defer b.mu.Unlock()
 
+	previousItems := append([]*Item(nil), b.items...)
+	previousTotal := b.totalBytes
+
 	// Evict lower priority items if adding this item would exceed buffer capacity
 	for b.totalBytes+itemSize > b.maxBytes && len(b.items) > 0 {
 		evicted := b.evictOneLowerPriority(priority)
@@ -109,7 +112,12 @@ func (b *PriorityBuffer) Enqueue(priority Priority, endpoint string, payload int
 	b.items = append(b.items, item)
 	b.totalBytes += itemSize
 
-	return b.saveToDisk()
+	if err := b.saveToDisk(); err != nil {
+		b.items = previousItems
+		b.totalBytes = previousTotal
+		return err
+	}
+	return nil
 }
 
 // Len returns current item count
@@ -151,9 +159,17 @@ func (b *PriorityBuffer) Remove(id string) error {
 
 	for i, item := range b.items {
 		if item.ID == id {
+			previousItems := append([]*Item(nil), b.items...)
+			previousTotal := b.totalBytes
+
 			b.totalBytes -= item.SizeBytes
 			b.items = append(b.items[:i], b.items[i+1:]...)
-			return b.saveToDisk()
+			if err := b.saveToDisk(); err != nil {
+				b.items = previousItems
+				b.totalBytes = previousTotal
+				return err
+			}
+			return nil
 		}
 	}
 	return nil
@@ -208,32 +224,31 @@ func (b *PriorityBuffer) loadFromDisk() error {
 		return nil
 	}
 
-	load := func(path string) ([]*Item, error) {
+	load := func(path string) ([]*Item, []byte, error) {
 		data, err := os.ReadFile(path)
 		if err != nil {
-			return nil, err
+			return nil, nil, err
 		}
 		var loaded []*Item
 		if err := json.Unmarshal(data, &loaded); err != nil {
-			return nil, err
+			return nil, data, err
 		}
-		return loaded, nil
+		return loaded, data, nil
 	}
 
-	loaded, err := load(b.filePath)
+	loaded, _, err := load(b.filePath)
+	usedBackup := false
+	var backupData []byte
+
 	if err != nil {
-		if os.IsNotExist(err) {
-			loaded, err = load(b.filePath + ".bak")
+		loaded, backupData, err = load(b.filePath + ".bak")
+		if err != nil {
 			if os.IsNotExist(err) {
 				return nil
 			}
-		} else {
-			// Primary exists but is unreadable/corrupt: recover last committed backup.
-			loaded, err = load(b.filePath + ".bak")
+			return err
 		}
-	}
-	if err != nil {
-		return err
+		usedBackup = true
 	}
 
 	b.items = loaded
@@ -243,6 +258,19 @@ func (b *PriorityBuffer) loadFromDisk() error {
 			b.totalBytes += it.SizeBytes
 		}
 	}
+
+	if usedBackup {
+		// Preserve the unreadable/missing primary for diagnosis and repair the
+		// primary from the already-validated backup before normal operation.
+		if _, statErr := os.Stat(b.filePath); statErr == nil {
+			corruptPath := fmt.Sprintf("%s.corrupt-%d", b.filePath, time.Now().Unix())
+			_ = os.Rename(b.filePath, corruptPath)
+		}
+		if err := os.WriteFile(b.filePath, backupData, 0600); err != nil {
+			return fmt.Errorf("restoring primary buffer from backup: %w", err)
+		}
+	}
+
 	return nil
 }
 
@@ -300,7 +328,7 @@ func (b *PriorityBuffer) saveToDisk() error {
 		return err
 	}
 
-	_ = os.Remove(backupPath)
+	// Keep one previously committed generation as a recovery point.
 	return nil
 }
 
